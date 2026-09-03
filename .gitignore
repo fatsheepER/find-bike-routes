@@ -62,5 +62,6 @@ share/python-wheels/
 .DS_Store
 
 # Local datasets and generated artifacts
-/data/
-/artifacts/
+data/*
+artifacts/*
+!*.gitkeep
