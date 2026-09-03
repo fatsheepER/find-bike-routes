@@ -51,17 +51,19 @@ ZERO_TIME_DISTANCE_TOLERANCE_M = 20
 # - 原始工作簿把 `BICYCLE_ID` 只写在每个车辆块的第一行，其余行是空的。
 # - 时间字段 `LOCATING_TIME` 前面带空格。
 #
-# 读入后先向下填充车号，再把日期和时间拼成时间戳。行号从 2 起算，对应 Excel 里的数据行，后面拆段时一直用这个顺序，不再按时间全局排序。
+# staging 转换时已将 Excel 原始行号写入 `source_row`。读入后先向下填充车号，再把日期和时间拼成时间戳；后面拆段时一直使用原始行号排序，不按时间全局排序。
 #
 # 由结果可知：542,386 行，9,514 个车号。时间落在当天早高峰（6 点到 10 点）。经纬度范围窄，集中在厦门一带。
 #
 
 # %%
-raw = pd.read_csv(SOURCE_PATH, dtype={"BICYCLE_ID": "string"})
+raw = pd.read_csv(
+    SOURCE_PATH,
+    dtype={"source_row": "int64", "BICYCLE_ID": "string"},
+)
 id_written_on_row = raw["BICYCLE_ID"].notna().mean()
 
 trajectory = raw.copy()
-trajectory["source_row"] = np.arange(2, len(trajectory) + 2, dtype=np.int64)
 trajectory["BICYCLE_ID"] = trajectory["BICYCLE_ID"].ffill()
 trajectory["LOCATING_TIME"] = trajectory["LOCATING_TIME"].str.strip()
 trajectory["timestamp"] = pd.to_datetime(
@@ -69,6 +71,8 @@ trajectory["timestamp"] = pd.to_datetime(
     format="%Y-%m-%d %H:%M:%S",
 )
 
+assert trajectory["source_row"].notna().all()
+assert trajectory["source_row"].is_unique
 assert trajectory["BICYCLE_ID"].notna().all()
 assert trajectory[["LATITUDE", "LONGITUDE", "timestamp"]].notna().all().all()
 
