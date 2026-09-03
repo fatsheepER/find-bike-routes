@@ -1,7 +1,7 @@
-"""Convert Excel workbooks with .csv suffixes into real UTF-8 CSV files.
+"""Convert raw Excel workbooks with .csv suffixes into UTF-8 CSV files.
 
 The files under data/raw are treated as immutable source data. Converted files
-are written to the same relative paths under data/staging.
+are written under data/staging with lowercase, hyphenated filenames.
 """
 
 from __future__ import annotations
@@ -11,10 +11,12 @@ import csv
 import hashlib
 import json
 import os
+import re
 import tempfile
+from collections.abc import Iterable
 from datetime import date, datetime, time
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 from zipfile import BadZipFile, ZipFile
 
 from openpyxl import load_workbook
@@ -26,6 +28,8 @@ def sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
 def is_excel_workbook(path: Path) -> bool:
     try:
         with ZipFile(path) as archive:
@@ -52,6 +56,11 @@ def trimmed_rows(rows: Iterable[tuple[Any, ...]], column_count: int) -> Iterable
         yield [csv_value(value) for value in row[:column_count]]
 
 
+def normalized_relative_path(path: Path) -> Path:
+    stem = re.sub(r"[^a-z0-9]+", "-", path.stem.lower()).strip("-")
+    return path.with_name(stem + path.suffix.lower())
+
+
 def convert(source: Path, destination: Path) -> dict[str, Any]:
     destination.parent.mkdir(parents=True, exist_ok=True)
 
@@ -62,17 +71,22 @@ def convert(source: Path, destination: Path) -> dict[str, Any]:
                 f"Expected one worksheet in {source}, found {len(workbook.sheetnames)}"
             )
         worksheet = workbook.active
+        assert worksheet is not None
         rows = worksheet.iter_rows(values_only=True)
         try:
             header = next(rows)
         except StopIteration as exc:
             raise ValueError(f"Workbook is empty: {source}") from exc
 
-        nonempty_header_indexes = [index for index, value in enumerate(header) if value is not None]
+        nonempty_header_indexes = [
+            index for index, value in enumerate(header) if value is not None
+        ]
         if not nonempty_header_indexes:
             raise ValueError(f"Workbook has no header: {source}")
         column_count = max(nonempty_header_indexes) + 1
-        header_values = [csv_value(value) for value in header[:column_count]]
+        header_values = ["source_row"] + [
+            csv_value(value) for value in header[:column_count]
+        ]
 
         file_descriptor, temporary_name = tempfile.mkstemp(
             prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent
@@ -82,8 +96,10 @@ def convert(source: Path, destination: Path) -> dict[str, Any]:
             with os.fdopen(file_descriptor, "w", encoding="utf-8", newline="") as output:
                 writer = csv.writer(output, lineterminator="\n")
                 writer.writerow(header_values)
-                for row in trimmed_rows(rows, column_count):
-                    writer.writerow(row)
+                for source_row, row in enumerate(
+                    trimmed_rows(rows, column_count), start=2
+                ):
+                    writer.writerow([source_row, *row])
                     row_count += 1
             os.replace(temporary_name, destination)
         except BaseException:
@@ -98,7 +114,7 @@ def convert(source: Path, destination: Path) -> dict[str, Any]:
         "worksheet": worksheet.title,
         "rows_including_header": row_count,
         "data_rows": row_count - 1,
-        "columns": column_count,
+        "columns": len(header_values),
         "header": header_values,
         "source_bytes": source.stat().st_size,
         "source_sha256": sha256(source),
@@ -127,7 +143,7 @@ def main() -> None:
 
     records = []
     for source in sources:
-        relative_path = source.relative_to(args.raw_dir)
+        relative_path = normalized_relative_path(source.relative_to(args.raw_dir))
         destination = args.staging_dir / relative_path
         record = convert(source, destination)
         records.append(record)
