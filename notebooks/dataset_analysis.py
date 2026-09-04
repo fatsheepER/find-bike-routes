@@ -95,6 +95,31 @@ file_summary = pd.DataFrame(
 
 file_summary
 
+# %%
+conversion_files = pd.json_normalize(
+    pd.read_json(PROJECT_ROOT / "data/staging/conversion-manifest.json")["files"]
+)
+trajectory_files = conversion_files.loc[
+    conversion_files["destination"].str.contains("/trajectory/")
+]
+trajectory_dates = pd.to_datetime(
+    trajectory_files["destination"].str.extract(r"(\d{8})")[0],
+    format="%Y%m%d",
+)
+assert trajectory_dates.notna().all()
+
+dataset_scale = pd.DataFrame(
+    {
+        "trajectory_files": [len(trajectory_files)],
+        "start_date": [trajectory_dates.min()],
+        "end_date": [trajectory_dates.max()],
+        "trajectory_points": [trajectory_files["data_rows"].sum()],
+        "raw_size_mb": [trajectory_files["source_bytes"].sum() / 1024**2],
+        "staging_size_mb": [trajectory_files["destination_bytes"].sum() / 1024**2],
+    }
+)
+dataset_scale
+
 # %% [markdown]
 # #### 车辆所属轨迹点数量的分布
 #
