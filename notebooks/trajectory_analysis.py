@@ -7,7 +7,7 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.19.5
 #   kernelspec:
-#     display_name: find-bike-routes (3.13.15.final.0)
+#     display_name: find-bike-routes (3.13.x)
 #     language: python
 #     name: python3
 # ---
