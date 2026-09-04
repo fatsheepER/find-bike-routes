@@ -65,3 +65,6 @@ share/python-wheels/
 data/*
 artifacts/*
 !*.gitkeep
+
+# local temporary files
+.scratch/
