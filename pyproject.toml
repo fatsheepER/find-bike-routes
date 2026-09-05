@@ -4,16 +4,22 @@ version = "0.1.0"
 requires-python = ">=3.13,<3.14"
 dependencies = [
     "folium>=0.20.0",
+    "igraph>=1.0.0",
+    "infomap>=2.15.1",
     "ipykernel>=7.3.0",
     "jupyterlab>=4.6.3",
     "jupytext>=1.19.5",
+    "leidenalg>=0.12.0",
+    "matplotlib>=3.11.1",
     "networkx>=3.4",
     "numpy>=2.5.2",
     "openpyxl>=3.1.5",
     "osmium>=4.0",
     "pandas>=3.0.5",
     "pandas-stubs~=3.0.5",
+    "pyproj>=3.7.2",
     "pyspark==4.2.0",
+    "scikit-learn>=1.9.0",
     "shapely>=2.0",
 ]
 
