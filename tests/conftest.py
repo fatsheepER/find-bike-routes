@@ -20,6 +20,7 @@ class SplitRun:
     output: Path
     points: Path
     tracks: Path
+    stage_counts: Path
 
 
 @pytest.fixture(scope="session")
@@ -34,5 +35,8 @@ def split_run(tmp_path_factory: pytest.TempPathFactory) -> SplitRun:
     )
     assert completed.returncode == 0, completed.stderr
     return SplitRun(
-        output=output, points=output / "points", tracks=output / "tracks"
+        output=output,
+        points=output / "points",
+        tracks=output / "tracks",
+        stage_counts=output / "stage_counts",
     )

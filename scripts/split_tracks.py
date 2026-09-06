@@ -1,4 +1,4 @@
-"""Read the staging trajectory CSVs for one or more days and write the point and track tables.
+"""Read the staging trajectory CSVs for one or more days and write the point, track and stage-count tables.
 
 Every parameter that could shift a definition is fixed in code (ADR-0002); the flags
 here only choose which days to read, where to read and write them, how to name the
@@ -25,11 +25,17 @@ from find_bike_routes.datasets import (
     refuse_to_clobber,
     resolve_inputs,
     write_point_table,
+    write_stage_count_table,
     write_track_table,
 )
 from find_bike_routes.geography import BOUNDARY_PATH, add_projected_coordinates
 from find_bike_routes.spark import build_session, ensure_java_runtime
-from find_bike_routes.tracks import build_track_table, split_into_tracks
+from find_bike_routes.tracks import (
+    build_stage_counts,
+    build_track_table,
+    mark_valid_tracks,
+    split_into_tracks,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 STAGING_DIR = PROJECT_ROOT / "data/staging/trajectory"
@@ -83,15 +89,17 @@ def run(args: argparse.Namespace) -> None:
             ),
             PARAMETERS,
         )
+        tracks = build_track_table(points, PARAMETERS)
+        points = mark_valid_tracks(points, tracks)
+        counts = build_stage_counts(tracks, PARAMETERS)
         points_path = write_point_table(points, args.output, args.overwrite)
-        tracks_path = write_track_table(
-            build_track_table(points), args.output, args.overwrite
-        )
+        tracks_path = write_track_table(tracks, args.output, args.overwrite)
+        counts_path = write_stage_count_table(counts, args.output, args.overwrite)
     finally:
         session.stop()
 
     print(
-        f"wrote {points_path} and {tracks_path} "
+        f"wrote {points_path}, {tracks_path} and {counts_path} "
         f"({len(inputs)} date partition(s), run-id {args.run_id})"
     )
 

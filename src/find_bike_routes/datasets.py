@@ -40,7 +40,19 @@ STAGING_SCHEMA = StructType(
 
 POINT_TABLE = "points"
 TRACK_TABLE = "tracks"
+STAGE_COUNT_TABLE = "stage_counts"
 PARTITION_COLUMN = "source_date"
+STAGE_COUNT_COLUMNS = (
+    "stage_index",
+    "stage_name",
+    "tracks_entered",
+    "tracks_kept",
+    "tracks_rejected",
+    "points_entered",
+    "points_kept",
+    "points_rejected",
+    PARTITION_COLUMN,
+)
 TRACK_COLUMNS = (
     "TRACK_ID",
     "BICYCLE_ID",
@@ -48,6 +60,21 @@ TRACK_COLUMNS = (
     "start_time",
     "end_time",
     "duration_s",
+    "range_m",
+    "slow_point_share",
+    "mean_speed_mps",
+    "all_points_on_island",
+    "fails_min_points",
+    "fails_duration",
+    "fails_all_points_on_island",
+    "fails_range",
+    "fails_slow_point_share",
+    "fails_mean_speed",
+    "is_valid",
+    "match_rate",
+    "matched_length_m",
+    "inferred_share",
+    "matched_path_on_island",
     PARTITION_COLUMN,
 )
 POINT_COLUMNS = (
@@ -63,6 +90,7 @@ POINT_COLUMNS = (
     "step_distance_m",
     "step_speed_mps",
     "on_island",
+    "is_valid_track",
     PARTITION_COLUMN,
 )
 
@@ -235,13 +263,21 @@ def track_table_path(output_root: Path) -> Path:
     return output_root / TRACK_TABLE
 
 
+def stage_count_table_path(output_root: Path) -> Path:
+    return output_root / STAGE_COUNT_TABLE
+
+
 def refuse_to_clobber(output_root: Path, overwrite: bool) -> None:
     """Stop before a run would replace products that are already on disk."""
     if overwrite:
         return
     existing = [
         path
-        for path in (point_table_path(output_root), track_table_path(output_root))
+        for path in (
+            point_table_path(output_root),
+            track_table_path(output_root),
+            stage_count_table_path(output_root),
+        )
         if path.is_dir() and any(path.iterdir())
     ]
     if existing:
@@ -280,6 +316,13 @@ def write_track_table(frame: DataFrame, output_root: Path, overwrite: bool) -> P
     """Write the track table, partitioned by date, same overwrite rule as the points."""
     return _write_partitioned(
         frame, track_table_path(output_root), TRACK_COLUMNS, overwrite
+    )
+
+
+def write_stage_count_table(frame: DataFrame, output_root: Path, overwrite: bool) -> Path:
+    """Write the stage-count table, partitioned by date, same overwrite rule as the rest."""
+    return _write_partitioned(
+        frame, stage_count_table_path(output_root), STAGE_COUNT_COLUMNS, overwrite
     )
 
 

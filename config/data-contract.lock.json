@@ -16,8 +16,8 @@
     {
       "path": "config/regression-sample.json",
       "role": "config",
-      "bytes": 3973,
-      "sha256": "b7f351f7ea952a4179828b2cbf0443a1e81618cef27c834094da043d33fc2d6d"
+      "bytes": 4967,
+      "sha256": "d2d4185d6181509b708db5c71edd14b00c23e11f32ea26471c4bb7937dfebd79"
     },
     {
       "path": "config/xiamen-island.geojson",

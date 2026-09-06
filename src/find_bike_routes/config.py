@@ -60,3 +60,19 @@ class SplitStageParameters:
     max_speed_mps: float = 12.0
     max_step_distance_m: float = 1_000.0
     island_tolerance_m: float = 100.0
+    min_points: int = 3
+    min_duration_s: int = 60
+    max_duration_s: int = 3_600
+    min_range_m: float = 150.0
+    slow_point_mps: float = 0.5
+    max_slow_point_share: float = 0.6
+    max_mean_speed_mps: float = 7.0
+    hard_filter_rule_order: tuple[str, ...] = (
+        "点数 ≥ 3",
+        "60s < 时长 < 3600s",
+        "点全在岛内 +100m",
+        "移动范围 ≥ 150m",
+        "慢点占比 ≤ 60%",
+        "平均速度 ≤ 7 m/s",
+    )
+    split_output_stage: str = "切分产出"

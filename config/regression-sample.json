@@ -33,13 +33,24 @@
     "share_of_source_points": 0.0082
   },
   "expected_split": {
-    "note": "Baseline for the Spark track-splitting ticket. Computed from the four split_rules above; scripts/freeze_data_contract.py deliberately does not recompute these, so the rules live in one place only.",
+    "note": "Baseline for the Spark track-splitting ticket. Computed from the four split_rules above and the six hard-filter rules; scripts/freeze_data_contract.py deliberately does not recompute these, so the rules live in one place only.",
     "tracks": 297,
     "tracks_with_at_least_2_points": 209,
     "tracks_with_at_least_3_points": 176,
     "single_point_tracks": 88,
+    "valid_tracks": 120,
+    "valid_points": 3215,
     "bicycle_8697_tracks": 14,
-    "direction_regression_case": "BICYCLE_821_T4"
+    "direction_regression_case": "BICYCLE_821_T4",
+    "funnel": [
+      {"stage": "切分产出", "tracks_entered": 297, "tracks_kept": 297, "points_entered": 4460, "points_kept": 4460},
+      {"stage": "点数 ≥ 3", "tracks_entered": 297, "tracks_kept": 176, "points_entered": 4460, "points_kept": 4306},
+      {"stage": "60s < 时长 < 3600s", "tracks_entered": 176, "tracks_kept": 147, "points_entered": 4306, "points_kept": 3896},
+      {"stage": "点全在岛内 +100m", "tracks_entered": 147, "tracks_kept": 146, "points_entered": 3896, "points_kept": 3869},
+      {"stage": "移动范围 ≥ 150m", "tracks_entered": 146, "tracks_kept": 123, "points_entered": 3869, "points_kept": 3477},
+      {"stage": "慢点占比 ≤ 60%", "tracks_entered": 123, "tracks_kept": 120, "points_entered": 3477, "points_kept": 3215},
+      {"stage": "平均速度 ≤ 7 m/s", "tracks_entered": 120, "tracks_kept": 120, "points_entered": 3215, "points_kept": 3215}
+    ]
   },
   "bicycles": [
     {"bicycle_id": "BICYCLE_8697", "selection_reason": "known example", "points": 233},

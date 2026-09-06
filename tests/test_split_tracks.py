@@ -7,6 +7,9 @@ how the modules behind the CLI divide the work.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
@@ -15,10 +18,17 @@ from support import (
     FIXTURE_DATE,
     FIXTURE_POINTS,
     read_points,
+    read_stage_counts,
     read_tracks,
     run_cli,
     staging_copy,
 )
+
+EXPECTED_SPLIT = json.loads(
+    (Path(__file__).parents[1] / "config" / "regression-sample.json").read_text(
+        encoding="utf-8"
+    )
+)["expected_split"]
 
 
 # --- arguments and environment, checked before any JVM starts ---------------------
@@ -105,6 +115,8 @@ def test_point_table_holds_every_input_point(split_run):
 
     assert len(points) == FIXTURE_POINTS
     assert points["source_row"].is_unique
+    assert points["is_valid_track"].notna().all()
+    assert int(points["is_valid_track"].sum()) == EXPECTED_SPLIT["valid_points"]
 
 
 @pytest.mark.spark
@@ -260,6 +272,124 @@ def test_track_table_is_one_row_per_track_partitioned_by_source_date(split_run):
     assert later.all()
 
 
+@pytest.mark.spark
+def test_degenerate_track_metrics_match_the_notebook(split_run):
+    """Single-point tracks have range 0 and slow-point share 1.0; zero duration is infinite speed.
+
+    The six rules run independently, so these edges no longer hide behind the point-count
+    cut and have to be defined. The values are the notebook's, written down rather than
+    recomputed.
+    """
+    tracks = read_tracks(split_run.tracks)
+    single = tracks["points"] == 1
+    zero_duration = tracks["duration_s"] == 0
+
+    assert single.any()
+    assert zero_duration.any()
+    assert (tracks.loc[single, "range_m"] == 0).all()
+    assert (tracks.loc[single, "slow_point_share"] == 1.0).all()
+    assert (tracks.loc[zero_duration, "mean_speed_mps"] == float("inf")).all()
+
+
+@pytest.mark.spark
+def test_hard_filter_flags_are_independent_and_drive_is_valid(split_run):
+    """Each rule is a boolean of its own; is_valid is their conjunction, not a cascade.
+
+    A single-point track fails five of the six rules at once. If later flags were
+    skipped after the point-count cut they would be null or false, and that is
+    exactly the information the wide flag table is there to keep.
+    """
+    tracks = read_tracks(split_run.tracks)
+    flags = [
+        "fails_min_points",
+        "fails_duration",
+        "fails_all_points_on_island",
+        "fails_range",
+        "fails_slow_point_share",
+        "fails_mean_speed",
+    ]
+    single = tracks["points"] == 1
+
+    assert tracks[flags].notna().all().all()
+    assert (
+        tracks["is_valid"] == ~tracks[flags].any(axis=1)
+    ).all()
+    assert tracks.loc[single, flags].drop(columns=["fails_all_points_on_island"]).all().all()
+    assert int(tracks["is_valid"].sum()) == EXPECTED_SPLIT["valid_tracks"]
+    assert tracks[
+        ["match_rate", "matched_length_m", "inferred_share", "matched_path_on_island"]
+    ].isna().all().all()
+
+
+# --- stage counts ------------------------------------------------------------------
+
+
+HARD_FILTER_FLAGS = (
+    "fails_min_points",
+    "fails_duration",
+    "fails_all_points_on_island",
+    "fails_range",
+    "fails_slow_point_share",
+    "fails_mean_speed",
+)
+
+
+@pytest.mark.spark
+def test_stage_counts_match_the_frozen_fixture_funnel(split_run):
+    """The long table is one row per (date × stage); both track and point triples are frozen."""
+    counts = read_stage_counts(split_run.stage_counts)
+    funnel = EXPECTED_SPLIT["funnel"]
+
+    assert list(counts["stage_name"]) == [stage["stage"] for stage in funnel]
+    assert list(counts["stage_index"]) == list(range(len(funnel)))
+    assert (counts["source_date"].astype(str) == FIXTURE_DATE).all()
+    for row, stage in zip(counts.itertuples(index=False), funnel):
+        assert row.stage_name == stage["stage"]
+        assert int(row.tracks_entered) == stage["tracks_entered"]
+        assert int(row.tracks_kept) == stage["tracks_kept"]
+        assert int(row.tracks_rejected) == stage["tracks_entered"] - stage["tracks_kept"]
+        assert int(row.points_entered) == stage["points_entered"]
+        assert int(row.points_kept) == stage["points_kept"]
+        assert int(row.points_rejected) == stage["points_entered"] - stage["points_kept"]
+
+
+@pytest.mark.spark
+def test_stage_counts_are_derived_from_the_flag_columns(split_run):
+    """Applying the recorded rule order to the flags rebuilds the funnel; the two cannot drift."""
+    tracks = read_tracks(split_run.tracks)
+    counts = read_stage_counts(split_run.stage_counts)
+    alive = pd.Series(True, index=tracks.index)
+    expected = [
+        (
+            len(tracks),
+            len(tracks),
+            int(tracks["points"].sum()),
+            int(tracks["points"].sum()),
+        )
+    ]
+    for flag in HARD_FILTER_FLAGS:
+        entered = alive.copy()
+        alive = alive & ~tracks[flag].astype(bool)
+        expected.append(
+            (
+                int(entered.sum()),
+                int(alive.sum()),
+                int(tracks.loc[entered, "points"].sum()),
+                int(tracks.loc[alive, "points"].sum()),
+            )
+        )
+
+    got = list(
+        zip(
+            counts["tracks_entered"].astype(int),
+            counts["tracks_kept"].astype(int),
+            counts["points_entered"].astype(int),
+            counts["points_kept"].astype(int),
+        )
+    )
+    assert got == expected
+
+
 # --- overwriting -------------------------------------------------------------------
 
 
@@ -290,8 +420,10 @@ def test_overwrite_replaces_only_the_dates_this_run_produced(tmp_path):
     assert first.returncode == 0, first.stderr
     untouched_points = output / "points" / "source_date=2020-12-22"
     untouched_tracks = output / "tracks" / "source_date=2020-12-22"
+    untouched_counts = output / "stage_counts" / "source_date=2020-12-22"
     before_points = sorted(path.name for path in untouched_points.iterdir())
     before_tracks = sorted(path.name for path in untouched_tracks.iterdir())
+    before_counts = sorted(path.name for path in untouched_counts.iterdir())
 
     second = run_cli(
         "--input", str(staging),
@@ -303,5 +435,6 @@ def test_overwrite_replaces_only_the_dates_this_run_produced(tmp_path):
     assert second.returncode == 0, second.stderr
     assert sorted(path.name for path in untouched_points.iterdir()) == before_points
     assert sorted(path.name for path in untouched_tracks.iterdir()) == before_tracks
+    assert sorted(path.name for path in untouched_counts.iterdir()) == before_counts
     points = read_points(output / "points")
     assert len(points) == 2 * FIXTURE_POINTS
