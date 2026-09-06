@@ -10,7 +10,7 @@
     "shapely": "2.1.2",
     "osmium": "4.3.1",
     "pyspark": "4.2.0",
-    "uv_lock_sha256": "cddd819029c39cad672adc53bf8f6bd2aa9515257c5b2e191561d771e4a0ce49"
+    "uv_lock_sha256": "e0328b49358b6be994afaceba1f7bf2acfd43b4d44b38dd468843d92d323d3c3"
   },
   "entries": [
     {
@@ -235,6 +235,39 @@
         "LOCATING_TIME",
         "LATITUDE",
         "LONGITUDE"
+      ]
+    },
+    {
+      "path": "tests/fixtures/network_edges.parquet",
+      "role": "fixture",
+      "bytes": 565150,
+      "sha256": "b2912944df3a1018501daecd8b8aa3527708e088e55e37d0a4af1f1ee84fc422",
+      "data_rows": 24718,
+      "columns": [
+        "edge_index",
+        "segment_id",
+        "direction",
+        "u",
+        "v",
+        "highway",
+        "name",
+        "length_m",
+        "is_legal_direction"
+      ]
+    },
+    {
+      "path": "tests/fixtures/network_segments.parquet",
+      "role": "fixture",
+      "bytes": 940560,
+      "sha256": "558a87c3ef91913b22aa314f52beaea6f677cefeb83ffe4820277ca73bac0783",
+      "data_rows": 12359,
+      "columns": [
+        "segment_id",
+        "osmid",
+        "highway",
+        "name",
+        "length_m",
+        "geometry"
       ]
     },
     {

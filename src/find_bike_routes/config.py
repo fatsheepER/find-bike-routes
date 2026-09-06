@@ -84,3 +84,55 @@ class SplitStageParameters:
         "平均速度 ≤ 7 m/s",
     )
     split_output_stage: str = "切分产出"
+
+
+# Tag rules for the bike-network extraction. Membership here is the definition of
+# "bicycle-reachable" (ADR-0002, ADR-0004); a change voids every published network
+# number. Serialized into the run params so a given parquet names the rule it used.
+
+ALWAYS_EXCLUDE_HIGHWAY: tuple[str, ...] = (
+    "proposed",
+    "construction",
+    "abandoned",
+    "platform",
+    "raceway",
+    "steps",
+    "elevator",
+    "corridor",
+    "bus_guideway",
+    "busway",
+    "planned",
+    "razed",
+    "dismantled",
+    "no",
+)
+MOTORWAY_HIGHWAY: tuple[str, ...] = ("motorway", "motorway_link")
+FOOT_HIGHWAY: tuple[str, ...] = ("footway", "pedestrian")
+ALLOWED_BICYCLE: tuple[str, ...] = ("yes", "designated", "permissive")
+DENIED_BICYCLE: tuple[str, ...] = ("no", "use_sidepath")
+DENIED_AREA: tuple[str, ...] = ("yes",)
+PRIVATE_ACCESS: tuple[str, ...] = ("private", "no")
+PRIVATE_SERVICE: tuple[str, ...] = ("private",)
+ONEWAY_FORWARD: tuple[str, ...] = ("yes", "true", "1")
+ONEWAY_REVERSE: tuple[str, ...] = ("-1", "reverse")
+OPPOSITE_CYCLEWAY: tuple[str, ...] = ("opposite", "opposite_lane", "opposite_track")
+NETWORK_CRS = "EPSG:32650"
+
+
+@dataclass(frozen=True, slots=True)
+class NetworkStageParameters:
+    """Everything the bike-network extraction stage runs on."""
+
+    island_tolerance_m: float = 100.0
+    crs: str = NETWORK_CRS
+    always_exclude_highway: tuple[str, ...] = ALWAYS_EXCLUDE_HIGHWAY
+    motorway_highway: tuple[str, ...] = MOTORWAY_HIGHWAY
+    foot_highway: tuple[str, ...] = FOOT_HIGHWAY
+    allowed_bicycle: tuple[str, ...] = ALLOWED_BICYCLE
+    denied_bicycle: tuple[str, ...] = DENIED_BICYCLE
+    denied_area: tuple[str, ...] = DENIED_AREA
+    private_access: tuple[str, ...] = PRIVATE_ACCESS
+    private_service: tuple[str, ...] = PRIVATE_SERVICE
+    oneway_forward: tuple[str, ...] = ONEWAY_FORWARD
+    oneway_reverse: tuple[str, ...] = ONEWAY_REVERSE
+    opposite_cycleway: tuple[str, ...] = OPPOSITE_CYCLEWAY

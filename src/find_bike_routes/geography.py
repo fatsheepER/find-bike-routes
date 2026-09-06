@@ -42,6 +42,17 @@ PROJECTED_POINT = StructType(
 _PREPARED: dict[tuple[bytes, float], tuple[object, Transformer]] = {}
 
 
+def island_buffer_utm(
+    path: Path, tolerance_m: float, crs: str = UTM_50N
+) -> tuple[object, Transformer]:
+    """Island polygon in `crs`, grown by `tolerance_m` metres."""
+    transformer = Transformer.from_crs(WGS84, crs, always_xy=True)
+    island_utm = shapely_transform(
+        transformer.transform, shapely.from_wkb(island_boundary_wkb(path))
+    )
+    return island_utm.buffer(tolerance_m), transformer
+
+
 def island_boundary_wkb(path: Path) -> bytes:
     """The island polygon as WKB, or a PipelineError the operator can act on."""
     try:

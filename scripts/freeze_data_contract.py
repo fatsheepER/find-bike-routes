@@ -131,8 +131,9 @@ def discover(root: Path) -> list[tuple[str, str]]:
         elif path.suffix == ".json":
             add(path, "config")
 
-    for path in sorted((root / FIXTURE_DIR).glob("*.csv")):
-        add(path, "fixture")
+    for path in sorted((root / FIXTURE_DIR).iterdir()) if (root / FIXTURE_DIR).is_dir() else []:
+        if path.suffix in {".csv", ".parquet"}:
+            add(path, "fixture")
 
     return sorted(found)
 
@@ -237,6 +238,15 @@ def build_entry(
         shape_fields = read_csv_shape(path)
         if shape_fields is not None:
             entry.update(shape_fields)
+    if role == "fixture" and path.suffix == ".parquet":
+        try:
+            import pyarrow.parquet as pq
+
+            table = pq.read_table(path)
+            entry["data_rows"] = table.num_rows
+            entry["columns"] = table.column_names
+        except (OSError, ImportError):
+            pass
     if role == "osm_pbf":
         entry.update(read_pbf_header(path))
     if role == "boundary":

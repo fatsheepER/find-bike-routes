@@ -12,11 +12,14 @@ from datetime import date, datetime
 from importlib import metadata
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
 from pyspark.sql import DataFrame, functions as F
 
 from . import PipelineError
-from .config import ISLAND_RULE, RAIN_DATE, SplitStageParameters
+from .config import ISLAND_RULE, RAIN_DATE, NetworkStageParameters, SplitStageParameters
 from .datasets import POINT_COLUMNS, STAGE_COUNT_COLUMNS, TRACK_COLUMNS
+from .network import BikeNetwork, EDGE_COLUMNS, SEGMENT_COLUMNS
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 LOCK_PATH = PROJECT_ROOT / "config" / "data-contract.lock.json"
@@ -38,6 +41,29 @@ DEFINITION_FIELDS = (
     "split_output_stage",
 )
 SUMMARY_FIELDS = ("raw_points", "bicycles", "tracks", "single_point_tracks", "valid_tracks", "valid_points")
+NETWORK_DEFINITION_FIELDS = (
+    "island_tolerance_m",
+    "crs",
+    "always_exclude_highway",
+    "motorway_highway",
+    "foot_highway",
+    "allowed_bicycle",
+    "denied_bicycle",
+    "denied_area",
+    "private_access",
+    "private_service",
+    "oneway_forward",
+    "oneway_reverse",
+    "opposite_cycleway",
+)
+NETWORK_SUMMARY_FIELDS = (
+    "candidate_ways",
+    "physical_segments",
+    "directed_edges",
+    "contraflow_states",
+    "graph_nodes",
+    "length_km",
+)
 
 
 def sha256(path: Path) -> str:
@@ -49,7 +75,7 @@ def sha256(path: Path) -> str:
 
 
 def ensure_data_contract(
-    inputs: Mapping[date, Path],
+    inputs: Mapping[object, Path],
     *,
     lock_path: Path = LOCK_PATH,
     project_root: Path | None = None,
@@ -82,7 +108,7 @@ def ensure_data_contract(
                 f"  actual   sha256 {actual}"
             )
 
-    for _day, path in inputs.items():
+    for path in inputs.values():
         actual = sha256(path)
         try:
             relative = path.resolve().relative_to(root).as_posix()
@@ -110,25 +136,40 @@ def ensure_data_contract(
 def write_params(
     run_dir: Path,
     *,
-    parameters: SplitStageParameters,
-    spark_conf: Mapping[str, str],
+    parameters: SplitStageParameters | NetworkStageParameters,
     contract_check_skipped: bool,
+    spark_conf: Mapping[str, str] | None = None,
     lock_path: Path = LOCK_PATH,
 ) -> Path:
     """Serialize the effective run parameters. A skipped check is marked in all caps."""
-    payload: dict[str, object] = {
-        "timezone": parameters.spark.session_time_zone,
-        "spark": dict(spark_conf),
-        "hard_filter_rule_order": list(parameters.hard_filter_rule_order),
-        "parameters": {
-            **{name: getattr(parameters, name) for name in DEFINITION_FIELDS},
+    if isinstance(parameters, NetworkStageParameters):
+        payload: dict[str, object] = {
+            "parameters": {
+                name: _jsonable(getattr(parameters, name))
+                for name in NETWORK_DEFINITION_FIELDS
+            },
+            "data_contract_lock_sha256": sha256(lock_path),
+        }
+    else:
+        payload = {
+            "timezone": parameters.spark.session_time_zone,
+            "spark": dict(spark_conf or {}),
             "hard_filter_rule_order": list(parameters.hard_filter_rule_order),
-        },
-        "data_contract_lock_sha256": sha256(lock_path),
-    }
+            "parameters": {
+                **{name: getattr(parameters, name) for name in DEFINITION_FIELDS},
+                "hard_filter_rule_order": list(parameters.hard_filter_rule_order),
+            },
+            "data_contract_lock_sha256": sha256(lock_path),
+        }
     if contract_check_skipped:
         payload["DATA_CONTRACT_CHECK_SKIPPED"] = True
     return _write_json(run_dir / "params.json", payload)
+
+
+def _jsonable(value: object) -> object:
+    if isinstance(value, tuple):
+        return list(value)
+    return value
 
 
 def git_state(root: Path = PROJECT_ROOT) -> tuple[str, bool]:
@@ -180,6 +221,10 @@ STAGE_COUNT_DIGEST_COLUMNS = STAGE_COUNT_COLUMNS
 def _format_cell(value: object) -> str:
     if value is None:
         return ""
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value).hex()
+    if isinstance(value, np.generic):
+        value = value.item()
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, float):
@@ -193,6 +238,23 @@ def _format_cell(value: object) -> str:
     if isinstance(value, date):
         return value.isoformat()
     return str(value)
+
+
+def digest_table(
+    frame: pd.DataFrame, columns: tuple[str, ...], order: tuple[str, ...]
+) -> tuple[str, int]:
+    """sha256 of a pandas table's content: sorted by primary key, one TSV line per row."""
+    hasher = hashlib.sha256()
+    if frame.empty:
+        return hasher.hexdigest(), 0
+    rows = 0
+    ordered = frame.loc[:, list(columns)].sort_values(list(order), kind="mergesort")
+    for record in ordered.itertuples(index=False, name=None):
+        hasher.update(
+            ("\t".join(_format_cell(cell) for cell in record) + "\n").encode()
+        )
+        rows += 1
+    return hasher.hexdigest(), rows
 
 
 def digest_frame(
@@ -434,5 +496,70 @@ def write_digest(
         "stage_counts": stages,
         "baseline_comparison": compare_to_baseline(stages, day_stats(tracks)),
         "observations": observations_from_stage_counts(stages),
+    }
+    return _write_json(run_dir / "digest.json", payload)
+
+
+def network_stats(network: BikeNetwork) -> dict[str, int | float]:
+    return {
+        "candidate_ways": network.candidate_ways,
+        "physical_segments": int(len(network.segments)),
+        "directed_edges": int(len(network.edges)),
+        "contraflow_states": network.contraflow_states,
+        "graph_nodes": network.graph_nodes,
+        "length_km": round(network.length_m / 1000, 1),
+    }
+
+
+def compare_network_to_baseline(
+    stats: Mapping[str, int | float],
+    *,
+    baselines_path: Path = BASELINES_PATH,
+) -> dict[str, object]:
+    """Diff this run's network counts against the frozen network section."""
+    baselines = json.loads(baselines_path.read_text(encoding="utf-8"))
+    expected = baselines.get("network")
+    differences: list[dict[str, object]] = []
+    if expected is None:
+        differences.append(
+            {
+                "field": "network",
+                "expected": "a network section in config/baselines.json",
+                "actual": "absent",
+            }
+        )
+    else:
+        for field in NETWORK_SUMMARY_FIELDS:
+            actual = stats[field]
+            wanted = expected.get(field)
+            if actual != wanted:
+                differences.append(
+                    {
+                        "field": field,
+                        "expected": wanted,
+                        "actual": actual,
+                    }
+                )
+    return {
+        "baseline": "config/baselines.json",
+        "matched": not differences,
+        "differences": differences,
+    }
+
+
+def write_network_digest(run_dir: Path, network: BikeNetwork) -> Path:
+    """Content digest of the two network tables (ADR-0003)."""
+    segment_sha, segment_rows = digest_table(
+        network.segments, SEGMENT_COLUMNS, ("segment_id",)
+    )
+    edge_sha, edge_rows = digest_table(network.edges, EDGE_COLUMNS, ("edge_index",))
+    stats = network_stats(network)
+    payload = {
+        "tables": {
+            "network_segments": {"sha256": segment_sha, "rows": segment_rows},
+            "network_edges": {"sha256": edge_sha, "rows": edge_rows},
+        },
+        "network": stats,
+        "baseline_comparison": compare_network_to_baseline(stats),
     }
     return _write_json(run_dir / "digest.json", payload)

@@ -14,6 +14,7 @@ from pathlib import Path
 
 import osmium.io
 import osmium.osm.mutable
+import pandas as pd
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "freeze_data_contract.py"
 
@@ -104,6 +105,10 @@ def build_project(root: Path, sample_bicycles: list[dict] | None = None) -> Path
     write_csv(root / "data/staging/trajectory/trajectory-data-20201221.csv", STAGING_ROWS)
     write_csv(root / "data/raw/weather/weather-data.csv", WEATHER_ROWS)
     write_pbf(root / "data/raw/tiny-region.osm.pbf")
+    (root / "tests" / "fixtures").mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"segment_id": [0], "length_m": [1.0]}).to_parquet(
+        root / "tests" / "fixtures" / "network_segments.parquet", index=False
+    )
     (root / "uv.lock").write_text("# tiny lock\n", encoding="utf-8")
     return root
 
@@ -159,6 +164,11 @@ def test_default_mode_writes_a_lock_file_covering_every_contract_input(tmp_path)
     assert boundary["osm_id"] == 14251728
     assert boundary["osm_version"] == 7
     assert boundary["source_pbf_sha256"] == sha256(root / "data/raw/tiny-region.osm.pbf")
+
+    parquet = entries["tests/fixtures/network_segments.parquet"]
+    assert parquet["role"] == "fixture"
+    assert parquet["data_rows"] == 1
+    assert parquet["columns"] == ["segment_id", "length_m"]
 
 
 def test_lock_file_is_byte_identical_when_rerun_on_the_same_inputs(tmp_path):

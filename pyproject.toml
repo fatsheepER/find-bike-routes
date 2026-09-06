@@ -17,6 +17,7 @@ dependencies = [
     "osmium>=4.0",
     "pandas>=3.0.5",
     "pandas-stubs~=3.0.5",
+    "pyarrow>=18.0.0",
     "pyproj>=3.7.2",
     "pyspark==4.2.0",
     "scikit-learn>=1.9.0",

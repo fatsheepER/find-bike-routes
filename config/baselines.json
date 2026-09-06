@@ -1,5 +1,5 @@
 {
-  "note": "Five-day full-data baselines from an independent pandas reproduction, verified against the notebook's 772-track remainder and project-plan §3.1's 2,849,243 points. Fixture expectations live in config/regression-sample.json.",
+  "note": "Five-day full-data baselines from an independent pandas reproduction, verified against the notebook's 772-track remainder and project-plan §3.1's 2,849,243 points. Fixture expectations live in config/regression-sample.json. Network counts are from the island-wide OSM extraction (notebooks/single_day_pipeline.py), frozen after scripts/extract_bike_network.py.",
   "days": {
     "2020-12-21": {
       "raw_points": 542386,
@@ -93,5 +93,13 @@
     "single_point_tracks": 25129,
     "valid_tracks": 81035,
     "valid_points": 2206672
+  },
+  "network": {
+    "candidate_ways": 5335,
+    "physical_segments": 12359,
+    "directed_edges": 24718,
+    "contraflow_states": 5657,
+    "graph_nodes": 8751,
+    "length_km": 1761.8
   }
 }
