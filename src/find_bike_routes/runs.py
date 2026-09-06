@@ -25,6 +25,12 @@ from .config import (
     SplitStageParameters,
 )
 from .datasets import POINT_COLUMNS, STAGE_COUNT_COLUMNS, TRACK_COLUMNS
+from .matching import (
+    MATCH_EDGE_COLUMNS,
+    MATCH_PIECE_COLUMNS,
+    MATCH_POINT_COLUMNS,
+    TRACK_MATCH_COLUMNS,
+)
 from .network import BikeNetwork, EDGE_COLUMNS, SEGMENT_COLUMNS
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -85,6 +91,27 @@ MATCH_DEFINITION_FIELDS = (
     "max_inferred_share",
     "hard_filter_rule_order",
 )
+MATCH_COUNT_FIELDS = (
+    "entering_tracks",
+    "entering_points",
+    "unmatched_points",
+    "match_edges",
+    "valid_tracks",
+    "valid_points",
+    "valid_pieces",
+)
+MATCH_QUALITY_FIELDS = (
+    "point_match_rate",
+    "snap_distance_median_m",
+    "snap_distance_p90_m",
+    "snap_distance_p95_m",
+    "contraflow_point_rate",
+    "tracks_with_path_breaks",
+    "matched_length_median_m",
+    "inferred_share_mean",
+)
+ACCEPTANCE_POINT_MATCH_RATE_MIN = 0.9
+ACCEPTANCE_SNAP_MEDIAN_MAX_M = 20.0
 
 
 def sha256(path: Path) -> str:
@@ -341,15 +368,33 @@ def day_stats(tracks: DataFrame) -> dict[str, dict[str, int]]:
     return stats
 
 
+def _day_lookup(document: Mapping[str, object]) -> dict[str, dict[str, object]]:
+    """Days live under baselines (12-21) and recorded (the other four)."""
+    days: dict[str, dict[str, object]] = {}
+    for section in ("recorded", "baselines"):
+        block = document.get(section)
+        if isinstance(block, Mapping):
+            days.update(block.get("days", {}))
+    return days
+
+
+def _network_lookup(document: Mapping[str, object]) -> dict[str, object] | None:
+    block = document.get("baselines")
+    if isinstance(block, Mapping) and "network" in block:
+        network = block["network"]
+        return network if isinstance(network, dict) else None
+    return None
+
+
 def compare_to_baseline(
     stage_counts: list[dict[str, object]],
     extras: Mapping[str, Mapping[str, int]] | None = None,
     *,
     baselines_path: Path = BASELINES_PATH,
 ) -> dict[str, object]:
-    """Diff this run's funnel against the frozen five-day baselines."""
+    """Diff this run's funnel against the day records in baselines.json."""
     baselines = json.loads(baselines_path.read_text(encoding="utf-8"))
-    days = baselines["days"]
+    days = _day_lookup(baselines)
     extras = extras or {}
     differences: list[dict[str, object]] = []
     by_date = _rows_by_date(stage_counts)
@@ -532,6 +577,238 @@ def write_digest(
     return _write_json(run_dir / "digest.json", payload)
 
 
+def _round4(value: float) -> float:
+    return round(float(value), 4)
+
+
+def match_run_stats(
+    points: DataFrame,
+    edges: DataFrame,
+    tracks: DataFrame,
+) -> dict[str, object]:
+    """Per-day and whole-run match counts plus quality, on valid tracks where noted."""
+    track_pdf = tracks.select(
+        "source_date",
+        "TRACK_ID",
+        "points",
+        "matched_points",
+        "contraflow_points",
+        "path_breaks",
+        "matched_length_m",
+        "inferred_share",
+        "is_valid",
+        "pieces",
+    ).toPandas()
+    track_pdf["source_date"] = track_pdf["source_date"].map(_format_cell)
+    point_pdf = points.select(
+        "source_date", "TRACK_ID", "snap_distance_m", "edge_index"
+    ).toPandas()
+    point_pdf["source_date"] = point_pdf["source_date"].map(_format_cell)
+    edge_pdf = edges.select("source_date").toPandas()
+    edge_pdf["source_date"] = edge_pdf["source_date"].map(_format_cell)
+
+    days: dict[str, dict[str, object]] = {}
+    for day, day_tracks in track_pdf.groupby("source_date", sort=True):
+        day_key = str(day)
+        days[day_key] = _match_stats_for(
+            day_tracks,
+            point_pdf.loc[point_pdf["source_date"] == day_key],
+            int((edge_pdf["source_date"] == day_key).sum()),
+        )
+    return {"days": days, "overall": _match_stats_for(track_pdf, point_pdf, len(edge_pdf))}
+
+
+def _match_stats_for(
+    tracks: pd.DataFrame, points: pd.DataFrame, edge_count: int
+) -> dict[str, object]:
+    valid = tracks.loc[tracks["is_valid"]]
+    valid_points = points.merge(
+        valid.loc[:, ["source_date", "TRACK_ID"]],
+        on=["source_date", "TRACK_ID"],
+        how="inner",
+    )
+    snaps = valid_points["snap_distance_m"].dropna()
+    n_points = int(valid["points"].sum()) if not valid.empty else 0
+    n_matched = int(valid["matched_points"].sum()) if not valid.empty else 0
+    return {
+        "entering_tracks": int(len(tracks)),
+        "entering_points": int(tracks["points"].sum()) if not tracks.empty else 0,
+        "unmatched_points": int(points["edge_index"].isna().sum()),
+        "match_edges": int(edge_count),
+        "valid_tracks": int(len(valid)),
+        "valid_points": int(valid["points"].sum()) if not valid.empty else 0,
+        "valid_pieces": int(valid["pieces"].sum()) if not valid.empty else 0,
+        "point_match_rate": _round4(n_matched / n_points) if n_points else None,
+        "snap_distance_median_m": _round4(float(np.median(snaps))) if len(snaps) else None,
+        "snap_distance_p90_m": (
+            _round4(float(np.percentile(snaps, 90))) if len(snaps) else None
+        ),
+        "snap_distance_p95_m": (
+            _round4(float(np.percentile(snaps, 95))) if len(snaps) else None
+        ),
+        "contraflow_point_rate": (
+            _round4(int(valid["contraflow_points"].sum()) / n_matched)
+            if n_matched
+            else None
+        ),
+        "tracks_with_path_breaks": (
+            int((valid["path_breaks"] > 0).sum()) if not valid.empty else 0
+        ),
+        "matched_length_median_m": (
+            _round4(float(valid["matched_length_m"].median())) if not valid.empty else None
+        ),
+        "inferred_share_mean": (
+            _round4(float(valid["inferred_share"].mean())) if not valid.empty else None
+        ),
+    }
+
+
+def compare_match_to_baseline(
+    stage_counts: list[dict[str, object]],
+    extras: Mapping[str, Mapping[str, object]],
+    *,
+    baselines_path: Path = BASELINES_PATH,
+) -> dict[str, object]:
+    """Diff this run's match funnel and quality against the frozen 12-21 section."""
+    document = json.loads(baselines_path.read_text(encoding="utf-8"))
+    days = _day_lookup(document)
+    differences: list[dict[str, object]] = []
+    compared_days: list[str] = []
+    by_date = _rows_by_date(stage_counts)
+
+    for day, rows in by_date.items():
+        expected_day = days.get(day)
+        expected_match = expected_day.get("match") if expected_day else None
+        if not isinstance(expected_match, Mapping):
+            continue
+        compared_days.append(day)
+        observed = extras.get(day, {})
+        for field in (*MATCH_COUNT_FIELDS, *MATCH_QUALITY_FIELDS):
+            if field not in expected_match:
+                continue
+            actual = observed.get(field)
+            expected = expected_match[field]
+            if actual != expected:
+                differences.append(
+                    {
+                        "date": day,
+                        "field": field,
+                        "expected": expected,
+                        "actual": actual,
+                    }
+                )
+        expected_funnel = {
+            stage["stage"]: stage for stage in expected_match.get("funnel", [])
+        }
+        for row in rows:
+            name = str(row["stage_name"])
+            expected_stage = expected_funnel.get(name)
+            if expected_stage is None:
+                differences.append(
+                    {
+                        "date": day,
+                        "field": f"stage:{name}",
+                        "expected": None,
+                        "actual": {field: row[field] for field in FUNNEL_FIELDS},
+                    }
+                )
+                continue
+            for field in FUNNEL_FIELDS:
+                actual = int(row[field])
+                if actual != int(expected_stage[field]):
+                    differences.append(
+                        {
+                            "date": day,
+                            "field": f"{name}.{field}",
+                            "expected": expected_stage[field],
+                            "actual": actual,
+                        }
+                    )
+
+    return {
+        "baseline": "config/baselines.json",
+        "matched": not differences,
+        "compared_days": compared_days,
+        "differences": differences,
+    }
+
+
+def match_observations(
+    day_stats: Mapping[str, Mapping[str, object]],
+) -> dict[str, object]:
+    """Per-day match quality, plus the rain-day note when 12-23 is in the run."""
+    payload: dict[str, object] = {"days": dict(day_stats)}
+    rain_day = RAIN_DATE.isoformat()
+    rain = day_stats.get(rain_day)
+    if rain is not None:
+        payload["rain_day"] = {
+            "date": rain_day,
+            "point_match_rate": rain["point_match_rate"],
+            "snap_distance_median_m": rain["snap_distance_median_m"],
+            "snap_distance_p90_m": rain["snap_distance_p90_m"],
+            "snap_distance_p95_m": rain["snap_distance_p95_m"],
+            "note": (
+                "第 2 步已发现该日点留存率 71.5%，差异集中在「点全在岛内 +100m」；"
+                "此处记录匹配质量供雨天对照引用"
+            ),
+        }
+    return payload
+
+
+def match_acceptance(overall: Mapping[str, object]) -> dict[str, object]:
+    """Plan thresholds: recorded only, they never decide the exit code."""
+    return {
+        "point_match_rate": overall["point_match_rate"],
+        "snap_distance_median_m": overall["snap_distance_median_m"],
+        "point_match_rate_min": ACCEPTANCE_POINT_MATCH_RATE_MIN,
+        "snap_distance_median_m_max": ACCEPTANCE_SNAP_MEDIAN_MAX_M,
+    }
+
+
+def write_match_digest(
+    run_dir: Path,
+    points: DataFrame,
+    edges: DataFrame,
+    pieces: DataFrame,
+    tracks: DataFrame,
+    counts: DataFrame,
+) -> Path:
+    """Content digest of the five match tables, plus every stage-count row (ADR-0003)."""
+    point_sha, point_rows = digest_frame(
+        points, MATCH_POINT_COLUMNS, ("source_date", "source_row")
+    )
+    edge_sha, edge_rows = digest_frame(
+        edges, MATCH_EDGE_COLUMNS, ("TRACK_ID", "piece_index", "seq")
+    )
+    piece_sha, piece_rows = digest_frame(
+        pieces, MATCH_PIECE_COLUMNS, ("TRACK_ID", "piece_index")
+    )
+    track_sha, track_rows = digest_frame(tracks, TRACK_MATCH_COLUMNS, ("TRACK_ID",))
+    count_sha, count_rows = digest_frame(
+        counts, STAGE_COUNT_DIGEST_COLUMNS, ("source_date", "stage_index")
+    )
+    stages = stage_count_records(counts)
+    stats = match_run_stats(points, edges, tracks)
+    per_day = stats["days"]
+    overall = stats["overall"]
+    assert isinstance(per_day, dict)
+    assert isinstance(overall, dict)
+    payload = {
+        "tables": {
+            "match_points": {"sha256": point_sha, "rows": point_rows},
+            "match_edges": {"sha256": edge_sha, "rows": edge_rows},
+            "match_pieces": {"sha256": piece_sha, "rows": piece_rows},
+            "track_match": {"sha256": track_sha, "rows": track_rows},
+            "stage_counts_match": {"sha256": count_sha, "rows": count_rows},
+        },
+        "stage_counts": stages,
+        "baseline_comparison": compare_match_to_baseline(stages, per_day),
+        "acceptance": match_acceptance(overall),
+        "observations": match_observations(per_day),
+    }
+    return _write_json(run_dir / "digest.json", payload)
+
+
 def network_stats(network: BikeNetwork) -> dict[str, int | float]:
     return {
         "candidate_ways": network.candidate_ways,
@@ -550,7 +827,7 @@ def compare_network_to_baseline(
 ) -> dict[str, object]:
     """Diff this run's network counts against the frozen network section."""
     baselines = json.loads(baselines_path.read_text(encoding="utf-8"))
-    expected = baselines.get("network")
+    expected = _network_lookup(baselines)
     differences: list[dict[str, object]] = []
     if expected is None:
         differences.append(

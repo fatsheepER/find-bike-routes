@@ -352,7 +352,7 @@ def test_fixture_network_keeps_the_directed_edge_invariants():
     edges = pd.read_parquet(FIXTURE_EDGES)
     expected = json.loads(
         (PROJECT_ROOT / "config" / "baselines.json").read_text(encoding="utf-8")
-    )["network"]
+    )["baselines"]["network"]
 
     assert len(segments) == expected["physical_segments"]
     assert len(edges) == expected["directed_edges"]

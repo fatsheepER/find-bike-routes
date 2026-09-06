@@ -8,6 +8,7 @@ name the run, and whether to replace what is already on disk.
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 from datetime import date, datetime, timezone
@@ -31,7 +32,12 @@ from find_bike_routes.matching import (
     write_stage_count_match_table,
     write_track_match_table,
 )
-from find_bike_routes.runs import ensure_data_contract, write_environment, write_params
+from find_bike_routes.runs import (
+    ensure_data_contract,
+    write_environment,
+    write_match_digest,
+    write_params,
+)
 from find_bike_routes.spark import build_session, ensure_java_runtime
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -107,11 +113,16 @@ def run(args: argparse.Namespace) -> None:
             session, points, pieces, args.network, PARAMETERS, BOUNDARY_PATH
         )
         counts = build_stage_counts_match(tracks, PARAMETERS)
+        for frame in (points, edges, pieces, tracks, counts):
+            frame.persist()
         points_path = write_match_point_table(points, args.output, args.overwrite)
         edges_path = write_match_edge_table(edges, args.output, args.overwrite)
         pieces_path = write_match_piece_table(pieces, args.output, args.overwrite)
         tracks_path = write_track_match_table(tracks, args.output, args.overwrite)
         counts_path = write_stage_count_match_table(counts, args.output, args.overwrite)
+        digest_path = write_match_digest(
+            run_dir, points, edges, pieces, tracks, counts
+        )
     finally:
         session.stop()
 
@@ -119,6 +130,25 @@ def run(args: argparse.Namespace) -> None:
         f"wrote {points_path}, {edges_path}, {pieces_path}, {tracks_path} "
         f"and {counts_path} "
         f"({len(args.dates)} date partition(s), run-id {args.run_id})"
+    )
+    digest = json.loads(digest_path.read_text(encoding="utf-8"))
+    comparison = digest["baseline_comparison"]
+    if comparison["compared_days"]:
+        if comparison["matched"]:
+            print("baseline matched config/baselines.json")
+        else:
+            print(
+                f"baseline differed in {len(comparison['differences'])} cell(s); "
+                f"see {digest_path}"
+            )
+    acceptance = digest["acceptance"]
+    print(
+        f"point match rate {acceptance['point_match_rate']} "
+        f"(threshold ≥ {acceptance['point_match_rate_min']})"
+    )
+    print(
+        f"snap-distance median {acceptance['snap_distance_median_m']} m "
+        f"(threshold ≤ {acceptance['snap_distance_median_m_max']} m)"
     )
 
 

@@ -1,90 +1,127 @@
 {
-  "note": "Five-day full-data baselines from an independent pandas reproduction, verified against the notebook's 772-track remainder and project-plan §3.1's 2,849,243 points. Fixture expectations live in config/regression-sample.json. Network counts are from the island-wide OSM extraction (notebooks/single_day_pipeline.py), frozen after scripts/extract_bike_network.py.",
-  "days": {
-    "2020-12-21": {
-      "raw_points": 542386,
-      "bicycles": 9514,
-      "tracks": 27933,
-      "single_point_tracks": 4374,
-      "valid_tracks": 15527,
-      "valid_points": 427134,
-      "funnel": [
-        {"stage": "切分产出", "tracks_entered": 27933, "tracks_kept": 27933, "points_entered": 542386, "points_kept": 542386},
-        {"stage": "点数 ≥ 3", "tracks_entered": 27933, "tracks_kept": 21328, "points_entered": 542386, "points_kept": 533550},
-        {"stage": "60s < 时长 < 3600s", "tracks_entered": 21328, "tracks_kept": 19139, "points_entered": 533550, "points_kept": 507371},
-        {"stage": "点全在岛内 +100m", "tracks_entered": 19139, "tracks_kept": 17687, "points_entered": 507371, "points_kept": 475634},
-        {"stage": "移动范围 ≥ 150m", "tracks_entered": 17687, "tracks_kept": 15860, "points_entered": 475634, "points_kept": 453744},
-        {"stage": "慢点占比 ≤ 60%", "tracks_entered": 15860, "tracks_kept": 15528, "points_entered": 453744, "points_kept": 427140},
-        {"stage": "平均速度 ≤ 7 m/s", "tracks_entered": 15528, "tracks_kept": 15527, "points_entered": 427140, "points_kept": 427134}
-      ]
+  "note": "Section names mark evidence status. baselines holds 12-21 and the network — numbers that can falsify the implementation. recorded holds the other four days, which come from this implementation itself. 12-21 split counts are from an independent pandas reproduction, verified against the notebook's 772-track remainder and project-plan §3.1's 2,849,243 points. 12-21 match counts are a port-fidelity check against the notebook matcher, not cross-validation. Fixture expectations live in config/regression-sample.json. Network counts are from the island-wide OSM extraction (notebooks/single_day_pipeline.py), frozen after scripts/extract_bike_network.py.",
+  "baselines": {
+    "days": {
+      "2020-12-21": {
+        "raw_points": 542386,
+        "bicycles": 9514,
+        "tracks": 27933,
+        "single_point_tracks": 4374,
+        "valid_tracks": 15527,
+        "valid_points": 427134,
+        "funnel": [
+          {"stage": "切分产出", "tracks_entered": 27933, "tracks_kept": 27933, "points_entered": 542386, "points_kept": 542386},
+          {"stage": "点数 ≥ 3", "tracks_entered": 27933, "tracks_kept": 21328, "points_entered": 542386, "points_kept": 533550},
+          {"stage": "60s < 时长 < 3600s", "tracks_entered": 21328, "tracks_kept": 19139, "points_entered": 533550, "points_kept": 507371},
+          {"stage": "点全在岛内 +100m", "tracks_entered": 19139, "tracks_kept": 17687, "points_entered": 507371, "points_kept": 475634},
+          {"stage": "移动范围 ≥ 150m", "tracks_entered": 17687, "tracks_kept": 15860, "points_entered": 475634, "points_kept": 453744},
+          {"stage": "慢点占比 ≤ 60%", "tracks_entered": 15860, "tracks_kept": 15528, "points_entered": 453744, "points_kept": 427140},
+          {"stage": "平均速度 ≤ 7 m/s", "tracks_entered": 15528, "tracks_kept": 15527, "points_entered": 427140, "points_kept": 427134}
+        ],
+        "match": {
+          "entering_tracks": 15527,
+          "entering_points": 427134,
+          "unmatched_points": 8053,
+          "match_edges": 542220,
+          "valid_tracks": 14755,
+          "valid_points": 409582,
+          "valid_pieces": 16411,
+          "funnel": [
+            {"stage": "匹配率 ≥ 80%", "tracks_entered": 15527, "tracks_kept": 15148, "points_entered": 427134, "points_kept": 415128},
+            {"stage": "匹配长度 ≥ 100m", "tracks_entered": 15148, "tracks_kept": 15141, "points_entered": 415128, "points_kept": 415065},
+            {"stage": "推断段比例 ≤ 30%", "tracks_entered": 15141, "tracks_kept": 14755, "points_entered": 415065, "points_kept": 409582},
+            {"stage": "匹配路径在岛内", "tracks_entered": 14755, "tracks_kept": 14755, "points_entered": 409582, "points_kept": 409582}
+          ],
+          "point_match_rate": 0.9916,
+          "snap_distance_median_m": 10.6443,
+          "snap_distance_p90_m": 27.2972,
+          "snap_distance_p95_m": 33.6866,
+          "contraflow_point_rate": 0.0837,
+          "tracks_with_path_breaks": 663,
+          "matched_length_median_m": 935.4608,
+          "inferred_share_mean": 0.0504
+        }
+      }
     },
-    "2020-12-22": {
-      "raw_points": 586562,
-      "bicycles": 10354,
-      "tracks": 31752,
-      "single_point_tracks": 5245,
-      "valid_tracks": 16821,
-      "valid_points": 459188,
-      "funnel": [
-        {"stage": "切分产出", "tracks_entered": 31752, "tracks_kept": 31752, "points_entered": 586562, "points_kept": 586562},
-        {"stage": "点数 ≥ 3", "tracks_entered": 31752, "tracks_kept": 23374, "points_entered": 586562, "points_kept": 575051},
-        {"stage": "60s < 时长 < 3600s", "tracks_entered": 23374, "tracks_kept": 20930, "points_entered": 575051, "points_kept": 543755},
-        {"stage": "点全在岛内 +100m", "tracks_entered": 20930, "tracks_kept": 19136, "points_entered": 543755, "points_kept": 505628},
-        {"stage": "移动范围 ≥ 150m", "tracks_entered": 19136, "tracks_kept": 17157, "points_entered": 505628, "points_kept": 483587},
-        {"stage": "慢点占比 ≤ 60%", "tracks_entered": 17157, "tracks_kept": 16824, "points_entered": 483587, "points_kept": 459212},
-        {"stage": "平均速度 ≤ 7 m/s", "tracks_entered": 16824, "tracks_kept": 16821, "points_entered": 459212, "points_kept": 459188}
-      ]
-    },
-    "2020-12-23": {
-      "raw_points": 213733,
-      "bicycles": 4821,
-      "tracks": 11357,
-      "single_point_tracks": 1850,
-      "valid_tracks": 5686,
-      "valid_points": 152776,
-      "funnel": [
-        {"stage": "切分产出", "tracks_entered": 11357, "tracks_kept": 11357, "points_entered": 213733, "points_kept": 213733},
-        {"stage": "点数 ≥ 3", "tracks_entered": 11357, "tracks_kept": 8436, "points_entered": 213733, "points_kept": 209741},
-        {"stage": "60s < 时长 < 3600s", "tracks_entered": 8436, "tracks_kept": 7519, "points_entered": 209741, "points_kept": 195487},
-        {"stage": "点全在岛内 +100m", "tracks_entered": 7519, "tracks_kept": 6572, "points_entered": 195487, "points_kept": 172717},
-        {"stage": "移动范围 ≥ 150m", "tracks_entered": 6572, "tracks_kept": 5807, "points_entered": 172717, "points_kept": 162580},
-        {"stage": "慢点占比 ≤ 60%", "tracks_entered": 5807, "tracks_kept": 5686, "points_entered": 162580, "points_kept": 152776},
-        {"stage": "平均速度 ≤ 7 m/s", "tracks_entered": 5686, "tracks_kept": 5686, "points_entered": 152776, "points_kept": 152776}
-      ]
-    },
-    "2020-12-24": {
-      "raw_points": 932469,
-      "bicycles": 14394,
-      "tracks": 50839,
-      "single_point_tracks": 8312,
-      "valid_tracks": 26654,
-      "valid_points": 724178,
-      "funnel": [
-        {"stage": "切分产出", "tracks_entered": 50839, "tracks_kept": 50839, "points_entered": 932469, "points_kept": 932469},
-        {"stage": "点数 ≥ 3", "tracks_entered": 50839, "tracks_kept": 37437, "points_entered": 932469, "points_kept": 913977},
-        {"stage": "60s < 时长 < 3600s", "tracks_entered": 37437, "tracks_kept": 33264, "points_entered": 913977, "points_kept": 863797},
-        {"stage": "点全在岛内 +100m", "tracks_entered": 33264, "tracks_kept": 30382, "points_entered": 863797, "points_kept": 801395},
-        {"stage": "移动范围 ≥ 150m", "tracks_entered": 30382, "tracks_kept": 27228, "points_entered": 801395, "points_kept": 766426},
-        {"stage": "慢点占比 ≤ 60%", "tracks_entered": 27228, "tracks_kept": 26661, "points_entered": 766426, "points_kept": 724219},
-        {"stage": "平均速度 ≤ 7 m/s", "tracks_entered": 26661, "tracks_kept": 26654, "points_entered": 724219, "points_kept": 724178}
-      ]
-    },
-    "2020-12-25": {
-      "raw_points": 574093,
-      "bicycles": 10030,
-      "tracks": 31206,
-      "single_point_tracks": 5348,
-      "valid_tracks": 16347,
-      "valid_points": 443396,
-      "funnel": [
-        {"stage": "切分产出", "tracks_entered": 31206, "tracks_kept": 31206, "points_entered": 574093, "points_kept": 574093},
-        {"stage": "点数 ≥ 3", "tracks_entered": 31206, "tracks_kept": 22822, "points_entered": 574093, "points_kept": 562673},
-        {"stage": "60s < 时长 < 3600s", "tracks_entered": 22822, "tracks_kept": 20305, "points_entered": 562673, "points_kept": 527141},
-        {"stage": "点全在岛内 +100m", "tracks_entered": 20305, "tracks_kept": 18666, "points_entered": 527141, "points_kept": 492378},
-        {"stage": "移动范围 ≥ 150m", "tracks_entered": 18666, "tracks_kept": 16717, "points_entered": 492378, "points_kept": 471479},
-        {"stage": "慢点占比 ≤ 60%", "tracks_entered": 16717, "tracks_kept": 16351, "points_entered": 471479, "points_kept": 443420},
-        {"stage": "平均速度 ≤ 7 m/s", "tracks_entered": 16351, "tracks_kept": 16347, "points_entered": 443420, "points_kept": 443396}
-      ]
+    "network": {
+      "candidate_ways": 5335,
+      "physical_segments": 12359,
+      "directed_edges": 24718,
+      "contraflow_states": 5657,
+      "graph_nodes": 8751,
+      "length_km": 1761.8
+    }
+  },
+  "recorded": {
+    "days": {
+      "2020-12-22": {
+        "raw_points": 586562,
+        "bicycles": 10354,
+        "tracks": 31752,
+        "single_point_tracks": 5245,
+        "valid_tracks": 16821,
+        "valid_points": 459188,
+        "funnel": [
+          {"stage": "切分产出", "tracks_entered": 31752, "tracks_kept": 31752, "points_entered": 586562, "points_kept": 586562},
+          {"stage": "点数 ≥ 3", "tracks_entered": 31752, "tracks_kept": 23374, "points_entered": 586562, "points_kept": 575051},
+          {"stage": "60s < 时长 < 3600s", "tracks_entered": 23374, "tracks_kept": 20930, "points_entered": 575051, "points_kept": 543755},
+          {"stage": "点全在岛内 +100m", "tracks_entered": 20930, "tracks_kept": 19136, "points_entered": 543755, "points_kept": 505628},
+          {"stage": "移动范围 ≥ 150m", "tracks_entered": 19136, "tracks_kept": 17157, "points_entered": 505628, "points_kept": 483587},
+          {"stage": "慢点占比 ≤ 60%", "tracks_entered": 17157, "tracks_kept": 16824, "points_entered": 483587, "points_kept": 459212},
+          {"stage": "平均速度 ≤ 7 m/s", "tracks_entered": 16824, "tracks_kept": 16821, "points_entered": 459212, "points_kept": 459188}
+        ]
+      },
+      "2020-12-23": {
+        "raw_points": 213733,
+        "bicycles": 4821,
+        "tracks": 11357,
+        "single_point_tracks": 1850,
+        "valid_tracks": 5686,
+        "valid_points": 152776,
+        "funnel": [
+          {"stage": "切分产出", "tracks_entered": 11357, "tracks_kept": 11357, "points_entered": 213733, "points_kept": 213733},
+          {"stage": "点数 ≥ 3", "tracks_entered": 11357, "tracks_kept": 8436, "points_entered": 213733, "points_kept": 209741},
+          {"stage": "60s < 时长 < 3600s", "tracks_entered": 8436, "tracks_kept": 7519, "points_entered": 209741, "points_kept": 195487},
+          {"stage": "点全在岛内 +100m", "tracks_entered": 7519, "tracks_kept": 6572, "points_entered": 195487, "points_kept": 172717},
+          {"stage": "移动范围 ≥ 150m", "tracks_entered": 6572, "tracks_kept": 5807, "points_entered": 172717, "points_kept": 162580},
+          {"stage": "慢点占比 ≤ 60%", "tracks_entered": 5807, "tracks_kept": 5686, "points_entered": 162580, "points_kept": 152776},
+          {"stage": "平均速度 ≤ 7 m/s", "tracks_entered": 5686, "tracks_kept": 5686, "points_entered": 152776, "points_kept": 152776}
+        ]
+      },
+      "2020-12-24": {
+        "raw_points": 932469,
+        "bicycles": 14394,
+        "tracks": 50839,
+        "single_point_tracks": 8312,
+        "valid_tracks": 26654,
+        "valid_points": 724178,
+        "funnel": [
+          {"stage": "切分产出", "tracks_entered": 50839, "tracks_kept": 50839, "points_entered": 932469, "points_kept": 932469},
+          {"stage": "点数 ≥ 3", "tracks_entered": 50839, "tracks_kept": 37437, "points_entered": 932469, "points_kept": 913977},
+          {"stage": "60s < 时长 < 3600s", "tracks_entered": 37437, "tracks_kept": 33264, "points_entered": 913977, "points_kept": 863797},
+          {"stage": "点全在岛内 +100m", "tracks_entered": 33264, "tracks_kept": 30382, "points_entered": 863797, "points_kept": 801395},
+          {"stage": "移动范围 ≥ 150m", "tracks_entered": 30382, "tracks_kept": 27228, "points_entered": 801395, "points_kept": 766426},
+          {"stage": "慢点占比 ≤ 60%", "tracks_entered": 27228, "tracks_kept": 26661, "points_entered": 766426, "points_kept": 724219},
+          {"stage": "平均速度 ≤ 7 m/s", "tracks_entered": 26661, "tracks_kept": 26654, "points_entered": 724219, "points_kept": 724178}
+        ]
+      },
+      "2020-12-25": {
+        "raw_points": 574093,
+        "bicycles": 10030,
+        "tracks": 31206,
+        "single_point_tracks": 5348,
+        "valid_tracks": 16347,
+        "valid_points": 443396,
+        "funnel": [
+          {"stage": "切分产出", "tracks_entered": 31206, "tracks_kept": 31206, "points_entered": 574093, "points_kept": 574093},
+          {"stage": "点数 ≥ 3", "tracks_entered": 31206, "tracks_kept": 22822, "points_entered": 574093, "points_kept": 562673},
+          {"stage": "60s < 时长 < 3600s", "tracks_entered": 22822, "tracks_kept": 20305, "points_entered": 562673, "points_kept": 527141},
+          {"stage": "点全在岛内 +100m", "tracks_entered": 20305, "tracks_kept": 18666, "points_entered": 527141, "points_kept": 492378},
+          {"stage": "移动范围 ≥ 150m", "tracks_entered": 18666, "tracks_kept": 16717, "points_entered": 492378, "points_kept": 471479},
+          {"stage": "慢点占比 ≤ 60%", "tracks_entered": 16717, "tracks_kept": 16351, "points_entered": 471479, "points_kept": 443420},
+          {"stage": "平均速度 ≤ 7 m/s", "tracks_entered": 16351, "tracks_kept": 16347, "points_entered": 443420, "points_kept": 443396}
+        ]
+      }
     }
   },
   "totals": {
@@ -93,13 +130,5 @@
     "single_point_tracks": 25129,
     "valid_tracks": 81035,
     "valid_points": 2206672
-  },
-  "network": {
-    "candidate_ways": 5335,
-    "physical_segments": 12359,
-    "directed_edges": 24718,
-    "contraflow_states": 5657,
-    "graph_nodes": 8751,
-    "length_km": 1761.8
   }
 }

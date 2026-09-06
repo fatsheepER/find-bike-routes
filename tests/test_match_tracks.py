@@ -6,7 +6,9 @@ names in its output, and the contents of the Parquet it writes.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import shutil
 from pathlib import Path
 
@@ -333,3 +335,221 @@ def test_stage_counts_are_derived_from_the_flag_columns(match_run):
         )
     )
     assert got == expected
+
+
+# --- data contract, run artifacts, digest -----------------------------------------
+
+
+def test_baselines_file_separates_falsifiable_from_recorded():
+    """12-21 and the network can falsify the port; the other four days are this run's echo."""
+    baselines = json.loads(
+        (Path(__file__).parents[1] / "config" / "baselines.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert list(baselines["baselines"]["days"]) == ["2020-12-21"]
+    assert list(baselines["recorded"]["days"]) == [
+        "2020-12-22",
+        "2020-12-23",
+        "2020-12-24",
+        "2020-12-25",
+    ]
+    assert "network" in baselines["baselines"]
+    assert "network" not in baselines["recorded"]
+    match = baselines["baselines"]["days"]["2020-12-21"]["match"]
+    first = match["funnel"][0]
+    assert match["valid_tracks"] == 14_755
+    assert match["valid_points"] == 409_582
+    assert first["tracks_entered"] - first["tracks_kept"] == 379
+    assert match["point_match_rate"] == 0.9916
+    assert match["snap_distance_median_m"] == 10.6443
+    assert baselines["baselines"]["network"]["physical_segments"] == 12_359
+
+
+def test_data_contract_failure_refuses_to_start(tmp_path):
+    """A network file whose bytes are not in the lock must not be processed."""
+    points = tmp_path / "trajectory" / "points" / f"source_date={FIXTURE_DATE}"
+    points.mkdir(parents=True)
+    network = tmp_path / "network"
+    network.mkdir()
+    shutil.copy(
+        FIXTURE_NETWORK / "network_segments.parquet",
+        network / "network_segments.parquet",
+    )
+    edges = network / "network_edges.parquet"
+    shutil.copy(FIXTURE_NETWORK / "network_edges.parquet", edges)
+    edges.write_bytes(edges.read_bytes() + b"\x00")
+
+    completed = run_match_cli(
+        "--input", str(tmp_path / "trajectory"),
+        "--network", str(network),
+        "--dates", FIXTURE_DATE,
+        "--output", str(tmp_path / "matching"),
+    )
+
+    assert completed.returncode == 1
+    assert "data contract" in completed.stderr.lower()
+    assert not (tmp_path / "matching").exists()
+
+
+@pytest.mark.spark
+def test_digest_records_content_hashes_row_counts_and_stage_counts(match_run):
+    digest = json.loads(
+        (ARTIFACTS_ROOT / "test-match" / "digest.json").read_text(encoding="utf-8")
+    )
+    funnel = EXPECTED_MATCH["funnel"]
+
+    assert digest["tables"]["match_points"]["rows"] == EXPECTED_MATCH_POINTS
+    assert digest["tables"]["match_edges"]["rows"] == EXPECTED_MATCH_EDGES
+    assert digest["tables"]["match_pieces"]["rows"] == EXPECTED_MATCH_PIECES
+    assert digest["tables"]["track_match"]["rows"] == EXPECTED_MATCHED_TRACKS
+    assert digest["tables"]["stage_counts_match"]["rows"] == len(funnel)
+    for table in digest["tables"].values():
+        assert len(table["sha256"]) == 64
+    assert [stage["stage_name"] for stage in digest["stage_counts"]] == [
+        stage["stage"] for stage in funnel
+    ]
+    assert [int(stage["tracks_kept"]) for stage in digest["stage_counts"]] == [
+        stage["tracks_kept"] for stage in funnel
+    ]
+    assert [int(stage["points_kept"]) for stage in digest["stage_counts"]] == [
+        stage["points_kept"] for stage in funnel
+    ]
+
+
+@pytest.mark.spark
+def test_skip_data_contract_bypasses_the_check_and_marks_the_params(match_run, tmp_path):
+    network = tmp_path / "network"
+    network.mkdir()
+    segments = pd.read_parquet(FIXTURE_NETWORK / "network_segments.parquet")
+    segments.loc[segments.index[0], "name"] = "mutated-for-contract-skip"
+    segments.to_parquet(network / "network_segments.parquet")
+    shutil.copy(
+        FIXTURE_NETWORK / "network_edges.parquet",
+        network / "network_edges.parquet",
+    )
+    run_id = "test-match-skip-contract"
+    artifacts = ARTIFACTS_ROOT / run_id
+    shutil.rmtree(artifacts, ignore_errors=True)
+
+    completed = run_match_cli(
+        "--input", str(match_run.input),
+        "--network", str(network),
+        "--dates", FIXTURE_DATE,
+        "--output", str(tmp_path / "matching"),
+        "--run-id", run_id,
+        "--skip-data-contract",
+    )
+    try:
+        assert completed.returncode == 0, completed.stderr
+        params = json.loads((artifacts / "params.json").read_text(encoding="utf-8"))
+        assert params["DATA_CONTRACT_CHECK_SKIPPED"] is True
+    finally:
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+@pytest.mark.spark
+def test_environment_records_versions_lock_and_git(match_run):
+    environment = json.loads(
+        (ARTIFACTS_ROOT / "test-match" / "environment.json").read_text(encoding="utf-8")
+    )
+    uv_lock = Path(__file__).parents[1] / "uv.lock"
+
+    assert environment["python"]
+    assert environment["pyspark"]
+    assert environment["uv_lock_sha256"] == hashlib.sha256(uv_lock.read_bytes()).hexdigest()
+    assert environment["git_sha"]
+    assert isinstance(environment["git_dirty"], bool)
+
+
+@pytest.mark.spark
+def test_run_directory_holds_spark_logs(match_run):
+    logs = ARTIFACTS_ROOT / "test-match" / "spark-logs"
+    assert logs.is_dir()
+    assert any(logs.iterdir())
+
+
+@pytest.mark.spark
+def test_two_runs_on_the_same_input_write_identical_digests(tmp_path, match_run):
+    first = json.loads((ARTIFACTS_ROOT / "test-match" / "digest.json").read_text(encoding="utf-8"))
+    completed = run_match_cli(
+        "--input", str(match_run.input),
+        "--network", str(FIXTURE_NETWORK),
+        "--dates", FIXTURE_DATE,
+        "--output", str(tmp_path / "matching"),
+    )
+    match = re.search(r"run-id (\d{8}T\d{6}Z-[0-9a-f]+-match)", completed.stdout)
+    assert completed.returncode == 0, completed.stderr
+    assert match is not None
+    assert "baseline differed" in completed.stdout
+    run_id = match.group(1)
+    artifacts = ARTIFACTS_ROOT / run_id
+    try:
+        second = json.loads((artifacts / "digest.json").read_text(encoding="utf-8"))
+        assert second == first
+    finally:
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+@pytest.mark.spark
+def test_digest_records_differences_against_the_12_21_match_baseline(match_run):
+    """The fixture is not the full 12-21 day, so the frozen match baseline must disagree."""
+    digest = json.loads((ARTIFACTS_ROOT / "test-match" / "digest.json").read_text(encoding="utf-8"))
+    comparison = digest["baseline_comparison"]
+    differences = comparison["differences"]
+
+    assert comparison["baseline"] == "config/baselines.json"
+    assert comparison["compared_days"] == [FIXTURE_DATE]
+    assert comparison["matched"] is False
+    mismatch = next(
+        item
+        for item in differences
+        if item["date"] == FIXTURE_DATE and item["field"] == "valid_tracks"
+    )
+    assert mismatch["expected"] == 14_755
+    assert mismatch["actual"] == EXPECTED_MATCH["valid_tracks"]
+
+
+@pytest.mark.spark
+def test_digest_records_acceptance_thresholds_without_failing_the_run(match_run):
+    """Plan thresholds are recorded and printed; they do not change the exit code."""
+    digest = json.loads((ARTIFACTS_ROOT / "test-match" / "digest.json").read_text(encoding="utf-8"))
+    acceptance = digest["acceptance"]
+
+    assert acceptance["point_match_rate"] == 0.9957
+    assert acceptance["snap_distance_median_m"] == 10.4695
+    assert acceptance["point_match_rate_min"] == 0.9
+    assert acceptance["snap_distance_median_m_max"] == 20.0
+    assert "rain_day" not in digest["observations"]
+
+
+@pytest.mark.spark
+def test_digest_records_rain_day_match_quality_when_12_23_is_present(match_run, tmp_path):
+    source = match_run.input / "points" / f"source_date={FIXTURE_DATE}"
+    copied = tmp_path / "trajectory" / "points"
+    shutil.copytree(source, copied / f"source_date={FIXTURE_DATE}")
+    shutil.copytree(source, copied / "source_date=2020-12-23")
+    run_id = "test-match-rain-day"
+    artifacts = ARTIFACTS_ROOT / run_id
+    shutil.rmtree(artifacts, ignore_errors=True)
+
+    completed = run_match_cli(
+        "--input", str(tmp_path / "trajectory"),
+        "--network", str(FIXTURE_NETWORK),
+        "--dates", FIXTURE_DATE, "2020-12-23",
+        "--output", str(tmp_path / "matching"),
+        "--run-id", run_id,
+        "--skip-data-contract",
+    )
+    try:
+        assert completed.returncode == 0, completed.stderr
+        digest = json.loads((artifacts / "digest.json").read_text(encoding="utf-8"))
+        rain = digest["observations"]["rain_day"]
+        assert rain["date"] == "2020-12-23"
+        assert rain["point_match_rate"] == 0.9957
+        assert rain["snap_distance_median_m"] == 10.4695
+        assert rain["snap_distance_p90_m"] == 27.9836
+        assert rain["snap_distance_p95_m"] == 36.7716
+    finally:
+        shutil.rmtree(artifacts, ignore_errors=True)
