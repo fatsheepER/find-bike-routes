@@ -21,6 +21,13 @@ STUDY_DATES: tuple[date, ...] = (
     date(2020, 12, 25),
 )
 
+# The one rainy day in the window. The rain-day comparison stage reads it from here.
+RAIN_DATE: date = date(2020, 12, 23)
+
+# Named because the run digest looks this stage up by name to report how many points
+# the island rule drops. Naming it here keeps that lookup and the funnel on one string.
+ISLAND_RULE = "点全在岛内 +100m"
+
 
 @dataclass(frozen=True, slots=True)
 class SparkParameters:
@@ -71,7 +78,7 @@ class SplitStageParameters:
     hard_filter_rule_order: tuple[str, ...] = (
         "点数 ≥ 3",
         "60s < 时长 < 3600s",
-        "点全在岛内 +100m",
+        ISLAND_RULE,
         "移动范围 ≥ 150m",
         "慢点占比 ≤ 60%",
         "平均速度 ≤ 7 m/s",

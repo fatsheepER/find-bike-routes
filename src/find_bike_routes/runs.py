@@ -15,7 +15,7 @@ from pathlib import Path
 from pyspark.sql import DataFrame, functions as F
 
 from . import PipelineError
-from .config import SplitStageParameters
+from .config import ISLAND_RULE, RAIN_DATE, SplitStageParameters
 from .datasets import POINT_COLUMNS, STAGE_COUNT_COLUMNS, TRACK_COLUMNS
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -23,8 +23,6 @@ LOCK_PATH = PROJECT_ROOT / "config" / "data-contract.lock.json"
 BASELINES_PATH = PROJECT_ROOT / "config" / "baselines.json"
 TOOLING_PACKAGES = ("pandas", "numpy", "pyproj", "shapely", "osmium", "pyspark")
 FUNNEL_FIELDS = ("tracks_entered", "tracks_kept", "points_entered", "points_kept")
-ISLAND_STAGE = "点全在岛内 +100m"
-RAIN_DAY = "2020-12-23"
 DEFINITION_FIELDS = (
     "max_gap_seconds",
     "max_speed_mps",
@@ -358,17 +356,22 @@ def observations_from_stage_counts(
     for day, rows in sorted(by_date.items()):
         first, last = rows[0], rows[-1]
         island = next(
-            (row for row in rows if row["stage_name"] == ISLAND_STAGE),
+            (row for row in rows if row["stage_name"] == ISLAND_RULE),
             None,
         )
+        if island is None:
+            # The funnel is derived from the same rule order this name comes from, so a
+            # miss means the two have drifted apart. Say so instead of writing a null.
+            raise PipelineError(
+                f"no stage named {ISLAND_RULE!r} in the {day} funnel; "
+                f"the rule order and the digest lookup have drifted apart"
+            )
         days[day] = {
             "point_retention_pct": _share_pct(
                 int(last["points_kept"]), int(first["points_kept"])
             ),
-            "island_rule_point_drop_pct": (
-                _share_pct(int(island["points_rejected"]), int(island["points_entered"]))
-                if island is not None
-                else None
+            "island_rule_point_drop_pct": _share_pct(
+                int(island["points_rejected"]), int(island["points_entered"])
             ),
         }
 
@@ -386,11 +389,12 @@ def observations_from_stage_counts(
         totals["valid_points"] += int(last["points_kept"])
 
     payload: dict[str, object] = {"days": days, "totals": totals}
-    rain = days.get(RAIN_DAY)
-    others = {key: value for key, value in days.items() if key != RAIN_DAY}
+    rain_day = RAIN_DATE.isoformat()
+    rain = days.get(rain_day)
+    others = {key: value for key, value in days.items() if key != rain_day}
     if rain is not None and others:
         payload["rain_day"] = {
-            "date": RAIN_DAY,
+            "date": rain_day,
             "point_retention_pct": rain["point_retention_pct"],
             "island_rule_point_drop_pct": rain["island_rule_point_drop_pct"],
             "other_days_point_retention_pct": [
@@ -400,7 +404,7 @@ def observations_from_stage_counts(
                 value["island_rule_point_drop_pct"] for value in others.values()
             ],
             "note": (
-                "点留存率明显低于其余四天，差异集中在「点全在岛内 +100m」"
+                f"点留存率明显低于其余四天，差异集中在「{ISLAND_RULE}」"
             ),
         }
     return payload
