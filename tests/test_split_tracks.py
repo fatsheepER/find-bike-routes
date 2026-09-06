@@ -581,6 +581,7 @@ def test_two_runs_on_the_same_input_write_identical_digests(tmp_path, split_run)
     match = re.search(r"run-id (\d{8}T\d{6}Z-[0-9a-f]+-split)", completed.stdout)
     assert completed.returncode == 0, completed.stderr
     assert match is not None
+    assert "baseline differed" in completed.stdout
     run_id = match.group(1)
     artifacts = ARTIFACTS_ROOT / run_id
     try:
@@ -617,3 +618,16 @@ def test_digest_records_differences_against_the_five_day_baseline(split_run):
     )
     assert mismatch["expected"] == 427134
     assert mismatch["actual"] == EXPECTED_SPLIT["valid_points"]
+
+
+@pytest.mark.spark
+def test_digest_records_point_retention_and_omits_rain_day_when_absent(split_run):
+    """A single-day fixture run has a retention figure but no rain-day note."""
+    digest = json.loads((ARTIFACTS_ROOT / "test-split" / "digest.json").read_text(encoding="utf-8"))
+    observations = digest["observations"]
+
+    assert observations["days"][FIXTURE_DATE]["point_retention_pct"] == 72.1
+    assert observations["days"][FIXTURE_DATE]["island_rule_point_drop_pct"] == 0.7
+    assert observations["totals"]["raw_points"] == FIXTURE_POINTS
+    assert observations["totals"]["valid_tracks"] == 120
+    assert "rain_day" not in observations

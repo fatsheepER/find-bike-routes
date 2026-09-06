@@ -23,6 +23,8 @@ LOCK_PATH = PROJECT_ROOT / "config" / "data-contract.lock.json"
 BASELINES_PATH = PROJECT_ROOT / "config" / "baselines.json"
 TOOLING_PACKAGES = ("pandas", "numpy", "pyproj", "shapely", "osmium", "pyspark")
 FUNNEL_FIELDS = ("tracks_entered", "tracks_kept", "points_entered", "points_kept")
+ISLAND_STAGE = "点全在岛内 +100m"
+RAIN_DAY = "2020-12-23"
 DEFINITION_FIELDS = (
     "max_gap_seconds",
     "max_speed_mps",
@@ -258,9 +260,7 @@ def compare_to_baseline(
     days = baselines["days"]
     extras = extras or {}
     differences: list[dict[str, object]] = []
-    by_date: dict[str, list[dict[str, object]]] = {}
-    for row in stage_counts:
-        by_date.setdefault(str(row["source_date"]), []).append(row)
+    by_date = _rows_by_date(stage_counts)
 
     for day, rows in by_date.items():
         expected_day = days.get(day)
@@ -330,6 +330,82 @@ def compare_to_baseline(
     }
 
 
+def _share_pct(part: int, whole: int) -> float | None:
+    if whole == 0:
+        return None
+    return round(100 * part / whole, 1)
+
+
+def _rows_by_date(
+    stage_counts: list[dict[str, object]],
+) -> dict[str, list[dict[str, object]]]:
+    by_date: dict[str, list[dict[str, object]]] = {}
+    for row in stage_counts:
+        by_date.setdefault(str(row["source_date"]), []).append(row)
+    return {
+        day: sorted(rows, key=lambda row: int(row["stage_index"]))
+        for day, rows in by_date.items()
+    }
+
+
+def observations_from_stage_counts(
+    stage_counts: list[dict[str, object]],
+) -> dict[str, object]:
+    """Per-day point retention, plus the rain-day note when 12-23 is beside other days."""
+    by_date = _rows_by_date(stage_counts)
+
+    days: dict[str, dict[str, float | None]] = {}
+    for day, rows in sorted(by_date.items()):
+        first, last = rows[0], rows[-1]
+        island = next(
+            (row for row in rows if row["stage_name"] == ISLAND_STAGE),
+            None,
+        )
+        days[day] = {
+            "point_retention_pct": _share_pct(
+                int(last["points_kept"]), int(first["points_kept"])
+            ),
+            "island_rule_point_drop_pct": (
+                _share_pct(int(island["points_rejected"]), int(island["points_entered"]))
+                if island is not None
+                else None
+            ),
+        }
+
+    totals = {
+        "raw_points": 0,
+        "tracks": 0,
+        "valid_tracks": 0,
+        "valid_points": 0,
+    }
+    for rows in by_date.values():
+        first, last = rows[0], rows[-1]
+        totals["raw_points"] += int(first["points_kept"])
+        totals["tracks"] += int(first["tracks_kept"])
+        totals["valid_tracks"] += int(last["tracks_kept"])
+        totals["valid_points"] += int(last["points_kept"])
+
+    payload: dict[str, object] = {"days": days, "totals": totals}
+    rain = days.get(RAIN_DAY)
+    others = {key: value for key, value in days.items() if key != RAIN_DAY}
+    if rain is not None and others:
+        payload["rain_day"] = {
+            "date": RAIN_DAY,
+            "point_retention_pct": rain["point_retention_pct"],
+            "island_rule_point_drop_pct": rain["island_rule_point_drop_pct"],
+            "other_days_point_retention_pct": [
+                value["point_retention_pct"] for value in others.values()
+            ],
+            "other_days_island_rule_point_drop_pct": [
+                value["island_rule_point_drop_pct"] for value in others.values()
+            ],
+            "note": (
+                "点留存率明显低于其余四天，差异集中在「点全在岛内 +100m」"
+            ),
+        }
+    return payload
+
+
 def write_digest(
     run_dir: Path,
     points: DataFrame,
@@ -353,5 +429,6 @@ def write_digest(
         },
         "stage_counts": stages,
         "baseline_comparison": compare_to_baseline(stages, day_stats(tracks)),
+        "observations": observations_from_stage_counts(stages),
     }
     return _write_json(run_dir / "digest.json", payload)

@@ -13,6 +13,7 @@ literally true.
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 from datetime import date, datetime, timezone
@@ -121,7 +122,7 @@ def run(args: argparse.Namespace) -> None:
         points_path = write_point_table(points, args.output, args.overwrite)
         tracks_path = write_track_table(tracks, args.output, args.overwrite)
         counts_path = write_stage_count_table(counts, args.output, args.overwrite)
-        write_digest(run_dir, points, tracks, counts)
+        digest_path = write_digest(run_dir, points, tracks, counts)
     finally:
         session.stop()
 
@@ -129,6 +130,21 @@ def run(args: argparse.Namespace) -> None:
         f"wrote {points_path}, {tracks_path} and {counts_path} "
         f"({len(inputs)} date partition(s), run-id {args.run_id})"
     )
+    digest = json.loads(digest_path.read_text(encoding="utf-8"))
+    comparison = digest["baseline_comparison"]
+    if comparison["matched"]:
+        print("baseline matched config/baselines.json")
+    else:
+        print(
+            f"baseline differed in {len(comparison['differences'])} cell(s); "
+            f"see {digest_path}"
+        )
+    rain = digest["observations"].get("rain_day")
+    if rain is not None:
+        print(
+            f"{rain['date']} point retention {rain['point_retention_pct']}% "
+            f"(island-rule drop {rain['island_rule_point_drop_pct']}%)"
+        )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
