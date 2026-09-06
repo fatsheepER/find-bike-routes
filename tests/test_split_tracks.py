@@ -15,6 +15,7 @@ from support import (
     FIXTURE_DATE,
     FIXTURE_POINTS,
     read_points,
+    read_tracks,
     run_cli,
     staging_copy,
 )
@@ -170,6 +171,95 @@ def test_timestamps_keep_the_local_wall_clock(split_run):
     )
 
 
+# --- projection and the island flag ------------------------------------------------
+
+
+@pytest.mark.spark
+def test_points_carry_utm_coordinates_and_an_island_flag(split_run):
+    """Every point is projected to EPSG:32650 and judged against the island + 100 m.
+
+    The easting/northing bounds are Xiamen Island in UTM zone 50N, not a recomputation
+    of the pipeline's transform — a point that landed in the wrong zone would miss them.
+    The fixture is known to contain both on-island and off-island points.
+    """
+    points = read_points(split_run.points)
+
+    assert points["x"].notna().all()
+    assert points["y"].notna().all()
+    assert points["on_island"].notna().all()
+    assert points["x"].between(500_000, 700_000).all()
+    assert points["y"].between(2_600_000, 2_800_000).all()
+    assert bool(points["on_island"].any())
+    assert bool((~points["on_island"].astype(bool)).any())
+
+
+# --- splitting --------------------------------------------------------------------
+
+
+@pytest.mark.spark
+def test_track_id_date_prefix_matches_source_date(split_run):
+    points = read_points(split_run.points)
+    dates = points["source_date"].astype(str)
+    number = points["TRACK_ID"].str.extract(r"_T(\d+)$", expand=False)
+
+    assert (points["TRACK_ID"].str.split("_", n=1).str[0] == dates).all()
+    assert number.notna().all()
+    assert (
+        points["TRACK_ID"] == dates + "_" + points["BICYCLE_ID"] + "_T" + number
+    ).all()
+
+
+@pytest.mark.spark
+def test_adjacent_metrics_are_null_only_on_track_starts(split_run):
+    """Gap, step and speed are computed across a bicycle, then cleared on each start.
+
+    The split criteria need the values that cross a track boundary; later aggregates
+    must not see them. A start is the first source_row of its TRACK_ID.
+    """
+    points = read_points(split_run.points)
+    metrics = ["gap_seconds", "step_distance_m", "step_speed_mps"]
+    starts = points.groupby("TRACK_ID")["source_row"].transform("min") == points["source_row"]
+
+    assert points.loc[starts, metrics].isna().all().all()
+    assert points.loc[~starts, metrics].notna().all().all()
+
+
+# --- the track table --------------------------------------------------------------
+
+
+@pytest.mark.spark
+def test_fixture_splits_into_the_frozen_track_counts(split_run):
+    tracks = read_tracks(split_run.tracks)
+
+    assert len(tracks) == 297
+    assert int((tracks["points"] >= 2).sum()) == 209
+    assert int((tracks["points"] >= 3).sum()) == 176
+    assert int((tracks["points"] == 1).sum()) == 88
+    assert int(tracks["points"].sum()) == FIXTURE_POINTS
+
+
+@pytest.mark.spark
+def test_track_table_is_one_row_per_track_partitioned_by_source_date(split_run):
+    tracks = read_tracks(split_run.tracks)
+    partitions = sorted(path.name for path in split_run.tracks.iterdir() if path.is_dir())
+
+    assert tracks["TRACK_ID"].is_unique
+    assert set(tracks.columns) >= {
+        "TRACK_ID",
+        "BICYCLE_ID",
+        "source_date",
+        "points",
+        "start_time",
+        "end_time",
+        "duration_s",
+    }
+    assert partitions == [f"source_date={FIXTURE_DATE}"]
+    assert (tracks["source_date"].astype(str) == FIXTURE_DATE).all()
+    assert (tracks["duration_s"] == 0).any()
+    later = tracks["end_time"] >= tracks["start_time"]
+    assert later.all()
+
+
 # --- overwriting -------------------------------------------------------------------
 
 
@@ -198,8 +288,10 @@ def test_overwrite_replaces_only_the_dates_this_run_produced(tmp_path):
         "--output", str(output),
     )
     assert first.returncode == 0, first.stderr
-    untouched = output / "points" / "source_date=2020-12-22"
-    before = sorted(path.name for path in untouched.iterdir())
+    untouched_points = output / "points" / "source_date=2020-12-22"
+    untouched_tracks = output / "tracks" / "source_date=2020-12-22"
+    before_points = sorted(path.name for path in untouched_points.iterdir())
+    before_tracks = sorted(path.name for path in untouched_tracks.iterdir())
 
     second = run_cli(
         "--input", str(staging),
@@ -209,6 +301,7 @@ def test_overwrite_replaces_only_the_dates_this_run_produced(tmp_path):
     )
 
     assert second.returncode == 0, second.stderr
-    assert sorted(path.name for path in untouched.iterdir()) == before
+    assert sorted(path.name for path in untouched_points.iterdir()) == before_points
+    assert sorted(path.name for path in untouched_tracks.iterdir()) == before_tracks
     points = read_points(output / "points")
     assert len(points) == 2 * FIXTURE_POINTS

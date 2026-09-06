@@ -56,3 +56,7 @@ class SplitStageParameters:
 
     dates: tuple[date, ...] = STUDY_DATES
     spark: SparkParameters = SparkParameters()
+    max_gap_seconds: int = 120
+    max_speed_mps: float = 12.0
+    max_step_distance_m: float = 1_000.0
+    island_tolerance_m: float = 100.0

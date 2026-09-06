@@ -1,4 +1,4 @@
-"""Read the staging trajectory CSVs for one or more days and write the point table.
+"""Read the staging trajectory CSVs for one or more days and write the point and track tables.
 
 Every parameter that could shift a definition is fixed in code (ADR-0002); the flags
 here only choose which days to read, where to read and write them, how to name the
@@ -25,8 +25,11 @@ from find_bike_routes.datasets import (
     refuse_to_clobber,
     resolve_inputs,
     write_point_table,
+    write_track_table,
 )
+from find_bike_routes.geography import BOUNDARY_PATH, add_projected_coordinates
 from find_bike_routes.spark import build_session, ensure_java_runtime
+from find_bike_routes.tracks import build_track_table, split_into_tracks
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 STAGING_DIR = PROJECT_ROOT / "data/staging/trajectory"
@@ -71,13 +74,26 @@ def run(args: argparse.Namespace) -> None:
 
     session = build_session(f"find-bike-routes-{args.run_id}", PARAMETERS.spark)
     try:
-        written = write_point_table(
-            build_point_table(session, inputs), args.output, args.overwrite
+        points = split_into_tracks(
+            add_projected_coordinates(
+                session,
+                build_point_table(session, inputs),
+                BOUNDARY_PATH,
+                PARAMETERS.island_tolerance_m,
+            ),
+            PARAMETERS,
+        )
+        points_path = write_point_table(points, args.output, args.overwrite)
+        tracks_path = write_track_table(
+            build_track_table(points), args.output, args.overwrite
         )
     finally:
         session.stop()
 
-    print(f"wrote {written} ({len(inputs)} date partition(s), run-id {args.run_id})")
+    print(
+        f"wrote {points_path} and {tracks_path} "
+        f"({len(inputs)} date partition(s), run-id {args.run_id})"
+    )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

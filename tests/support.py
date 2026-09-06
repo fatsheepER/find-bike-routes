@@ -42,6 +42,10 @@ def read_points(points: Path) -> pd.DataFrame:
     return pd.read_parquet(points).sort_values("source_row").reset_index(drop=True)
 
 
+def read_tracks(tracks: Path) -> pd.DataFrame:
+    return pd.read_parquet(tracks).sort_values("TRACK_ID").reset_index(drop=True)
+
+
 def staging_copy(directory: Path, day: str) -> Path:
     """The fixture under the staging naming convention, standing in for another day."""
     directory.mkdir(parents=True, exist_ok=True)

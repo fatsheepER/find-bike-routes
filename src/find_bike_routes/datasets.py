@@ -1,4 +1,4 @@
-"""Staging CSV in, point-table Parquet out: schemas, paths, and the BICYCLE_ID fill.
+"""Staging CSV in, point- and track-table Parquet out: schemas, paths, and the BICYCLE_ID fill.
 
 Reading uses an explicit schema, so no day can infer a different column type and no
 day pays a second pass over the file. Days are read one file at a time and stamped
@@ -39,13 +39,30 @@ STAGING_SCHEMA = StructType(
 )
 
 POINT_TABLE = "points"
+TRACK_TABLE = "tracks"
 PARTITION_COLUMN = "source_date"
+TRACK_COLUMNS = (
+    "TRACK_ID",
+    "BICYCLE_ID",
+    "points",
+    "start_time",
+    "end_time",
+    "duration_s",
+    PARTITION_COLUMN,
+)
 POINT_COLUMNS = (
     "source_row",
     "BICYCLE_ID",
+    "TRACK_ID",
     "timestamp",
     "LATITUDE",
     "LONGITUDE",
+    "x",
+    "y",
+    "gap_seconds",
+    "step_distance_m",
+    "step_speed_mps",
+    "on_island",
     PARTITION_COLUMN,
 )
 
@@ -214,17 +231,38 @@ def point_table_path(output_root: Path) -> Path:
     return output_root / POINT_TABLE
 
 
+def track_table_path(output_root: Path) -> Path:
+    return output_root / TRACK_TABLE
+
+
 def refuse_to_clobber(output_root: Path, overwrite: bool) -> None:
     """Stop before a run would replace products that are already on disk."""
     if overwrite:
         return
-    path = point_table_path(output_root)
-    if path.is_dir() and any(path.iterdir()):
+    existing = [
+        path
+        for path in (point_table_path(output_root), track_table_path(output_root))
+        if path.is_dir() and any(path.iterdir())
+    ]
+    if existing:
+        listed = "\n".join(str(path) for path in existing)
         raise PipelineError(
-            f"output already exists: {path}\n"
+            f"output already exists:\n{listed}\n"
             f"pass --overwrite to replace it; only the date partitions this run "
             f"produces are replaced, the other dates are left alone"
         )
+
+
+def _write_partitioned(
+    frame: DataFrame, path: Path, columns: tuple[str, ...], overwrite: bool
+) -> Path:
+    (
+        frame.select(*columns)
+        .write.mode("overwrite" if overwrite else "errorifexists")
+        .partitionBy(PARTITION_COLUMN)
+        .parquet(str(path))
+    )
+    return path
 
 
 def write_point_table(frame: DataFrame, output_root: Path, overwrite: bool) -> Path:
@@ -233,14 +271,16 @@ def write_point_table(frame: DataFrame, output_root: Path, overwrite: bool) -> P
     With the session's dynamic partition overwrite mode, `overwrite` replaces only the
     partitions this run produces.
     """
-    path = point_table_path(output_root)
-    (
-        frame.select(*POINT_COLUMNS)
-        .write.mode("overwrite" if overwrite else "errorifexists")
-        .partitionBy(PARTITION_COLUMN)
-        .parquet(str(path))
+    return _write_partitioned(
+        frame, point_table_path(output_root), POINT_COLUMNS, overwrite
     )
-    return path
+
+
+def write_track_table(frame: DataFrame, output_root: Path, overwrite: bool) -> Path:
+    """Write the track table, partitioned by date, same overwrite rule as the points."""
+    return _write_partitioned(
+        frame, track_table_path(output_root), TRACK_COLUMNS, overwrite
+    )
 
 
 def build_point_table(session: SparkSession, inputs: dict[date, Path]) -> DataFrame:

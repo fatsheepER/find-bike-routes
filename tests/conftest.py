@@ -19,6 +19,7 @@ from support import FIXTURE, FIXTURE_DATE, run_cli
 class SplitRun:
     output: Path
     points: Path
+    tracks: Path
 
 
 @pytest.fixture(scope="session")
@@ -32,4 +33,6 @@ def split_run(tmp_path_factory: pytest.TempPathFactory) -> SplitRun:
         "--run-id", "test-split",
     )
     assert completed.returncode == 0, completed.stderr
-    return SplitRun(output=output, points=output / "points")
+    return SplitRun(
+        output=output, points=output / "points", tracks=output / "tracks"
+    )
