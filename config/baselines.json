@@ -1,5 +1,5 @@
 {
-  "note": "Section names mark evidence status. baselines holds 12-21 and the network — numbers that can falsify the implementation. recorded holds the other four days, which come from this implementation itself. 12-21 split counts are from an independent pandas reproduction, verified against the notebook's 772-track remainder and project-plan §3.1's 2,849,243 points. 12-21 match counts are a port-fidelity check against the notebook matcher, not cross-validation. Fixture expectations live in config/regression-sample.json. Network counts are from the island-wide OSM extraction (notebooks/single_day_pipeline.py), frozen after scripts/extract_bike_network.py.",
+  "note": "Section names mark evidence status. baselines holds 12-21 and the network — numbers that can falsify the implementation. recorded holds the other four days, which come from this implementation itself. 12-21 split counts are from an independent pandas reproduction, verified against the notebook's 772-track remainder and project-plan §3.1's 2,849,243 points. 12-21 match counts are a port-fidelity check against the notebook matcher, not cross-validation. After the five-day run the 12-21 match table was corrected on two points already seen on the fixture: match_edges counts every entering track (the notebook's 542,220 was the valid-track remainder), and two extra tracks pass inferred-share because degenerate pieces are dropped before the share is computed, as the spec requires. Those corrected cells still live under baselines and can falsify a later run. Fixture expectations live in config/regression-sample.json. Network counts are from the island-wide OSM extraction (notebooks/single_day_pipeline.py), frozen after scripts/extract_bike_network.py.",
   "baselines": {
     "days": {
       "2020-12-21": {
@@ -22,23 +22,23 @@
           "entering_tracks": 15527,
           "entering_points": 427134,
           "unmatched_points": 8053,
-          "match_edges": 542220,
-          "valid_tracks": 14755,
-          "valid_points": 409582,
-          "valid_pieces": 16411,
+          "match_edges": 560260,
+          "valid_tracks": 14757,
+          "valid_points": 409598,
+          "valid_pieces": 16413,
           "funnel": [
             {"stage": "匹配率 ≥ 80%", "tracks_entered": 15527, "tracks_kept": 15148, "points_entered": 427134, "points_kept": 415128},
             {"stage": "匹配长度 ≥ 100m", "tracks_entered": 15148, "tracks_kept": 15141, "points_entered": 415128, "points_kept": 415065},
-            {"stage": "推断段比例 ≤ 30%", "tracks_entered": 15141, "tracks_kept": 14755, "points_entered": 415065, "points_kept": 409582},
-            {"stage": "匹配路径在岛内", "tracks_entered": 14755, "tracks_kept": 14755, "points_entered": 409582, "points_kept": 409582}
+            {"stage": "推断段比例 ≤ 30%", "tracks_entered": 15141, "tracks_kept": 14757, "points_entered": 415065, "points_kept": 409598},
+            {"stage": "匹配路径在岛内", "tracks_entered": 14757, "tracks_kept": 14757, "points_entered": 409598, "points_kept": 409598}
           ],
           "point_match_rate": 0.9916,
-          "snap_distance_median_m": 10.6443,
-          "snap_distance_p90_m": 27.2972,
-          "snap_distance_p95_m": 33.6866,
+          "snap_distance_median_m": 10.6442,
+          "snap_distance_p90_m": 27.2971,
+          "snap_distance_p95_m": 33.6865,
           "contraflow_point_rate": 0.0837,
           "tracks_with_path_breaks": 663,
-          "matched_length_median_m": 935.4608,
+          "matched_length_median_m": 935.4436,
           "inferred_share_mean": 0.0504
         }
       }
@@ -69,7 +69,30 @@
           {"stage": "移动范围 ≥ 150m", "tracks_entered": 19136, "tracks_kept": 17157, "points_entered": 505628, "points_kept": 483587},
           {"stage": "慢点占比 ≤ 60%", "tracks_entered": 17157, "tracks_kept": 16824, "points_entered": 483587, "points_kept": 459212},
           {"stage": "平均速度 ≤ 7 m/s", "tracks_entered": 16824, "tracks_kept": 16821, "points_entered": 459212, "points_kept": 459188}
-        ]
+        ],
+        "match": {
+          "entering_tracks": 16821,
+          "entering_points": 459188,
+          "unmatched_points": 7722,
+          "match_edges": 602050,
+          "valid_tracks": 16019,
+          "valid_points": 442557,
+          "valid_pieces": 17744,
+          "funnel": [
+            {"stage": "匹配率 ≥ 80%", "tracks_entered": 16821, "tracks_kept": 16417, "points_entered": 459188, "points_kept": 448133},
+            {"stage": "匹配长度 ≥ 100m", "tracks_entered": 16417, "tracks_kept": 16412, "points_entered": 448133, "points_kept": 448100},
+            {"stage": "推断段比例 ≤ 30%", "tracks_entered": 16412, "tracks_kept": 16019, "points_entered": 448100, "points_kept": 442557},
+            {"stage": "匹配路径在岛内", "tracks_entered": 16019, "tracks_kept": 16019, "points_entered": 442557, "points_kept": 442557}
+          ],
+          "point_match_rate": 0.9921,
+          "snap_distance_median_m": 10.6807,
+          "snap_distance_p90_m": 27.2049,
+          "snap_distance_p95_m": 33.601,
+          "contraflow_point_rate": 0.0841,
+          "tracks_with_path_breaks": 689,
+          "matched_length_median_m": 915.8478,
+          "inferred_share_mean": 0.0499
+        }
       },
       "2020-12-23": {
         "raw_points": 213733,
@@ -86,7 +109,30 @@
           {"stage": "移动范围 ≥ 150m", "tracks_entered": 6572, "tracks_kept": 5807, "points_entered": 172717, "points_kept": 162580},
           {"stage": "慢点占比 ≤ 60%", "tracks_entered": 5807, "tracks_kept": 5686, "points_entered": 162580, "points_kept": 152776},
           {"stage": "平均速度 ≤ 7 m/s", "tracks_entered": 5686, "tracks_kept": 5686, "points_entered": 152776, "points_kept": 152776}
-        ]
+        ],
+        "match": {
+          "entering_tracks": 5686,
+          "entering_points": 152776,
+          "unmatched_points": 2700,
+          "match_edges": 198217,
+          "valid_tracks": 5372,
+          "valid_points": 146933,
+          "valid_pieces": 6017,
+          "funnel": [
+            {"stage": "匹配率 ≥ 80%", "tracks_entered": 5686, "tracks_kept": 5529, "points_entered": 152776, "points_kept": 149046},
+            {"stage": "匹配长度 ≥ 100m", "tracks_entered": 5529, "tracks_kept": 5526, "points_entered": 149046, "points_kept": 149019},
+            {"stage": "推断段比例 ≤ 30%", "tracks_entered": 5526, "tracks_kept": 5372, "points_entered": 149019, "points_kept": 146933},
+            {"stage": "匹配路径在岛内", "tracks_entered": 5372, "tracks_kept": 5372, "points_entered": 146933, "points_kept": 146933}
+          ],
+          "point_match_rate": 0.9915,
+          "snap_distance_median_m": 10.8001,
+          "snap_distance_p90_m": 27.6425,
+          "snap_distance_p95_m": 34.0892,
+          "contraflow_point_rate": 0.0871,
+          "tracks_with_path_breaks": 267,
+          "matched_length_median_m": 931.9993,
+          "inferred_share_mean": 0.0499
+        }
       },
       "2020-12-24": {
         "raw_points": 932469,
@@ -103,7 +149,30 @@
           {"stage": "移动范围 ≥ 150m", "tracks_entered": 30382, "tracks_kept": 27228, "points_entered": 801395, "points_kept": 766426},
           {"stage": "慢点占比 ≤ 60%", "tracks_entered": 27228, "tracks_kept": 26661, "points_entered": 766426, "points_kept": 724219},
           {"stage": "平均速度 ≤ 7 m/s", "tracks_entered": 26661, "tracks_kept": 26654, "points_entered": 724219, "points_kept": 724178}
-        ]
+        ],
+        "match": {
+          "entering_tracks": 26654,
+          "entering_points": 724178,
+          "unmatched_points": 12784,
+          "match_edges": 949275,
+          "valid_tracks": 25291,
+          "valid_points": 694477,
+          "valid_pieces": 28125,
+          "funnel": [
+            {"stage": "匹配率 ≥ 80%", "tracks_entered": 26654, "tracks_kept": 26009, "points_entered": 724178, "points_kept": 704912},
+            {"stage": "匹配长度 ≥ 100m", "tracks_entered": 26009, "tracks_kept": 26000, "points_entered": 704912, "points_kept": 704846},
+            {"stage": "推断段比例 ≤ 30%", "tracks_entered": 26000, "tracks_kept": 25291, "points_entered": 704846, "points_kept": 694477},
+            {"stage": "匹配路径在岛内", "tracks_entered": 25291, "tracks_kept": 25291, "points_entered": 694477, "points_kept": 694477}
+          ],
+          "point_match_rate": 0.9918,
+          "snap_distance_median_m": 10.7135,
+          "snap_distance_p90_m": 27.5105,
+          "snap_distance_p95_m": 33.9871,
+          "contraflow_point_rate": 0.0856,
+          "tracks_with_path_breaks": 1119,
+          "matched_length_median_m": 916.2586,
+          "inferred_share_mean": 0.0507
+        }
       },
       "2020-12-25": {
         "raw_points": 574093,
@@ -120,8 +189,45 @@
           {"stage": "移动范围 ≥ 150m", "tracks_entered": 18666, "tracks_kept": 16717, "points_entered": 492378, "points_kept": 471479},
           {"stage": "慢点占比 ≤ 60%", "tracks_entered": 16717, "tracks_kept": 16351, "points_entered": 471479, "points_kept": 443420},
           {"stage": "平均速度 ≤ 7 m/s", "tracks_entered": 16351, "tracks_kept": 16347, "points_entered": 443420, "points_kept": 443396}
-        ]
+        ],
+        "match": {
+          "entering_tracks": 16347,
+          "entering_points": 443396,
+          "unmatched_points": 7572,
+          "match_edges": 581542,
+          "valid_tracks": 15519,
+          "valid_points": 426261,
+          "valid_pieces": 17260,
+          "funnel": [
+            {"stage": "匹配率 ≥ 80%", "tracks_entered": 16347, "tracks_kept": 15953, "points_entered": 443396, "points_kept": 432576},
+            {"stage": "匹配长度 ≥ 100m", "tracks_entered": 15953, "tracks_kept": 15946, "points_entered": 432576, "points_kept": 432517},
+            {"stage": "推断段比例 ≤ 30%", "tracks_entered": 15946, "tracks_kept": 15519, "points_entered": 432517, "points_kept": 426261},
+            {"stage": "匹配路径在岛内", "tracks_entered": 15519, "tracks_kept": 15519, "points_entered": 426261, "points_kept": 426261}
+          ],
+          "point_match_rate": 0.9921,
+          "snap_distance_median_m": 10.6577,
+          "snap_distance_p90_m": 27.1062,
+          "snap_distance_p95_m": 33.4174,
+          "contraflow_point_rate": 0.083,
+          "tracks_with_path_breaks": 684,
+          "matched_length_median_m": 908.7517,
+          "inferred_share_mean": 0.0506
+        }
       }
+    },
+    "rain_day": {
+      "date": "2020-12-23",
+      "point_match_rate": 0.9915,
+      "snap_distance_median_m": 10.8001,
+      "snap_distance_p90_m": 27.6425,
+      "snap_distance_p95_m": 34.0892,
+      "note": "第 2 步已发现该日点留存率 71.5%，差异集中在「点全在岛内 +100m」。匹配阶段点匹配率 0.9915（其余四天 0.9916 到 0.9921），吸附距离中位 10.8001 米（其余四天 10.6442 到 10.7135），是同一条定位质量偏差的第二个表现，两条一并写入雨天对照的偏差声明，不能把雨天流量下降记到出行行为账上。"
+    },
+    "acceptance": {
+      "point_match_rate": 0.9919,
+      "snap_distance_median_m": 10.688,
+      "point_match_rate_min": 0.9,
+      "snap_distance_median_m_max": 20.0
     }
   },
   "totals": {
@@ -129,6 +235,13 @@
     "tracks": 153087,
     "single_point_tracks": 25129,
     "valid_tracks": 81035,
-    "valid_points": 2206672
+    "valid_points": 2206672,
+    "match_entering_tracks": 81035,
+    "match_entering_points": 2206672,
+    "match_valid_tracks": 76958,
+    "match_valid_points": 2119826,
+    "match_edges": 2891344,
+    "match_pieces": 91167,
+    "unmatched_points": 38831
   }
 }

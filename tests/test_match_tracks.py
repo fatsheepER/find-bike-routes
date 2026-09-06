@@ -359,12 +359,24 @@ def test_baselines_file_separates_falsifiable_from_recorded():
     assert "network" not in baselines["recorded"]
     match = baselines["baselines"]["days"]["2020-12-21"]["match"]
     first = match["funnel"][0]
-    assert match["valid_tracks"] == 14_755
-    assert match["valid_points"] == 409_582
+    inferred = match["funnel"][2]
+    assert match["entering_tracks"] == 15_527
+    assert match["match_edges"] == 560_260
+    assert match["unmatched_points"] == 8_053
+    assert match["valid_tracks"] == 14_757
+    assert match["valid_points"] == 409_598
+    assert match["valid_pieces"] == 16_413
     assert first["tracks_entered"] - first["tracks_kept"] == 379
+    assert inferred["tracks_entered"] - inferred["tracks_kept"] == 384
     assert match["point_match_rate"] == 0.9916
-    assert match["snap_distance_median_m"] == 10.6443
+    assert match["snap_distance_median_m"] == 10.6442
     assert baselines["baselines"]["network"]["physical_segments"] == 12_359
+
+    recorded = baselines["recorded"]
+    for day in recorded["days"].values():
+        assert "match" in day
+    assert recorded["rain_day"]["date"] == "2020-12-23"
+    assert "acceptance" in recorded
 
 
 def test_data_contract_failure_refuses_to_start(tmp_path):
@@ -507,7 +519,7 @@ def test_digest_records_differences_against_the_12_21_match_baseline(match_run):
         for item in differences
         if item["date"] == FIXTURE_DATE and item["field"] == "valid_tracks"
     )
-    assert mismatch["expected"] == 14_755
+    assert mismatch["expected"] == 14_757
     assert mismatch["actual"] == EXPECTED_MATCH["valid_tracks"]
 
 
