@@ -40,6 +40,7 @@ import ast
 import json
 import time
 from collections import Counter, defaultdict, deque
+from bisect import bisect_left
 from math import floor, hypot, inf
 from pathlib import Path
 
@@ -603,8 +604,13 @@ class TrackMatcher:
         return path
 
     def traversal_pieces(self, selected):
-        """把选中的匹配状态串成有序的边区间；连不上的地方断开成新的一段。"""
+        """把选中的匹配状态串成有序的边区间；连不上的地方断开成新的一段。
+
+        同时返回每段内各匹配点的沿路径里程。去抖规则要按「一次进入」计点，
+        只知道某个点落在哪个区域是不够的，还要知道它落在这一段的哪个位置。
+        """
         pieces, current, path_breaks = [], [], 0
+        offsets, current_offsets, travelled = [], [0.0], 0.0
         for step in range(1, len(selected)):
             previous, current_state = selected[step - 1], selected[step]
             _, previous_edge_index, previous_along = previous
@@ -614,9 +620,11 @@ class TrackMatcher:
                 path_breaks += 1
                 if current:
                     pieces.append(current)
-                current = []
+                    offsets.append(current_offsets)
+                current, current_offsets, travelled = [], [0.0], 0.0
                 continue
             _, node_path = transition
+            appended_from = len(current)
             if previous_edge_index == current_edge_index:
                 current.append(
                     (
@@ -626,32 +634,38 @@ class TrackMatcher:
                         False,
                     )
                 )
-                continue
-            current.append(
-                (
-                    previous_edge_index,
-                    previous_along,
-                    self.edges[previous_edge_index]["length_m"],
-                    False,
-                )
-            )
-            for start_node, end_node in zip(node_path, node_path[1:]):
-                data = min(
-                    self.graph[start_node][end_node].values(), key=lambda d: d["length"]
-                )
-                connector_index = data["edge_index"]
+            else:
                 current.append(
                     (
-                        connector_index,
-                        0.0,
-                        self.edges[connector_index]["length_m"],
-                        True,
+                        previous_edge_index,
+                        previous_along,
+                        self.edges[previous_edge_index]["length_m"],
+                        False,
                     )
                 )
-            current.append((current_edge_index, 0.0, current_along, False))
+                for start_node, end_node in zip(node_path, node_path[1:]):
+                    data = min(
+                        self.graph[start_node][end_node].values(),
+                        key=lambda d: d["length"],
+                    )
+                    connector_index = data["edge_index"]
+                    current.append(
+                        (
+                            connector_index,
+                            0.0,
+                            self.edges[connector_index]["length_m"],
+                            True,
+                        )
+                    )
+                current.append((current_edge_index, 0.0, current_along, False))
+            travelled += sum(
+                end - start for _, start, end, _ in current[appended_from:]
+            )
+            current_offsets.append(travelled)
         if current:
             pieces.append(current)
-        return pieces, path_breaks
+            offsets.append(current_offsets)
+        return pieces, offsets, path_breaks
 
     def piece_coordinates(self, piece):
         """一段连续路径的有序 EPSG:32650 坐标。"""
@@ -684,7 +698,7 @@ class TrackMatcher:
         points = [Point(x, y) for x, y in zip(xs, ys)]
         candidate_lists = self.candidates_for_points(points)
         snap_distances, matched_states = [], []
-        pieces, path_breaks = [], 0
+        pieces, point_offsets, path_breaks = [], [], 0
         index = 0
         while index < len(points):
             if not candidate_lists[index]:
@@ -702,8 +716,9 @@ class TrackMatcher:
             for distance_m, edge_index, along_m in selected:
                 snap_distances.append(distance_m)
                 matched_states.append((edge_index, along_m))
-            run_pieces, run_breaks = self.traversal_pieces(selected)
+            run_pieces, run_offsets, run_breaks = self.traversal_pieces(selected)
             pieces.extend(run_pieces)
+            point_offsets.extend(run_offsets)
             path_breaks += run_breaks
             index = end
         observed_m = sum(
@@ -716,6 +731,7 @@ class TrackMatcher:
             "snap_distances": snap_distances,
             "matched_states": matched_states,
             "pieces": pieces,
+            "point_offsets": point_offsets,
             "path_breaks": path_breaks,
             "observed_length_m": observed_m,
             "inferred_length_m": inferred_m,
@@ -860,15 +876,28 @@ apply_hard_filter(
     tracks["inferred_share"] <= MAX_INFERRED_SHARE,
 )
 
-piece_coordinates = {
+# 段几何与段内匹配点里程必须同进同出：退化成一个点的段在这里被丢掉。
+piece_geometry = {
     track_id: [
-        np.asarray(coords, dtype=float)
-        for coords in (
-            matcher.piece_coordinates(piece) for piece in matched[track_id]["pieces"]
+        (np.asarray(coords, dtype=float), point_offsets)
+        for coords, point_offsets in zip(
+            (
+                matcher.piece_coordinates(piece)
+                for piece in matched[track_id]["pieces"]
+            ),
+            matched[track_id]["point_offsets"],
         )
         if len(coords) >= 2
     ]
     for track_id in tracks.index[alive]
+}
+piece_coordinates = {
+    track_id: [coords for coords, _ in pieces]
+    for track_id, pieces in piece_geometry.items()
+}
+piece_point_offsets = {
+    track_id: [point_offsets for _, point_offsets in pieces]
+    for track_id, pieces in piece_geometry.items()
 }
 matched_path_on_island = pd.Series(
     {
@@ -881,6 +910,7 @@ apply_hard_filter("matched path on island", matched_path_on_island)
 valid_tracks = tracks.loc[alive].copy()
 valid_track_ids = list(valid_tracks.index)
 piece_coordinates = {t: piece_coordinates[t] for t in valid_track_ids}
+piece_point_offsets = {t: piece_point_offsets[t] for t in valid_track_ids}
 display(
     pd.DataFrame(filter_log).assign(
         kept_share=lambda f: (f["kept"] / len(tracks)).map("{:.1%}".format)
@@ -1205,7 +1235,11 @@ def postprocess(partition, flow, min_cells=MIN_COMPONENT_CELLS, log=None):
         changed = False
         for region_id in small:
             cells = members.get(region_id, [])
-            if not cells or assignment.get(cells[0]) != region_id:
+            # small 是本轮开始时算的：某个分量可能已经并入了邻居而涨过阈值，
+            # 此时它不再是「小分量」，不能继续并出去。
+            if not cells or len(cells) >= min_cells:
+                continue
+            if assignment.get(cells[0]) != region_id:
                 continue
             exchange, boundary = Counter(), Counter()
             for cell in cells:
@@ -1238,6 +1272,7 @@ def postprocess(partition, flow, min_cells=MIN_COMPONENT_CELLS, log=None):
 
     # 3 填补被单一区域完全包围的孤立单元格
     filled = 0
+    before_fill = len(set(assignment.values()))
     for _ in range(20):
         snapshot = dict(assignment)
         changes = {}
@@ -1254,7 +1289,6 @@ def postprocess(partition, flow, min_cells=MIN_COMPONENT_CELLS, log=None):
             break
         assignment.update(changes)
         filled += len(changes)
-    before_fill = len(set(assignment.values()))
     steps.append(
         {
             "step": "fill enclosed cells",
@@ -1499,70 +1533,72 @@ def make_region_locator(assignment, size=CELL_SIZE_M):
     return locate, ids, polygons
 
 
-def region_runs(track_id, assignment, sequences, matched_point_cells):
-    """去抖后的区域序列：连续重复合并，且一次进入须满足 >=100m 或 >=2 个连续匹配点。"""
-    qualified = matched_point_cells[track_id]
+def region_runs(track_id, assignment, sequences, offsets_by_track=None):
+    """去抖后的区域序列：连续重复合并，且一次进入须满足 >=100m 或 >=2 个连续匹配点。
+
+    两个判据都按「一次进入」算。若改成「该区域在本条轨迹里任何位置满足过」，
+    沿边界反复跨界产生的短暂重入会全部存活——那正是去抖要挡掉的东西。
+    """
+    if offsets_by_track is None:
+        offsets_by_track = piece_point_offsets
     pieces = []
-    for sequence in sequences[track_id]:
-        runs = []
+    for sequence, point_offsets in zip(
+        sequences[track_id], offsets_by_track[track_id]
+    ):
+        runs, travelled = [], 0.0
         for cell, length_m, entry, exit_ in sequence:
             region_id = assignment.get(cell)
+            start, travelled = travelled, travelled + length_m
             if runs and runs[-1][0] == region_id:
                 runs[-1][1] += length_m
                 runs[-1][3] = exit_
+                runs[-1][5] = travelled
             else:
-                runs.append([region_id, length_m, entry, exit_])
+                runs.append([region_id, length_m, entry, exit_, start, travelled])
+        total = travelled
+
+        def dwells(run):
+            """这一次进入是否够格。落在段末的匹配点归最后一次进入。"""
+            region_id, length_m, _, _, start, end = run
+            if region_id is None:
+                return False
+            if length_m >= MIN_DWELL_M:
+                return True
+            first = bisect_left(point_offsets, start)
+            last = (
+                len(point_offsets)
+                if end >= total - 1e-9
+                else bisect_left(point_offsets, end)
+            )
+            return last - first >= MIN_DWELL_POINTS
+
         changed = True
         while changed:
             changed = False
             kept = []
             for position, run in enumerate(runs):
-                region_id, length_m, _, exit_ = run
-                if region_id is None or (
-                    length_m < MIN_DWELL_M and region_id not in qualified
-                ):
+                if not dwells(run):
                     if kept:
-                        kept[-1][1] += length_m
-                        kept[-1][3] = exit_
+                        kept[-1][1] += run[1]
+                        kept[-1][3] = run[3]
+                        kept[-1][5] = run[5]
                         changed = True
                         continue
                     if position + 1 < len(runs):
                         changed = True
                         continue
                     continue
-                if kept and kept[-1][0] == region_id:
-                    kept[-1][1] += length_m
-                    kept[-1][3] = exit_
+                if kept and kept[-1][0] == run[0]:
+                    kept[-1][1] += run[1]
+                    kept[-1][3] = run[3]
+                    kept[-1][5] = run[5]
                     changed = True
                 else:
                     kept.append(run)
             runs = kept
         if runs:
-            pieces.append([tuple(run) for run in runs])
+            pieces.append([tuple(run[:4]) for run in runs])
     return pieces
-
-
-def qualifying_regions_by_points(assignment, size=CELL_SIZE_M):
-    """每条轨迹中出现过连续 >=2 个匹配点的区域。"""
-    qualified = {}
-    for track_id in valid_track_ids:
-        states = matched[track_id]["matched_states"]
-        seen, current, run = set(), object(), 0
-        for edge_index, along_m in states:
-            edge = edges[edge_index]
-            fraction = (
-                0.0
-                if edge["length_m"] == 0
-                else min(max(along_m / edge["length_m"], 0.0), 1.0)
-            )
-            point = edge["geom_utm"].interpolate(fraction, normalized=True)
-            region_id = assignment.get(cell_of(point.x, point.y, size))
-            run = run + 1 if region_id == current else 1
-            current = region_id
-            if region_id is not None and run >= MIN_DWELL_POINTS:
-                seen.add(region_id)
-        qualified[track_id] = seen
-    return qualified
 
 
 def granularity_report(markov_time, flow=None, sequences=None, size=CELL_SIZE_M):
@@ -1570,7 +1606,6 @@ def granularity_report(markov_time, flow=None, sequences=None, size=CELL_SIZE_M)
     sequences = cell_sequences if sequences is None else sequences
     assignment, steps = postprocess(infomap_partition(flow, markov_time), flow)
     locate, ids, _ = make_region_locator(assignment, size)
-    qualified = qualifying_regions_by_points(assignment, size)
     unlock_region, _ = locate(
         trips["unlock_x"].to_numpy(), trips["unlock_y"].to_numpy()
     )
@@ -1578,7 +1613,7 @@ def granularity_report(markov_time, flow=None, sequences=None, size=CELL_SIZE_M)
     channel = Counter()
     crossing = 0
     for track_id in valid_track_ids:
-        pieces = region_runs(track_id, assignment, sequences, qualified)
+        pieces = region_runs(track_id, assignment, sequences)
         pairs = set()
         for piece in pieces:
             for (a, *_), (b, *_) in zip(piece, piece[1:]):
@@ -1690,9 +1725,8 @@ region_of_cell, postprocess_steps = postprocess(
 region_members = members_of(region_of_cell)
 locate_region, region_ids, region_shapes = make_region_locator(region_of_cell)
 region_polygon = dict(zip(region_ids, region_shapes))
-qualified_regions = qualifying_regions_by_points(region_of_cell)
 region_sequences = {
-    track_id: region_runs(track_id, region_of_cell, cell_sequences, qualified_regions)
+    track_id: region_runs(track_id, region_of_cell, cell_sequences)
     for track_id in valid_track_ids
 }
 
@@ -2486,7 +2520,8 @@ for prefix, frame, value in (
         profile[f"{prefix}_{category}"] = (
             shares[category] if category in shares else 0.0
         )
-    if "bus_stop" in table:
+    # 只取点位口径：landuse 一轮聚合的是 area_m2，写进来会让 bus_stop_per_km2 变成面积比。
+    if prefix == "poi" and "bus_stop" in table:
         profile["bus_stops"] = table["bus_stop"].astype(int)
 
 located_fences, _ = locate_region(fences["x"].to_numpy(), fences["y"].to_numpy())
