@@ -52,6 +52,22 @@
       {"stage": "平均速度 ≤ 7 m/s", "tracks_entered": 120, "tracks_kept": 120, "points_entered": 3215, "points_kept": 3215}
     ]
   },
+  "expected_match": {
+    "note": "Baseline for the Spark map-matching ticket. The last four hard-filter rules; scripts/freeze_data_contract.py deliberately does not recompute these. Parent spec's 3,936 edges / 120 pieces belong to the 115-track remainder after these rules; all 120 entering tracks produce 4,090 edges / 135 pieces.",
+    "entering_tracks": 120,
+    "entering_points": 3215,
+    "unmatched_points": 72,
+    "match_edges": 4090,
+    "match_pieces": 135,
+    "valid_tracks": 115,
+    "valid_points": 3014,
+    "funnel": [
+      {"stage": "匹配率 ≥ 80%", "tracks_entered": 120, "tracks_kept": 116, "points_entered": 3215, "points_kept": 3020},
+      {"stage": "匹配长度 ≥ 100m", "tracks_entered": 116, "tracks_kept": 116, "points_entered": 3020, "points_kept": 3020},
+      {"stage": "推断段比例 ≤ 30%", "tracks_entered": 116, "tracks_kept": 115, "points_entered": 3020, "points_kept": 3014},
+      {"stage": "匹配路径在岛内", "tracks_entered": 115, "tracks_kept": 115, "points_entered": 3014, "points_kept": 3014}
+    ]
+  },
   "bicycles": [
     {"bicycle_id": "BICYCLE_8697", "selection_reason": "known example", "points": 233},
     {"bicycle_id": "BICYCLE_8600", "selection_reason": "known example", "points": 296},

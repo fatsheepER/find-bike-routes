@@ -65,6 +65,8 @@ class MatchRun:
     points: Path
     edges: Path
     pieces: Path
+    track_match: Path
+    stage_counts_match: Path
     artifacts: Path
 
 
@@ -89,6 +91,8 @@ def match_run(split_run: SplitRun, tmp_path_factory: pytest.TempPathFactory) -> 
             points=output / "match_points",
             edges=output / "match_edges",
             pieces=output / "match_pieces",
+            track_match=output / "track_match",
+            stage_counts_match=output / "stage_counts_match",
             artifacts=artifacts,
         )
     finally:

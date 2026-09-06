@@ -152,3 +152,13 @@ class MatchStageParameters:
     backtrack_tolerance_m: float = 10.0
     contraflow_logp_penalty: float = 0.75
     no_path_transition_penalty: float = 20.0
+    island_tolerance_m: float = 100.0
+    min_match_rate: float = 0.8
+    min_matched_length_m: float = 100.0
+    max_inferred_share: float = 0.3
+    hard_filter_rule_order: tuple[str, ...] = (
+        "匹配率 ≥ 80%",
+        "匹配长度 ≥ 100m",
+        "推断段比例 ≤ 30%",
+        "匹配路径在岛内",
+    )

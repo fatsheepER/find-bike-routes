@@ -79,6 +79,11 @@ MATCH_DEFINITION_FIELDS = (
     "backtrack_tolerance_m",
     "contraflow_logp_penalty",
     "no_path_transition_penalty",
+    "island_tolerance_m",
+    "min_match_rate",
+    "min_matched_length_m",
+    "max_inferred_share",
+    "hard_filter_rule_order",
 )
 
 
@@ -170,8 +175,10 @@ def write_params(
         payload = {
             "timezone": parameters.spark.session_time_zone,
             "spark": dict(spark_conf or {}),
+            "hard_filter_rule_order": list(parameters.hard_filter_rule_order),
             "parameters": {
-                name: getattr(parameters, name) for name in MATCH_DEFINITION_FIELDS
+                name: _jsonable(getattr(parameters, name))
+                for name in MATCH_DEFINITION_FIELDS
             },
             "data_contract_lock_sha256": sha256(lock_path),
         }

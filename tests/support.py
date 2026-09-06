@@ -82,6 +82,10 @@ def read_match_pieces(pieces: Path) -> pd.DataFrame:
     ).reset_index(drop=True)
 
 
+def read_track_match(tracks: Path) -> pd.DataFrame:
+    return pd.read_parquet(tracks).sort_values("TRACK_ID").reset_index(drop=True)
+
+
 def staging_copy(directory: Path, day: str) -> Path:
     """The fixture under the staging naming convention, standing in for another day."""
     directory.mkdir(parents=True, exist_ok=True)

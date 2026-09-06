@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import json
 import shutil
+from pathlib import Path
 
+import pandas as pd
 import pytest
 
 from support import (
@@ -18,18 +20,28 @@ from support import (
     read_match_edges,
     read_match_pieces,
     read_match_points,
+    read_stage_counts,
+    read_track_match,
     run_match_cli,
 )
 
-EXPECTED_MATCHED_TRACKS = 120
-EXPECTED_MATCH_POINTS = 3215
-EXPECTED_UNMATCHED_POINTS = 72
-# All 120 tracks that enter matching. Parent spec attributes 3,936 edges to
-# those 120, but that figure is the 115-track remainder after the last four
-# rules: 3,936 edges / 120 pieces. The five tracks those rules drop add 154
-# edges and 15 pieces (4,090 / 135). A notebook-faithful matcher agrees.
-EXPECTED_MATCH_EDGES = 4090
-EXPECTED_MATCH_PIECES = 135
+EXPECTED_MATCH = json.loads(
+    (Path(__file__).parents[1] / "config" / "regression-sample.json").read_text(
+        encoding="utf-8"
+    )
+)["expected_match"]
+EXPECTED_MATCHED_TRACKS = EXPECTED_MATCH["entering_tracks"]
+EXPECTED_MATCH_POINTS = EXPECTED_MATCH["entering_points"]
+EXPECTED_UNMATCHED_POINTS = EXPECTED_MATCH["unmatched_points"]
+EXPECTED_MATCH_EDGES = EXPECTED_MATCH["match_edges"]
+EXPECTED_MATCH_PIECES = EXPECTED_MATCH["match_pieces"]
+
+MATCH_HARD_FILTER_FLAGS = (
+    "fails_match_rate",
+    "fails_matched_length",
+    "fails_inferred_share",
+    "fails_matched_path_on_island",
+)
 
 
 def test_missing_network_tells_the_operator_to_run_the_network_stage(tmp_path):
@@ -114,7 +126,13 @@ def test_match_points_holds_every_point_of_the_tracks_that_entered(match_run):
 
 @pytest.mark.spark
 def test_match_tables_are_partitioned_by_source_date(match_run):
-    for table in (match_run.points, match_run.edges, match_run.pieces):
+    for table in (
+        match_run.points,
+        match_run.edges,
+        match_run.pieces,
+        match_run.track_match,
+        match_run.stage_counts_match,
+    ):
         partitions = sorted(path.name for path in table.iterdir() if path.is_dir())
         assert partitions == [f"source_date={FIXTURE_DATE}"]
 
@@ -158,7 +176,13 @@ def test_offset_m_is_within_piece_mileage_starting_at_zero(match_run):
 def test_overwrite_replaces_only_the_dates_this_run_produced(match_run):
     leftover = "source_date=2020-12-22"
     before = {}
-    for table in (match_run.points, match_run.edges, match_run.pieces):
+    for table in (
+        match_run.points,
+        match_run.edges,
+        match_run.pieces,
+        match_run.track_match,
+        match_run.stage_counts_match,
+    ):
         source = table / f"source_date={FIXTURE_DATE}"
         other = table / leftover
         shutil.copytree(source, other)
@@ -180,13 +204,25 @@ def test_overwrite_replaces_only_the_dates_this_run_produced(match_run):
         assert (match_run.points / f"source_date={FIXTURE_DATE}").is_dir()
     finally:
         shutil.rmtree(ARTIFACTS_ROOT / "test-match-overwrite-date", ignore_errors=True)
-        for table in (match_run.points, match_run.edges, match_run.pieces):
+        for table in (
+            match_run.points,
+            match_run.edges,
+            match_run.pieces,
+            match_run.track_match,
+            match_run.stage_counts_match,
+        ):
             shutil.rmtree(table / leftover, ignore_errors=True)
 
 
 @pytest.mark.spark
 def test_params_record_the_matching_thresholds(match_run):
     params = json.loads((ARTIFACTS_ROOT / "test-match" / "params.json").read_text(encoding="utf-8"))
+    order = [
+        "匹配率 ≥ 80%",
+        "匹配长度 ≥ 100m",
+        "推断段比例 ≤ 30%",
+        "匹配路径在岛内",
+    ]
 
     assert params["parameters"]["max_snap_m"] == 60.0
     assert params["parameters"]["k_candidates"] == 5
@@ -195,3 +231,105 @@ def test_params_record_the_matching_thresholds(match_run):
     assert params["parameters"]["route_cutoff_m"] == 400.0
     assert params["parameters"]["contraflow_logp_penalty"] == 0.75
     assert params["parameters"]["no_path_transition_penalty"] == 20.0
+    assert params["parameters"]["min_match_rate"] == 0.8
+    assert params["parameters"]["min_matched_length_m"] == 100.0
+    assert params["parameters"]["max_inferred_share"] == 0.3
+    assert params["parameters"]["island_tolerance_m"] == 100.0
+    assert params["hard_filter_rule_order"] == order
+    assert params["parameters"]["hard_filter_rule_order"] == order
+
+
+@pytest.mark.spark
+def test_track_match_holds_every_entering_track_and_the_valid_remainder(match_run):
+    tracks = read_track_match(match_run.track_match)
+    valid = tracks.loc[tracks["is_valid"]]
+
+    assert len(tracks) == EXPECTED_MATCHED_TRACKS
+    assert int(tracks["is_valid"].sum()) == EXPECTED_MATCH["valid_tracks"]
+    assert int(valid["points"].sum()) == EXPECTED_MATCH["valid_points"]
+    assert {
+        "points",
+        "matched_points",
+        "match_rate",
+        "matched_length_m",
+        "observed_length_m",
+        "inferred_length_m",
+        "inferred_share",
+        "path_breaks",
+        "pieces",
+        "contraflow_points",
+        "matched_path_on_island",
+        *MATCH_HARD_FILTER_FLAGS,
+        "is_valid",
+    }.issubset(tracks.columns)
+
+
+@pytest.mark.spark
+def test_hard_filter_flags_are_independent_and_drive_is_valid(match_run):
+    """Each rule is a boolean of its own; is_valid is their conjunction, not a cascade."""
+    tracks = read_track_match(match_run.track_match)
+
+    assert tracks[list(MATCH_HARD_FILTER_FLAGS)].notna().all().all()
+    assert (tracks["is_valid"] == ~tracks[list(MATCH_HARD_FILTER_FLAGS)].any(axis=1)).all()
+    assert (
+        tracks["fails_match_rate"] == (tracks["match_rate"] < 0.8)
+    ).all()
+    assert (
+        tracks["fails_matched_length"] == (tracks["matched_length_m"] < 100)
+    ).all()
+    assert (
+        tracks["fails_inferred_share"] == (tracks["inferred_share"] > 0.3)
+    ).all()
+    assert (
+        tracks["fails_matched_path_on_island"] == ~tracks["matched_path_on_island"]
+    ).all()
+    assert int(tracks["is_valid"].sum()) == EXPECTED_MATCH["valid_tracks"]
+
+
+@pytest.mark.spark
+def test_stage_counts_match_the_frozen_fixture_funnel(match_run):
+    """The long table is one row per (date × stage); both track and point triples are frozen."""
+    counts = read_stage_counts(match_run.stage_counts_match)
+    funnel = EXPECTED_MATCH["funnel"]
+
+    assert list(counts["stage_name"]) == [stage["stage"] for stage in funnel]
+    assert list(counts["stage_index"]) == list(range(7, 11))
+    assert (counts["source_date"].astype(str) == FIXTURE_DATE).all()
+    for row, stage in zip(counts.itertuples(index=False), funnel):
+        assert row.stage_name == stage["stage"]
+        assert int(row.tracks_entered) == stage["tracks_entered"]
+        assert int(row.tracks_kept) == stage["tracks_kept"]
+        assert int(row.tracks_rejected) == stage["tracks_entered"] - stage["tracks_kept"]
+        assert int(row.points_entered) == stage["points_entered"]
+        assert int(row.points_kept) == stage["points_kept"]
+        assert int(row.points_rejected) == stage["points_entered"] - stage["points_kept"]
+
+
+@pytest.mark.spark
+def test_stage_counts_are_derived_from_the_flag_columns(match_run):
+    """Applying the recorded rule order to the flags rebuilds the funnel; the two cannot drift."""
+    tracks = read_track_match(match_run.track_match)
+    counts = read_stage_counts(match_run.stage_counts_match)
+    alive = pd.Series(True, index=tracks.index)
+    expected = []
+    for flag in MATCH_HARD_FILTER_FLAGS:
+        entered = alive.copy()
+        alive = alive & ~tracks[flag].astype(bool)
+        expected.append(
+            (
+                int(entered.sum()),
+                int(alive.sum()),
+                int(tracks.loc[entered, "points"].sum()),
+                int(tracks.loc[alive, "points"].sum()),
+            )
+        )
+
+    got = list(
+        zip(
+            counts["tracks_entered"].astype(int),
+            counts["tracks_kept"].astype(int),
+            counts["points_entered"].astype(int),
+            counts["points_kept"].astype(int),
+        )
+    )
+    assert got == expected

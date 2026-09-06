@@ -15,7 +15,7 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 import shapely
-from pyspark.sql import DataFrame, SparkSession, functions as F
+from pyspark.sql import DataFrame, SparkSession, Window, functions as F
 from pyspark.sql.types import (
     ArrayType,
     BinaryType,
@@ -32,13 +32,22 @@ from shapely.strtree import STRtree
 
 from . import PipelineError
 from .config import MatchStageParameters
-from .datasets import POINT_TABLE
+from .datasets import POINT_TABLE, STAGE_COUNT_COLUMNS
+from .geography import island_buffer_utm
 from .network import edge_index_of, edge_table_path, reverse_coordinates, segment_table_path
 
 MATCH_POINT_TABLE = "match_points"
 MATCH_EDGE_TABLE = "match_edges"
 MATCH_PIECE_TABLE = "match_pieces"
+TRACK_MATCH_TABLE = "track_match"
+STAGE_COUNT_MATCH_TABLE = "stage_counts_match"
 PARTITION_COLUMN = "source_date"
+MATCH_HARD_FILTER_FLAGS: tuple[str, ...] = (
+    "fails_match_rate",
+    "fails_matched_length",
+    "fails_inferred_share",
+    "fails_matched_path_on_island",
+)
 
 MATCH_POINT_COLUMNS = (
     "source_row",
@@ -67,6 +76,26 @@ MATCH_PIECE_COLUMNS = (
     "length_m",
     "observed_length_m",
     "inferred_length_m",
+    PARTITION_COLUMN,
+)
+TRACK_MATCH_COLUMNS = (
+    "TRACK_ID",
+    "points",
+    "matched_points",
+    "match_rate",
+    "matched_length_m",
+    "observed_length_m",
+    "inferred_length_m",
+    "inferred_share",
+    "path_breaks",
+    "pieces",
+    "contraflow_points",
+    "matched_path_on_island",
+    "fails_match_rate",
+    "fails_matched_length",
+    "fails_inferred_share",
+    "fails_matched_path_on_island",
+    "is_valid",
     PARTITION_COLUMN,
 )
 
@@ -109,6 +138,8 @@ MATCH_RESULT = StructType(
 
 # Executor-side cache: one matcher per broadcast payload object.
 _MATCHER: tuple[int, "TrackMatcher"] | None = None
+# Executor-side cache: one prepared island buffer per broadcast WKB object.
+_ISLAND: tuple[int, object] | None = None
 
 
 def match_point_table_path(output_root: Path) -> Path:
@@ -121,6 +152,14 @@ def match_edge_table_path(output_root: Path) -> Path:
 
 def match_piece_table_path(output_root: Path) -> Path:
     return output_root / MATCH_PIECE_TABLE
+
+
+def track_match_table_path(output_root: Path) -> Path:
+    return output_root / TRACK_MATCH_TABLE
+
+
+def stage_count_match_table_path(output_root: Path) -> Path:
+    return output_root / STAGE_COUNT_MATCH_TABLE
 
 
 def point_partition_path(input_root: Path, day: date) -> Path:
@@ -162,6 +201,8 @@ def refuse_to_clobber(output_root: Path, overwrite: bool) -> None:
             match_point_table_path(output_root),
             match_edge_table_path(output_root),
             match_piece_table_path(output_root),
+            track_match_table_path(output_root),
+            stage_count_match_table_path(output_root),
         )
         if path.is_dir() and any(path.iterdir())
     ]
@@ -647,4 +688,172 @@ def write_match_edge_table(frame: DataFrame, output_root: Path, overwrite: bool)
 def write_match_piece_table(frame: DataFrame, output_root: Path, overwrite: bool) -> Path:
     return _write_partitioned(
         frame, match_piece_table_path(output_root), MATCH_PIECE_COLUMNS, overwrite
+    )
+
+
+def write_track_match_table(frame: DataFrame, output_root: Path, overwrite: bool) -> Path:
+    return _write_partitioned(
+        frame, track_match_table_path(output_root), TRACK_MATCH_COLUMNS, overwrite
+    )
+
+
+def write_stage_count_match_table(
+    frame: DataFrame, output_root: Path, overwrite: bool
+) -> Path:
+    return _write_partitioned(
+        frame,
+        stage_count_match_table_path(output_root),
+        STAGE_COUNT_COLUMNS,
+        overwrite,
+    )
+
+
+def island_for(wkb: bytes) -> object:
+    global _ISLAND
+    key = id(wkb)
+    cached = _ISLAND
+    if cached is None or cached[0] != key:
+        geometry = shapely.from_wkb(wkb)
+        shapely.prepare(geometry)
+        cached = (key, geometry)
+        _ISLAND = cached
+    return cached[1]
+
+
+def build_track_match(
+    session: SparkSession,
+    match_points: DataFrame,
+    match_pieces: DataFrame,
+    network_root: Path,
+    parameters: MatchStageParameters,
+    boundary: Path,
+) -> DataFrame:
+    """One row per entering track: metrics, four independent flags, and is_valid."""
+    buffered, _ = island_buffer_utm(boundary, parameters.island_tolerance_m)
+    island_wkb = session.sparkContext.broadcast(shapely.to_wkb(buffered))
+
+    @F.udf(returnType=BooleanType(), useArrow=False)
+    def piece_on_island(geometry: bytes) -> bool:
+        return bool(
+            island_for(island_wkb.value).contains(shapely.from_wkb(bytes(geometry)))
+        )
+
+    legal = session.read.parquet(str(edge_table_path(network_root))).select(
+        "edge_index", "is_legal_direction"
+    )
+    track = Window.partitionBy(PARTITION_COLUMN, "TRACK_ID").orderBy("source_row")
+    effective_piece = F.when(
+        F.col("edge_index").isNotNull(), F.coalesce(F.col("piece_index"), F.lit(-1))
+    )
+    previous_piece = F.lag(effective_piece).over(track)
+    is_break = (
+        effective_piece.isNotNull()
+        & previous_piece.isNotNull()
+        & (effective_piece != previous_piece)
+    )
+    from_points = (
+        match_points.withColumn("is_path_break", is_break)
+        .join(legal, on="edge_index", how="left")
+        .groupBy(PARTITION_COLUMN, "TRACK_ID")
+        .agg(
+            F.count(F.lit(1)).alias("points"),
+            F.count("edge_index").alias("matched_points"),
+            F.coalesce(F.sum(F.col("is_path_break").cast("int")), F.lit(0)).alias(
+                "path_breaks"
+            ),
+            F.coalesce(
+                F.sum((F.col("is_legal_direction") == F.lit(False)).cast("int")),
+                F.lit(0),
+            ).alias("contraflow_points"),
+        )
+    )
+    from_pieces = (
+        match_pieces.withColumn("piece_on_island", piece_on_island(F.col("geometry")))
+        .groupBy(PARTITION_COLUMN, "TRACK_ID")
+        .agg(
+            F.count(F.lit(1)).alias("pieces"),
+            F.sum("length_m").alias("matched_length_m"),
+            F.sum("observed_length_m").alias("observed_length_m"),
+            F.sum("inferred_length_m").alias("inferred_length_m"),
+            (F.min(F.col("piece_on_island").cast("int")) == F.lit(1)).alias(
+                "matched_path_on_island"
+            ),
+        )
+    )
+    tracks = from_points.join(from_pieces, on=[PARTITION_COLUMN, "TRACK_ID"], how="left")
+    tracks = (
+        tracks.withColumn("pieces", F.coalesce(F.col("pieces"), F.lit(0)))
+        .withColumn("matched_length_m", F.coalesce(F.col("matched_length_m"), F.lit(0.0)))
+        .withColumn(
+            "observed_length_m", F.coalesce(F.col("observed_length_m"), F.lit(0.0))
+        )
+        .withColumn(
+            "inferred_length_m", F.coalesce(F.col("inferred_length_m"), F.lit(0.0))
+        )
+        .withColumn(
+            "matched_path_on_island",
+            F.coalesce(F.col("matched_path_on_island"), F.lit(True)),
+        )
+        .withColumn("match_rate", F.col("matched_points") / F.col("points"))
+        .withColumn(
+            "inferred_share",
+            F.when(
+                F.col("matched_length_m") > F.lit(0),
+                F.col("inferred_length_m") / F.col("matched_length_m"),
+            ).otherwise(F.lit(1.0)),
+        )
+    )
+    fails_match_rate = F.col("match_rate") < F.lit(parameters.min_match_rate)
+    fails_matched_length = F.col("matched_length_m") < F.lit(
+        parameters.min_matched_length_m
+    )
+    fails_inferred_share = F.col("inferred_share") > F.lit(parameters.max_inferred_share)
+    fails_matched_path_on_island = ~F.col("matched_path_on_island")
+    is_valid = ~(
+        fails_match_rate
+        | fails_matched_length
+        | fails_inferred_share
+        | fails_matched_path_on_island
+    )
+    return (
+        tracks.withColumn("fails_match_rate", fails_match_rate)
+        .withColumn("fails_matched_length", fails_matched_length)
+        .withColumn("fails_inferred_share", fails_inferred_share)
+        .withColumn("fails_matched_path_on_island", fails_matched_path_on_island)
+        .withColumn("is_valid", is_valid)
+    )
+
+
+def build_stage_counts_match(
+    tracks: DataFrame, parameters: MatchStageParameters
+) -> DataFrame:
+    """Derive the last four funnel rows from the flags, in the recorded rule order."""
+    alive = F.lit(True)
+    stages = []
+    for index, (name, flag) in enumerate(
+        zip(parameters.hard_filter_rule_order, MATCH_HARD_FILTER_FLAGS, strict=True),
+        start=7,
+    ):
+        entered = alive
+        alive = alive & ~F.col(flag)
+        stages.append(
+            F.struct(
+                F.lit(index).alias("stage_index"),
+                F.lit(name).alias("stage_name"),
+                entered.cast("int").alias("track_in"),
+                alive.cast("int").alias("track_kept"),
+                F.when(entered, F.col("points")).otherwise(F.lit(0)).alias("point_in"),
+                F.when(alive, F.col("points")).otherwise(F.lit(0)).alias("point_kept"),
+            )
+        )
+    exploded = tracks.select("source_date", F.explode(F.array(*stages)).alias("stage"))
+    return exploded.groupBy(
+        "source_date", F.col("stage.stage_index"), F.col("stage.stage_name")
+    ).agg(
+        F.sum("stage.track_in").alias("tracks_entered"),
+        F.sum("stage.track_kept").alias("tracks_kept"),
+        (F.sum("stage.track_in") - F.sum("stage.track_kept")).alias("tracks_rejected"),
+        F.sum("stage.point_in").alias("points_entered"),
+        F.sum("stage.point_kept").alias("points_kept"),
+        (F.sum("stage.point_in") - F.sum("stage.point_kept")).alias("points_rejected"),
     )

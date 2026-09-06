@@ -1,4 +1,4 @@
-"""Match tracks that passed the first six hard filters and write the three detail tables.
+"""Match tracks that passed the first six hard filters and write the match tables.
 
 Every parameter that could shift a definition is fixed in code (ADR-0002); the
 flags here only choose which days to read, where to read and write them, how to
@@ -15,8 +15,11 @@ from pathlib import Path
 
 from find_bike_routes import PipelineError
 from find_bike_routes.config import MatchStageParameters
+from find_bike_routes.geography import BOUNDARY_PATH
 from find_bike_routes.matching import (
     build_match_tables,
+    build_stage_counts_match,
+    build_track_match,
     load_network_payload,
     read_entering_points,
     refuse_to_clobber,
@@ -25,6 +28,8 @@ from find_bike_routes.matching import (
     write_match_edge_table,
     write_match_piece_table,
     write_match_point_table,
+    write_stage_count_match_table,
+    write_track_match_table,
 )
 from find_bike_routes.runs import ensure_data_contract, write_environment, write_params
 from find_bike_routes.spark import build_session, ensure_java_runtime
@@ -98,14 +103,21 @@ def run(args: argparse.Namespace) -> None:
             payload,
             PARAMETERS,
         )
+        tracks = build_track_match(
+            session, points, pieces, args.network, PARAMETERS, BOUNDARY_PATH
+        )
+        counts = build_stage_counts_match(tracks, PARAMETERS)
         points_path = write_match_point_table(points, args.output, args.overwrite)
         edges_path = write_match_edge_table(edges, args.output, args.overwrite)
         pieces_path = write_match_piece_table(pieces, args.output, args.overwrite)
+        tracks_path = write_track_match_table(tracks, args.output, args.overwrite)
+        counts_path = write_stage_count_match_table(counts, args.output, args.overwrite)
     finally:
         session.stop()
 
     print(
-        f"wrote {points_path}, {edges_path} and {pieces_path} "
+        f"wrote {points_path}, {edges_path}, {pieces_path}, {tracks_path} "
+        f"and {counts_path} "
         f"({len(args.dates)} date partition(s), run-id {args.run_id})"
     )
 
