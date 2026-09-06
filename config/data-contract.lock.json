@@ -10,7 +10,7 @@
     "shapely": "2.1.2",
     "osmium": "4.3.1",
     "pyspark": "4.2.0",
-    "uv_lock_sha256": "68b16c182bba76092610cda4df24d8b902b387ee98c7815d5a30b28b27bbdbec"
+    "uv_lock_sha256": "cddd819029c39cad672adc53bf8f6bd2aa9515257c5b2e191561d771e4a0ce49"
   },
   "entries": [
     {

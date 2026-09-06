@@ -23,7 +23,19 @@ dependencies = [
     "shapely>=2.0",
 ]
 
+[build-system]
+requires = ["uv_build>=0.12.9,<0.13.0"]
+build-backend = "uv_build"
+
 [dependency-groups]
 dev = [
+    # Lets the tests read the pipeline's Parquet output without a second JVM.
+    "pyarrow>=18.0.0",
     "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "spark: starts a local SparkSession and needs a JDK; exclude with -m 'not spark'",
 ]
