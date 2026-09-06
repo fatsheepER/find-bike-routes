@@ -17,7 +17,13 @@ import pandas as pd
 from pyspark.sql import DataFrame, functions as F
 
 from . import PipelineError
-from .config import ISLAND_RULE, RAIN_DATE, NetworkStageParameters, SplitStageParameters
+from .config import (
+    ISLAND_RULE,
+    RAIN_DATE,
+    MatchStageParameters,
+    NetworkStageParameters,
+    SplitStageParameters,
+)
 from .datasets import POINT_COLUMNS, STAGE_COUNT_COLUMNS, TRACK_COLUMNS
 from .network import BikeNetwork, EDGE_COLUMNS, SEGMENT_COLUMNS
 
@@ -63,6 +69,16 @@ NETWORK_SUMMARY_FIELDS = (
     "contraflow_states",
     "graph_nodes",
     "length_km",
+)
+MATCH_DEFINITION_FIELDS = (
+    "max_snap_m",
+    "k_candidates",
+    "sigma_m",
+    "beta_m",
+    "route_cutoff_m",
+    "backtrack_tolerance_m",
+    "contraflow_logp_penalty",
+    "no_path_transition_penalty",
 )
 
 
@@ -136,7 +152,7 @@ def ensure_data_contract(
 def write_params(
     run_dir: Path,
     *,
-    parameters: SplitStageParameters | NetworkStageParameters,
+    parameters: SplitStageParameters | NetworkStageParameters | MatchStageParameters,
     contract_check_skipped: bool,
     spark_conf: Mapping[str, str] | None = None,
     lock_path: Path = LOCK_PATH,
@@ -147,6 +163,15 @@ def write_params(
             "parameters": {
                 name: _jsonable(getattr(parameters, name))
                 for name in NETWORK_DEFINITION_FIELDS
+            },
+            "data_contract_lock_sha256": sha256(lock_path),
+        }
+    elif isinstance(parameters, MatchStageParameters):
+        payload = {
+            "timezone": parameters.spark.session_time_zone,
+            "spark": dict(spark_conf or {}),
+            "parameters": {
+                name: getattr(parameters, name) for name in MATCH_DEFINITION_FIELDS
             },
             "data_contract_lock_sha256": sha256(lock_path),
         }

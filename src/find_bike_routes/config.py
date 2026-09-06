@@ -136,3 +136,19 @@ class NetworkStageParameters:
     oneway_forward: tuple[str, ...] = ONEWAY_FORWARD
     oneway_reverse: tuple[str, ...] = ONEWAY_REVERSE
     opposite_cycleway: tuple[str, ...] = OPPOSITE_CYCLEWAY
+
+
+@dataclass(frozen=True, slots=True)
+class MatchStageParameters:
+    """Everything the map-matching stage runs on."""
+
+    dates: tuple[date, ...] = STUDY_DATES
+    spark: SparkParameters = SparkParameters()
+    max_snap_m: float = 60.0
+    k_candidates: int = 5
+    sigma_m: float = 25.0
+    beta_m: float = 40.0
+    route_cutoff_m: float = 400.0
+    backtrack_tolerance_m: float = 10.0
+    contraflow_logp_penalty: float = 0.75
+    no_path_transition_penalty: float = 20.0

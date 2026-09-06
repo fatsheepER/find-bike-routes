@@ -1,4 +1,4 @@
-"""Helpers shared by the track-splitting tests.
+"""Helpers shared by the track-splitting and map-matching tests.
 
 The pipeline is driven as a subprocess, the way an operator drives it, so the tests
 survive any later reshuffling of the modules behind the CLI. Every input is either the
@@ -18,8 +18,10 @@ import pandas as pd
 
 PROJECT_ROOT = Path(__file__).parents[1]
 SCRIPT = PROJECT_ROOT / "scripts" / "split_tracks.py"
+MATCH_SCRIPT = PROJECT_ROOT / "scripts" / "match_tracks.py"
 ARTIFACTS_ROOT = PROJECT_ROOT / "artifacts" / "runs"
 FIXTURE = PROJECT_ROOT / "tests" / "fixtures" / "regression-sample-20201221.csv"
+FIXTURE_NETWORK = PROJECT_ROOT / "tests" / "fixtures"
 FIXTURE_DATE = "2020-12-21"
 FIXTURE_POINTS = 4460
 
@@ -39,6 +41,17 @@ def run_cli(
     )
 
 
+def run_match_cli(
+    *arguments: str, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(MATCH_SCRIPT), *arguments],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "TZ": RUNNER_TIME_ZONE, **(env or {})},
+    )
+
+
 def read_points(points: Path) -> pd.DataFrame:
     return pd.read_parquet(points).sort_values("source_row").reset_index(drop=True)
 
@@ -50,6 +63,22 @@ def read_tracks(tracks: Path) -> pd.DataFrame:
 def read_stage_counts(stage_counts: Path) -> pd.DataFrame:
     return pd.read_parquet(stage_counts).sort_values(
         ["source_date", "stage_index"]
+    ).reset_index(drop=True)
+
+
+def read_match_points(points: Path) -> pd.DataFrame:
+    return pd.read_parquet(points).sort_values("source_row").reset_index(drop=True)
+
+
+def read_match_edges(edges: Path) -> pd.DataFrame:
+    return pd.read_parquet(edges).sort_values(
+        ["TRACK_ID", "piece_index", "seq"]
+    ).reset_index(drop=True)
+
+
+def read_match_pieces(pieces: Path) -> pd.DataFrame:
+    return pd.read_parquet(pieces).sort_values(
+        ["TRACK_ID", "piece_index"]
     ).reset_index(drop=True)
 
 

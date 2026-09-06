@@ -14,7 +14,14 @@ from pathlib import Path
 
 import pytest
 
-from support import ARTIFACTS_ROOT, FIXTURE, FIXTURE_DATE, run_cli
+from support import (
+    ARTIFACTS_ROOT,
+    FIXTURE,
+    FIXTURE_DATE,
+    FIXTURE_NETWORK,
+    run_cli,
+    run_match_cli,
+)
 
 
 @dataclass(frozen=True)
@@ -45,6 +52,43 @@ def split_run(tmp_path_factory: pytest.TempPathFactory) -> Iterator[SplitRun]:
             points=output / "points",
             tracks=output / "tracks",
             stage_counts=output / "stage_counts",
+            artifacts=artifacts,
+        )
+    finally:
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+@dataclass(frozen=True)
+class MatchRun:
+    input: Path
+    output: Path
+    points: Path
+    edges: Path
+    pieces: Path
+    artifacts: Path
+
+
+@pytest.fixture(scope="session")
+def match_run(split_run: SplitRun, tmp_path_factory: pytest.TempPathFactory) -> Iterator[MatchRun]:
+    """Split the fixture, then match it onto the committed island network."""
+    output = tmp_path_factory.mktemp("match") / "matching"
+    artifacts = ARTIFACTS_ROOT / "test-match"
+    shutil.rmtree(artifacts, ignore_errors=True)
+    completed = run_match_cli(
+        "--input", str(split_run.output),
+        "--network", str(FIXTURE_NETWORK),
+        "--dates", FIXTURE_DATE,
+        "--output", str(output),
+        "--run-id", "test-match",
+    )
+    assert completed.returncode == 0, completed.stderr
+    try:
+        yield MatchRun(
+            input=split_run.output,
+            output=output,
+            points=output / "match_points",
+            edges=output / "match_edges",
+            pieces=output / "match_pieces",
             artifacts=artifacts,
         )
     finally:
