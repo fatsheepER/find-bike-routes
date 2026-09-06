@@ -7,12 +7,14 @@ overwrite behaviour, refused arguments — pay for it themselves.
 
 from __future__ import annotations
 
+import shutil
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
-from support import FIXTURE, FIXTURE_DATE, run_cli
+from support import ARTIFACTS_ROOT, FIXTURE, FIXTURE_DATE, run_cli
 
 
 @dataclass(frozen=True)
@@ -21,12 +23,15 @@ class SplitRun:
     points: Path
     tracks: Path
     stage_counts: Path
+    artifacts: Path
 
 
 @pytest.fixture(scope="session")
-def split_run(tmp_path_factory: pytest.TempPathFactory) -> SplitRun:
+def split_run(tmp_path_factory: pytest.TempPathFactory) -> Iterator[SplitRun]:
     """The pipeline run once over the committed fixture, into a temporary directory."""
     output = tmp_path_factory.mktemp("split") / "trajectory"
+    artifacts = ARTIFACTS_ROOT / "test-split"
+    shutil.rmtree(artifacts, ignore_errors=True)
     completed = run_cli(
         "--input", str(FIXTURE),
         "--dates", FIXTURE_DATE,
@@ -34,9 +39,13 @@ def split_run(tmp_path_factory: pytest.TempPathFactory) -> SplitRun:
         "--run-id", "test-split",
     )
     assert completed.returncode == 0, completed.stderr
-    return SplitRun(
-        output=output,
-        points=output / "points",
-        tracks=output / "tracks",
-        stage_counts=output / "stage_counts",
-    )
+    try:
+        yield SplitRun(
+            output=output,
+            points=output / "points",
+            tracks=output / "tracks",
+            stage_counts=output / "stage_counts",
+            artifacts=artifacts,
+        )
+    finally:
+        shutil.rmtree(artifacts, ignore_errors=True)

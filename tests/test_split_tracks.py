@@ -7,13 +7,17 @@ how the modules behind the CLI divide the work.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
+import shutil
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
 from support import (
+    ARTIFACTS_ROOT,
     FIXTURE,
     FIXTURE_DATE,
     FIXTURE_POINTS,
@@ -438,3 +442,178 @@ def test_overwrite_replaces_only_the_dates_this_run_produced(tmp_path):
     assert sorted(path.name for path in untouched_counts.iterdir()) == before_counts
     points = read_points(output / "points")
     assert len(points) == 2 * FIXTURE_POINTS
+
+
+def test_baselines_file_holds_only_the_five_study_days():
+    baselines = json.loads(
+        (Path(__file__).parents[1] / "config" / "baselines.json").read_text(encoding="utf-8")
+    )
+
+    assert "regression-sample.json" in baselines["note"]
+    assert list(baselines["days"]) == [
+        "2020-12-21",
+        "2020-12-22",
+        "2020-12-23",
+        "2020-12-24",
+        "2020-12-25",
+    ]
+    assert baselines["totals"]["raw_points"] == 2_849_243
+    assert baselines["totals"]["valid_tracks"] == 81_035
+    assert baselines["days"]["2020-12-21"]["valid_tracks"] == 15_527
+
+
+# --- data contract, run artifacts, digest -----------------------------------------
+
+
+def test_data_contract_failure_refuses_to_start(tmp_path):
+    """A file whose bytes are not in the lock must not be processed."""
+    mutated = staging_copy(tmp_path / "staging", FIXTURE_DATE)
+    mutated.write_text(
+        mutated.read_text(encoding="utf-8").replace("24.", "25.", 1),
+        encoding="utf-8",
+    )
+
+    completed = run_cli(
+        "--input", str(mutated),
+        "--dates", FIXTURE_DATE,
+        "--output", str(tmp_path / "out"),
+    )
+
+    assert completed.returncode == 1
+    assert "data contract" in completed.stderr.lower()
+    assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.spark
+def test_skip_data_contract_bypasses_the_check_and_marks_the_params(tmp_path):
+    mutated = staging_copy(tmp_path / "staging", FIXTURE_DATE)
+    mutated.write_text(
+        mutated.read_text(encoding="utf-8").replace("24.", "25.", 1),
+        encoding="utf-8",
+    )
+    run_id = "test-skip-contract"
+    artifacts = ARTIFACTS_ROOT / run_id
+    shutil.rmtree(artifacts, ignore_errors=True)
+
+    completed = run_cli(
+        "--input", str(mutated),
+        "--dates", FIXTURE_DATE,
+        "--output", str(tmp_path / "out"),
+        "--run-id", run_id,
+        "--skip-data-contract",
+    )
+
+    try:
+        assert completed.returncode == 0, completed.stderr
+        params = json.loads((artifacts / "params.json").read_text(encoding="utf-8"))
+        assert params["DATA_CONTRACT_CHECK_SKIPPED"] is True
+    finally:
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+@pytest.mark.spark
+def test_params_record_the_effective_run(split_run):
+    """Spark conf, time zone, rule order and the lock-file hash go into the run params."""
+    params = json.loads((ARTIFACTS_ROOT / "test-split" / "params.json").read_text(encoding="utf-8"))
+    lock_sha256 = hashlib.sha256(
+        (Path(__file__).parents[1] / "config" / "data-contract.lock.json").read_bytes()
+    ).hexdigest()
+
+    assert params["spark"]["spark.sql.session.timeZone"] == "Asia/Shanghai"
+    assert params["timezone"] == "Asia/Shanghai"
+    assert params["hard_filter_rule_order"] == [
+        "点数 ≥ 3",
+        "60s < 时长 < 3600s",
+        "点全在岛内 +100m",
+        "移动范围 ≥ 150m",
+        "慢点占比 ≤ 60%",
+        "平均速度 ≤ 7 m/s",
+    ]
+    assert params["data_contract_lock_sha256"] == lock_sha256
+    assert params["parameters"]["min_points"] == 3
+    assert params["parameters"]["max_gap_seconds"] == 120
+    assert "DATA_CONTRACT_CHECK_SKIPPED" not in params
+
+
+@pytest.mark.spark
+def test_environment_records_versions_lock_and_git(split_run):
+    environment = json.loads(
+        (ARTIFACTS_ROOT / "test-split" / "environment.json").read_text(encoding="utf-8")
+    )
+    uv_lock = Path(__file__).parents[1] / "uv.lock"
+
+    assert environment["python"]
+    assert environment["pyspark"]
+    assert environment["uv_lock_sha256"] == hashlib.sha256(uv_lock.read_bytes()).hexdigest()
+    assert environment["git_sha"]
+    assert isinstance(environment["git_dirty"], bool)
+
+
+@pytest.mark.spark
+def test_digest_records_content_hashes_row_counts_and_stage_counts(split_run):
+    digest = json.loads((ARTIFACTS_ROOT / "test-split" / "digest.json").read_text(encoding="utf-8"))
+    funnel = EXPECTED_SPLIT["funnel"]
+
+    assert digest["tables"]["points"]["rows"] == FIXTURE_POINTS
+    assert digest["tables"]["tracks"]["rows"] == 297
+    assert digest["tables"]["stage_counts"]["rows"] == len(funnel)
+    for table in digest["tables"].values():
+        assert len(table["sha256"]) == 64
+    assert [stage["stage_name"] for stage in digest["stage_counts"]] == [
+        stage["stage"] for stage in funnel
+    ]
+    assert [int(stage["tracks_kept"]) for stage in digest["stage_counts"]] == [
+        stage["tracks_kept"] for stage in funnel
+    ]
+    assert [int(stage["points_kept"]) for stage in digest["stage_counts"]] == [
+        stage["points_kept"] for stage in funnel
+    ]
+
+
+@pytest.mark.spark
+def test_two_runs_on_the_same_input_write_identical_digests(tmp_path, split_run):
+    first = json.loads((ARTIFACTS_ROOT / "test-split" / "digest.json").read_text(encoding="utf-8"))
+    completed = run_cli(
+        "--input", str(FIXTURE),
+        "--dates", FIXTURE_DATE,
+        "--output", str(tmp_path / "out"),
+    )
+    match = re.search(r"run-id (\d{8}T\d{6}Z-[0-9a-f]+-split)", completed.stdout)
+    assert completed.returncode == 0, completed.stderr
+    assert match is not None
+    run_id = match.group(1)
+    artifacts = ARTIFACTS_ROOT / run_id
+    try:
+        second = json.loads((artifacts / "digest.json").read_text(encoding="utf-8"))
+        assert second == first
+    finally:
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+@pytest.mark.spark
+def test_run_directory_holds_spark_logs(split_run):
+    logs = ARTIFACTS_ROOT / "test-split" / "spark-logs"
+    assert logs.is_dir()
+    assert any(logs.iterdir())
+
+
+@pytest.mark.spark
+def test_digest_records_differences_against_the_five_day_baseline(split_run):
+    """The fixture is not the full 12-21 day, so the frozen baseline must disagree."""
+    digest = json.loads((ARTIFACTS_ROOT / "test-split" / "digest.json").read_text(encoding="utf-8"))
+    comparison = digest["baseline_comparison"]
+    differences = comparison["differences"]
+
+    assert comparison["baseline"] == "config/baselines.json"
+    assert comparison["matched"] is False
+    assert any(
+        item["date"] == FIXTURE_DATE and item["field"] == "valid_points"
+        for item in differences
+    )
+    mismatch = next(
+        item
+        for item in differences
+        if item["date"] == FIXTURE_DATE and item["field"] == "valid_points"
+    )
+    assert mismatch["expected"] == 427134
+    assert mismatch["actual"] == EXPECTED_SPLIT["valid_points"]

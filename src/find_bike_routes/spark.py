@@ -83,7 +83,11 @@ def ensure_java_runtime() -> None:
         )
 
 
-def build_session(app_name: str, parameters: SparkParameters) -> SparkSession:
+def build_session(
+    app_name: str,
+    parameters: SparkParameters,
+    extra_conf: dict[str, str] | None = None,
+) -> SparkSession:
     """A local session with the parameters above in force."""
     # Python workers otherwise run whichever python3 is on PATH, which need not be the
     # interpreter running this driver; Spark then refuses the mismatch mid-job.
@@ -91,6 +95,8 @@ def build_session(app_name: str, parameters: SparkParameters) -> SparkSession:
 
     builder = SparkSession.builder.master(parameters.master).appName(app_name)
     for key, value in parameters.as_conf().items():
+        builder = builder.config(key, value)
+    for key, value in (extra_conf or {}).items():
         builder = builder.config(key, value)
     session = builder.getOrCreate()
     session.sparkContext.setLogLevel("WARN")

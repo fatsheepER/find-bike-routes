@@ -3,7 +3,8 @@
 ADR-0002: these are *definitions*, not configuration. Change one and every published
 number is void, so they go through diff and review like code rather than sitting in an
 editable file. The CLI only exposes parameters that cannot shift a definition — which
-days to read, where to read and write them, the run id, and whether to overwrite.
+days to read, where to read and write them, the run id, whether to overwrite, and
+whether to skip the data-contract check.
 """
 
 from __future__ import annotations

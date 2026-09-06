@@ -18,6 +18,7 @@ import pandas as pd
 
 PROJECT_ROOT = Path(__file__).parents[1]
 SCRIPT = PROJECT_ROOT / "scripts" / "split_tracks.py"
+ARTIFACTS_ROOT = PROJECT_ROOT / "artifacts" / "runs"
 FIXTURE = PROJECT_ROOT / "tests" / "fixtures" / "regression-sample-20201221.csv"
 FIXTURE_DATE = "2020-12-21"
 FIXTURE_POINTS = 4460
