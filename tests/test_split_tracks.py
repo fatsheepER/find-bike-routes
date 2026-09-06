@@ -320,9 +320,13 @@ def test_hard_filter_flags_are_independent_and_drive_is_valid(split_run):
     ).all()
     assert tracks.loc[single, flags].drop(columns=["fails_all_points_on_island"]).all().all()
     assert int(tracks["is_valid"].sum()) == EXPECTED_SPLIT["valid_tracks"]
-    assert tracks[
-        ["match_rate", "matched_length_m", "inferred_share", "matched_path_on_island"]
-    ].isna().all().all()
+    reserved = (
+        "match_rate",
+        "matched_length_m",
+        "inferred_share",
+        "matched_path_on_island",
+    )
+    assert all(column not in tracks.columns for column in reserved)
 
 
 # --- stage counts ------------------------------------------------------------------

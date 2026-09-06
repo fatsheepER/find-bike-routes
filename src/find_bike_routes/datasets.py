@@ -71,10 +71,6 @@ TRACK_COLUMNS = (
     "fails_slow_point_share",
     "fails_mean_speed",
     "is_valid",
-    "match_rate",
-    "matched_length_m",
-    "inferred_share",
-    "matched_path_on_island",
     PARTITION_COLUMN,
 )
 POINT_COLUMNS = (

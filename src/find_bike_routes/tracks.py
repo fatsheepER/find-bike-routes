@@ -101,10 +101,6 @@ def build_track_table(frame: DataFrame, parameters: SplitStageParameters) -> Dat
         .withColumn("fails_slow_point_share", fails_slow_point_share)
         .withColumn("fails_mean_speed", fails_mean_speed)
         .withColumn("is_valid", is_valid)
-        .withColumn("match_rate", F.lit(None).cast(DoubleType()))
-        .withColumn("matched_length_m", F.lit(None).cast(DoubleType()))
-        .withColumn("inferred_share", F.lit(None).cast(DoubleType()))
-        .withColumn("matched_path_on_island", F.lit(None).cast("boolean"))
     )
 
 
