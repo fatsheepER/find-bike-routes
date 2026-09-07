@@ -386,6 +386,45 @@ def _network_lookup(document: Mapping[str, object]) -> dict[str, object] | None:
     return None
 
 
+def _tolerance_spec(expected: object) -> tuple[object, float] | None:
+    if isinstance(expected, Mapping) and "value" in expected and "tolerance" in expected:
+        return expected["value"], float(expected["tolerance"])
+    return None
+
+
+def _matches_expected(expected: object, actual: object) -> bool:
+    spec = _tolerance_spec(expected)
+    if spec is None:
+        return actual == expected
+    value, tolerance = spec
+    try:
+        return abs(actual - value) <= tolerance * abs(value)
+    except TypeError:
+        return False
+
+
+def _mismatch(
+    *,
+    field: str,
+    expected: object,
+    actual: object,
+    date: str | None = None,
+) -> dict[str, object] | None:
+    """None when they match. A `{value, tolerance}` spec uses relative tolerance."""
+    if _matches_expected(expected, actual):
+        return None
+    spec = _tolerance_spec(expected)
+    item: dict[str, object] = {}
+    if date is not None:
+        item["date"] = date
+    item["field"] = field
+    item["expected"] = spec[0] if spec is not None else expected
+    if spec is not None:
+        item["tolerance"] = spec[1]
+    item["actual"] = actual
+    return item
+
+
 def compare_to_baseline(
     stage_counts: list[dict[str, object]],
     extras: Mapping[str, Mapping[str, int]] | None = None,
@@ -424,16 +463,14 @@ def compare_to_baseline(
             actual = observed[field]
             if actual is None:
                 continue
-            expected = expected_day[field]
-            if actual != expected:
-                differences.append(
-                    {
-                        "date": day,
-                        "field": field,
-                        "expected": expected,
-                        "actual": actual,
-                    }
-                )
+            difference = _mismatch(
+                field=field,
+                expected=expected_day[field],
+                actual=actual,
+                date=day,
+            )
+            if difference is not None:
+                differences.append(difference)
         expected_funnel = {stage["stage"]: stage for stage in expected_day["funnel"]}
         for row in rows:
             name = str(row["stage_name"])
@@ -449,16 +486,17 @@ def compare_to_baseline(
                 )
                 continue
             for field in FUNNEL_FIELDS:
-                actual = int(row[field])
-                if actual != int(expected_stage[field]):
-                    differences.append(
-                        {
-                            "date": day,
-                            "field": f"{name}.{field}",
-                            "expected": expected_stage[field],
-                            "actual": actual,
-                        }
-                    )
+                expected = expected_stage[field]
+                if _tolerance_spec(expected) is None:
+                    expected = int(expected)
+                difference = _mismatch(
+                    field=f"{name}.{field}",
+                    expected=expected,
+                    actual=int(row[field]),
+                    date=day,
+                )
+                if difference is not None:
+                    differences.append(difference)
 
     return {
         "baseline": "config/baselines.json",
@@ -686,17 +724,14 @@ def compare_match_to_baseline(
         for field in (*MATCH_COUNT_FIELDS, *MATCH_QUALITY_FIELDS):
             if field not in expected_match:
                 continue
-            actual = observed.get(field)
-            expected = expected_match[field]
-            if actual != expected:
-                differences.append(
-                    {
-                        "date": day,
-                        "field": field,
-                        "expected": expected,
-                        "actual": actual,
-                    }
-                )
+            difference = _mismatch(
+                field=field,
+                expected=expected_match[field],
+                actual=observed.get(field),
+                date=day,
+            )
+            if difference is not None:
+                differences.append(difference)
         expected_funnel = {
             stage["stage"]: stage for stage in expected_match.get("funnel", [])
         }
@@ -714,16 +749,17 @@ def compare_match_to_baseline(
                 )
                 continue
             for field in FUNNEL_FIELDS:
-                actual = int(row[field])
-                if actual != int(expected_stage[field]):
-                    differences.append(
-                        {
-                            "date": day,
-                            "field": f"{name}.{field}",
-                            "expected": expected_stage[field],
-                            "actual": actual,
-                        }
-                    )
+                expected = expected_stage[field]
+                if _tolerance_spec(expected) is None:
+                    expected = int(expected)
+                difference = _mismatch(
+                    field=f"{name}.{field}",
+                    expected=expected,
+                    actual=int(row[field]),
+                    date=day,
+                )
+                if difference is not None:
+                    differences.append(difference)
 
     return {
         "baseline": "config/baselines.json",
@@ -839,16 +875,13 @@ def compare_network_to_baseline(
         )
     else:
         for field in NETWORK_SUMMARY_FIELDS:
-            actual = stats[field]
-            wanted = expected.get(field)
-            if actual != wanted:
-                differences.append(
-                    {
-                        "field": field,
-                        "expected": wanted,
-                        "actual": actual,
-                    }
-                )
+            difference = _mismatch(
+                field=field,
+                expected=expected.get(field),
+                actual=stats[field],
+            )
+            if difference is not None:
+                differences.append(difference)
     return {
         "baseline": "config/baselines.json",
         "matched": not differences,
@@ -856,7 +889,12 @@ def compare_network_to_baseline(
     }
 
 
-def write_network_digest(run_dir: Path, network: BikeNetwork) -> Path:
+def write_network_digest(
+    run_dir: Path,
+    network: BikeNetwork,
+    *,
+    baselines_path: Path = BASELINES_PATH,
+) -> Path:
     """Content digest of the two network tables (ADR-0003)."""
     segment_sha, segment_rows = digest_table(
         network.segments, SEGMENT_COLUMNS, ("segment_id",)
@@ -869,6 +907,8 @@ def write_network_digest(run_dir: Path, network: BikeNetwork) -> Path:
             "network_edges": {"sha256": edge_sha, "rows": edge_rows},
         },
         "network": stats,
-        "baseline_comparison": compare_network_to_baseline(stats),
+        "baseline_comparison": compare_network_to_baseline(
+            stats, baselines_path=baselines_path
+        ),
     }
     return _write_json(run_dir / "digest.json", payload)
