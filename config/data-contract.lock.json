@@ -34,13 +34,6 @@
       "source_pbf_sha256": "ad5d03044b6d8fe35d20bf8c093bc94b6cc884203743d65ce86d7b64dc09b693"
     },
     {
-      "path": "data/raw/electronic-fence/STATION.csv",
-      "role": "raw",
-      "bytes": 712377,
-      "sha256": "a42a3ca57c60a8659ddebe3f0a6c15daeead5be08a5278bbed1a3c11fa0f9c1e",
-      "data_rows": 10522
-    },
-    {
       "path": "data/raw/fujian-260901.osm.pbf",
       "role": "osm_pbf",
       "bytes": 41641197,
@@ -130,19 +123,6 @@
       "role": "config",
       "bytes": 4759,
       "sha256": "83307b4ac9c8aea0627f96c4e0e9cc4ea56684c460c857fa364f4afd8347a3b7"
-    },
-    {
-      "path": "data/staging/electronic-fence/station.csv",
-      "role": "staging",
-      "bytes": 1837505,
-      "sha256": "c6ca192253b94c72cbe1473f22e689a45e6786942edde81e285ae36d92bc33c2",
-      "data_rows": 10522,
-      "columns": 3,
-      "header": [
-        "source_row",
-        "FENCE_ID",
-        "FENCE_LOC"
-      ]
     },
     {
       "path": "data/staging/order/order-data.csv",

@@ -300,6 +300,25 @@ def test_only_restricts_the_check_to_the_named_roles(tmp_path):
     assert "2 entries verified" in result.stdout
 
 
+def test_retired_electronic_fence_files_are_neither_locked_nor_reported(tmp_path):
+    """ADR-0011 took the fence data out of the project; the files may still be on disk."""
+    root = build_project(tmp_path)
+    write_csv(root / "data/raw/electronic-fence/STATION.csv", [["FENCE_ID"], ["1"]])
+    write_csv(
+        root / "data/staging/electronic-fence/station.csv",
+        [["source_row", "FENCE_ID"], ["2", "1"]],
+    )
+
+    assert run(root).returncode == 0
+    paths = set(entries_by_path(read_lock(root)))
+    assert not [path for path in paths if "electronic-fence" in path]
+
+    result = run(root, "--check")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "electronic-fence" not in result.stderr
+
+
 def add_converted_workbook(root: Path, destination_data_rows: int = 2) -> Path:
     """A raw Excel workbook wearing a .csv suffix, its staging CSV, and the manifest."""
     from openpyxl import Workbook

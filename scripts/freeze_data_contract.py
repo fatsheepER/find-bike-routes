@@ -53,6 +53,14 @@ UV_LOCK_PATH = "uv.lock"
 
 ROLES: tuple[str, ...] = ("boundary", "config", "fixture", "osm_pbf", "raw", "staging")
 IGNORED_NAMES = {".DS_Store", ".gitkeep"}
+# ADR-0011 retired the electronic-fence data: no analysis, no database, no frontend.
+# The files stay on disk as received, and the notebook prototypes the ADR keeps as
+# research evidence still read them, but no pipeline stage does. Discovery skips them
+# rather than lock bytes that nothing downstream of this contract consumes.
+RETIRED_DIRS: tuple[str, ...] = (
+    "data/raw/electronic-fence",
+    "data/staging/electronic-fence",
+)
 TOOLING_PACKAGES = ("pandas", "numpy", "pyproj", "shapely", "osmium", "pyspark")
 UTM_CRS = "EPSG:32650"
 # mkstemp creates 0600; both products of this script are committed files.
@@ -117,7 +125,10 @@ def discover(root: Path) -> list[tuple[str, str]]:
     def add(path: Path, role: str) -> None:
         if not path.is_file() or path.name in IGNORED_NAMES or path.name.startswith("."):
             return
-        found.append((path.relative_to(root).as_posix(), role))
+        relative = path.relative_to(root).as_posix()
+        if any(relative.startswith(f"{directory}/") for directory in RETIRED_DIRS):
+            return
+        found.append((relative, role))
 
     add(root / BOUNDARY_PATH, "boundary")
     add(root / SAMPLE_PATH, "config")
