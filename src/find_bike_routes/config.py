@@ -162,3 +162,15 @@ class MatchStageParameters:
         "推断段比例 ≤ 30%",
         "匹配路径在岛内",
     )
+
+
+@dataclass(frozen=True, slots=True)
+class DebounceParameters:
+    """A visit counts only if it covers this much path, or this many match points.
+
+    ADR-0002: these are the channel-flow and transit-rate definitions, not knobs.
+    The same object is passed to the driver scan and to the assign-regions UDF.
+    """
+
+    min_length_m: float = 100.0
+    min_match_points: int = 2
