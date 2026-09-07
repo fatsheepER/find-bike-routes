@@ -350,6 +350,7 @@ def test_baselines_file_separates_falsifiable_from_recorded():
 
     assert list(baselines["baselines"]["days"]) == ["2020-12-21"]
     assert list(baselines["recorded"]["days"]) == [
+        "2020-12-21",
         "2020-12-22",
         "2020-12-23",
         "2020-12-24",
@@ -373,10 +374,26 @@ def test_baselines_file_separates_falsifiable_from_recorded():
     assert baselines["baselines"]["network"]["physical_segments"] == 12_359
 
     recorded = baselines["recorded"]
-    for day in recorded["days"].values():
-        assert "match" in day
+    for date, day in recorded["days"].items():
+        assert "assign_regions" in day
+        if date != "2020-12-21":
+            assert "match" in day
+            assert "order_trips" in day
+            assert "grid_flow" in day
+    assert recorded["days"]["2020-12-21"].keys() == {"assign_regions"}
     assert recorded["rain_day"]["date"] == "2020-12-23"
+    assert recorded["rain_day"]["unassigned_gap_cuts"] == 8
+    assert recorded["regions"]["region_cells"]["rows"] == 3943
+    assert recorded["regions"]["regions"] == 151
+    assert len(recorded["regions"]["seed_check"]) == 12
+    assert recorded["order_trips"]["paired"] == 220_675
     assert "acceptance" in recorded
+    day21 = baselines["baselines"]["days"]["2020-12-21"]
+    assert day21["order_trips"]["valid"] == 49_328
+    assert day21["grid_flow"]["cells_with_1_track"] == 237
+    assert day21["grid_flow"]["cells_with_1_track_notebook"] == 238
+    assert day21["regions"]["ami_vs_notebook"] == 1.0
+    assert "assign_regions" not in day21
 
 
 def test_data_contract_failure_refuses_to_start(tmp_path):

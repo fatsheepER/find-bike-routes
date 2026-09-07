@@ -456,6 +456,7 @@ def test_baselines_file_holds_only_the_five_study_days():
     assert "regression-sample.json" in baselines["note"]
     assert list(baselines["baselines"]["days"]) == ["2020-12-21"]
     assert list(baselines["recorded"]["days"]) == [
+        "2020-12-21",
         "2020-12-22",
         "2020-12-23",
         "2020-12-24",
@@ -463,6 +464,8 @@ def test_baselines_file_holds_only_the_five_study_days():
     ]
     assert baselines["totals"]["raw_points"] == 2_849_243
     assert baselines["totals"]["valid_tracks"] == 81_035
+    assert baselines["totals"]["order_pairs"] == 220_675
+    assert baselines["totals"]["order_duration_kept"] == 212_630
     assert baselines["baselines"]["days"]["2020-12-21"]["valid_tracks"] == 15_527
 
 
