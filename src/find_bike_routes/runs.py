@@ -28,6 +28,7 @@ from .config import (
     NetworkStageParameters,
     OrderTripsStageParameters,
     OsmContextStageParameters,
+    RegionContextStageParameters,
     RegionsStageParameters,
     SplitStageParameters,
 )
@@ -45,6 +46,13 @@ from .osm_context import (
     FEATURE_TABLE,
     OsmContext,
     STAGE as OSM_CONTEXT_STAGE,
+)
+from .region_context import (
+    CONTEXT_COLUMNS,
+    CONTEXT_ORDER,
+    CONTEXT_TABLE,
+    RegionContext,
+    STAGE as REGION_CONTEXT_STAGE,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -169,6 +177,15 @@ REGIONS_DEFINITION_FIELDS = (
     "community_funnel_stages",
     "cell_funnel_stages",
 )
+REGION_CONTEXT_DEFINITION_FIELDS = (
+    "cell_size_m",
+    "composition_categories",
+    "bus_stop_category",
+    "area_funnel_unit",
+    "point_funnel_unit",
+    "area_funnel_stage_name",
+    "point_funnel_stage_name",
+)
 OSM_CONTEXT_DEFINITION_FIELDS = (
     "island_tolerance_m",
     "crs",
@@ -265,6 +282,7 @@ def write_params(
         | GridFlowStageParameters
         | RegionsStageParameters
         | AssignRegionsStageParameters
+        | RegionContextStageParameters
     ),
     contract_check_skipped: bool,
     spark_conf: Mapping[str, str] | None = None,
@@ -277,6 +295,17 @@ def write_params(
             "parameters": {
                 name: _jsonable(getattr(parameters, name))
                 for name in PBF_STAGE_DEFINITION_FIELDS[type(parameters)]
+            },
+            "data_contract_lock_sha256": sha256(lock_path),
+        }
+    elif isinstance(parameters, RegionContextStageParameters):
+        # Driver-side like the two PBF stages, but it consumes the frozen
+        # partition, so the digest it read goes in beside the parameters (ADR-0008).
+        payload = {
+            "region_cells_digest": region_cells_digest,
+            "parameters": {
+                name: _jsonable(getattr(parameters, name))
+                for name in REGION_CONTEXT_DEFINITION_FIELDS
             },
             "data_contract_lock_sha256": sha256(lock_path),
         }
@@ -1074,6 +1103,29 @@ def write_osm_context_digest(run_dir: Path, context: OsmContext) -> Path:
         "observations": {
             **funnel_observations(stages),
             "osm_context": context.observations,
+        },
+    }
+    return _write_json(run_dir / "digest.json", payload)
+
+
+def write_region_context_digest(run_dir: Path, context: RegionContext) -> Path:
+    """Content digest of the context table and its funnel (ADR-0003)."""
+    from .funnel import FUNNEL_COLUMNS, funnel_observations, funnel_table_name
+
+    stages = _pandas_funnel_records(context.funnel)
+    payload = {
+        "tables": {
+            CONTEXT_TABLE: _named_digest(
+                context.context, CONTEXT_COLUMNS, CONTEXT_ORDER
+            ),
+            funnel_table_name(REGION_CONTEXT_STAGE): _named_digest(
+                context.funnel, FUNNEL_COLUMNS, ("stage_index",)
+            ),
+        },
+        "stage_counts": stages,
+        "observations": {
+            **funnel_observations(stages),
+            "region_context": context.observations,
         },
     }
     return _write_json(run_dir / "digest.json", payload)

@@ -252,6 +252,31 @@ class OsmContextStageParameters:
 
 
 @dataclass(frozen=True, slots=True)
+class RegionContextStageParameters:
+    """Everything the region functional-composition stage runs on.
+
+    The four composition categories are listed in the order the report reads
+    them, which is not the rule order: the rules put education first so a campus
+    canteen stays education, the composition puts residential first because that
+    is the share the report quotes. `bus_stop` is deliberately absent — it is a
+    density column, not a component of the vector (ADR-0002).
+    """
+
+    cell_size_m: int = 150
+    composition_categories: tuple[str, ...] = (
+        "residential",
+        "employment",
+        "education",
+        "transport",
+    )
+    bus_stop_category: str = "bus_stop"
+    area_funnel_unit: str = "面要素"
+    point_funnel_unit: str = "点要素"
+    area_funnel_stage_name: str = "与分析几何相交"
+    point_funnel_stage_name: str = "落在分析几何格内"
+
+
+@dataclass(frozen=True, slots=True)
 class MatchStageParameters:
     """Everything the map-matching stage runs on."""
 

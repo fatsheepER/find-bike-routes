@@ -3,7 +3,8 @@
 A JVM start costs seconds, so each stage runs once per session over the committed
 fixture and the assertions read that run's products. Cases that need their own run —
 overwrite behaviour, refused arguments — pay for it themselves. The chain is
-split → match → order-trips → grid-flow → regions → assign-regions.
+split → match → order-trips → grid-flow → regions → assign-regions →
+region-context.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from support import (
     FIXTURE,
     FIXTURE_DATE,
     FIXTURE_NETWORK,
+    FIXTURE_OSM_CONTEXT,
     ORDER_FIXTURE,
     run_cli,
     run_grid_flow_cli,
@@ -28,6 +30,7 @@ from support import (
     run_order_cli,
     run_regions_cli,
     run_assign_regions_cli,
+    run_region_context_cli,
 )
 
 
@@ -290,6 +293,49 @@ def assign_regions_run(
             matching=regions_run.matching,
             orders=regions_run.orders,
             regions=regions_run.output,
+        )
+    finally:
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+@dataclass(frozen=True)
+class RegionContextRun:
+    output: Path
+    region_context: Path
+    stage_counts: Path
+    artifacts: Path
+    osm_context: Path
+    regions: Path
+
+
+@pytest.fixture(scope="session")
+def region_context_run(
+    assign_regions_run: AssignRegionsRun,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[RegionContextRun]:
+    """Clip the committed feature fixture onto the fixture's frozen partition.
+
+    Declared after assign-regions so the chain reads in pipeline order; the
+    stage itself only needs the partition, not the assignment.
+    """
+    output = tmp_path_factory.mktemp("region_context") / "region_context"
+    artifacts = ARTIFACTS_ROOT / "test-region-context"
+    shutil.rmtree(artifacts, ignore_errors=True)
+    completed = run_region_context_cli(
+        "--osm-context", str(FIXTURE_OSM_CONTEXT),
+        "--regions", str(assign_regions_run.regions),
+        "--output", str(output),
+        "--run-id", "test-region-context",
+    )
+    assert completed.returncode == 0, completed.stderr
+    try:
+        yield RegionContextRun(
+            output=output,
+            region_context=output / "region_context.parquet",
+            stage_counts=output / "stage_counts_region_context.parquet",
+            artifacts=artifacts,
+            osm_context=FIXTURE_OSM_CONTEXT,
+            regions=assign_regions_run.regions,
         )
     finally:
         shutil.rmtree(artifacts, ignore_errors=True)

@@ -27,12 +27,15 @@ GRID_FLOW_SCRIPT = PROJECT_ROOT / "scripts" / "grid_flow.py"
 REGIONS_SCRIPT = PROJECT_ROOT / "scripts" / "regions.py"
 ASSIGN_REGIONS_SCRIPT = PROJECT_ROOT / "scripts" / "assign_regions.py"
 OSM_CONTEXT_SCRIPT = PROJECT_ROOT / "scripts" / "extract_osm_context.py"
+REGION_CONTEXT_SCRIPT = PROJECT_ROOT / "scripts" / "region_context.py"
 ARTIFACTS_ROOT = PROJECT_ROOT / "artifacts" / "runs"
 AUDIT_MAPS = PROJECT_ROOT / "artifacts" / "audit" / "maps"
 FIXTURE = PROJECT_ROOT / "tests" / "fixtures" / "regression-sample-20201221.csv"
 ORDER_FIXTURE = PROJECT_ROOT / "tests" / "fixtures" / "order-sample-20201221.csv"
 FIXTURE_NETWORK = PROJECT_ROOT / "tests" / "fixtures"
 FIXTURE_OSM_FEATURES = PROJECT_ROOT / "tests" / "fixtures" / "osm_features.parquet"
+# The same directory read as an extract-osm-context output root.
+FIXTURE_OSM_CONTEXT = PROJECT_ROOT / "tests" / "fixtures"
 FIXTURE_OSM_EXTENT = (
     PROJECT_ROOT / "tests" / "fixtures" / "osm-features-extent.geojson"
 )
@@ -124,10 +127,25 @@ def run_osm_context_cli(
     )
 
 
+def run_region_context_cli(
+    *arguments: str, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(REGION_CONTEXT_SCRIPT), *arguments],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "TZ": RUNNER_TIME_ZONE, **(env or {})},
+    )
+
+
 def read_osm_features(features: Path) -> pd.DataFrame:
     return pd.read_parquet(features).sort_values(["osm_type", "osm_id"]).reset_index(
         drop=True
     )
+
+
+def read_region_context(context: Path) -> pd.DataFrame:
+    return pd.read_parquet(context).sort_values("region_id").reset_index(drop=True)
 
 
 def read_points(points: Path) -> pd.DataFrame:
