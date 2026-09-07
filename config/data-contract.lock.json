@@ -271,6 +271,24 @@
       ]
     },
     {
+      "path": "tests/fixtures/order-sample-20201221.csv",
+      "role": "fixture",
+      "bytes": 4876,
+      "sha256": "c283e7c33b0b399b3edb9244381211dd00a6857b8547059c5d3116f4b592b2e6",
+      "data_rows": 90,
+      "columns": 8,
+      "header": [
+        "source_row",
+        "BICYCLE_ID",
+        "LATITUDE",
+        "LONGITUDE",
+        "LOCK_STATUS",
+        "UPDATE_TIME1",
+        "UPDATE_TIME2",
+        "ORDER DURATION"
+      ]
+    },
+    {
       "path": "tests/fixtures/regression-sample-20201221.csv",
       "role": "fixture",
       "bytes": 205216,

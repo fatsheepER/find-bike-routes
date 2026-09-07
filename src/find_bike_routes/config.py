@@ -205,6 +205,30 @@ class DebounceParameters:
 
 
 @dataclass(frozen=True, slots=True)
+class OrderTripsStageParameters:
+    """Everything the order-trips stage runs on.
+
+    Duration bounds and the two distance-band cuts are the §3.4 definition
+    (ADR-0002). Duration uses the same exclusive window as the track stage:
+    a trip fails when duration_s <= 60 or duration_s >= 3,600.
+    """
+
+    dates: tuple[date, ...] = STUDY_DATES
+    spark: SparkParameters = SparkParameters()
+    island_tolerance_m: float = 100.0
+    min_duration_s: int = 60
+    max_duration_s: int = 3_600
+    short_distance_m: float = 1_000.0
+    long_distance_m: float = 3_000.0
+    funnel_stage_names: tuple[str, ...] = (
+        "配对",
+        "时长 60–3,600 秒",
+        "两端在岛 +100 米",
+    )
+    distance_band_labels: tuple[str, ...] = ("< 1 km", "1–3 km", "≥ 3 km")
+
+
+@dataclass(frozen=True, slots=True)
 class DisplayFillParameters:
     """Which uncovered island cells the display layer may fill.
 

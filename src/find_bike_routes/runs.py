@@ -22,6 +22,7 @@ from .config import (
     RAIN_DATE,
     MatchStageParameters,
     NetworkStageParameters,
+    OrderTripsStageParameters,
     SplitStageParameters,
 )
 from .datasets import POINT_COLUMNS, STAGE_COUNT_COLUMNS, TRACK_COLUMNS
@@ -110,6 +111,15 @@ MATCH_QUALITY_FIELDS = (
     "matched_length_median_m",
     "inferred_share_mean",
 )
+ORDER_DEFINITION_FIELDS = (
+    "island_tolerance_m",
+    "min_duration_s",
+    "max_duration_s",
+    "short_distance_m",
+    "long_distance_m",
+    "funnel_stage_names",
+    "distance_band_labels",
+)
 ACCEPTANCE_POINT_MATCH_RATE_MIN = 0.9
 ACCEPTANCE_SNAP_MEDIAN_MAX_M = 20.0
 
@@ -184,7 +194,12 @@ def ensure_data_contract(
 def write_params(
     run_dir: Path,
     *,
-    parameters: SplitStageParameters | NetworkStageParameters | MatchStageParameters,
+    parameters: (
+        SplitStageParameters
+        | NetworkStageParameters
+        | MatchStageParameters
+        | OrderTripsStageParameters
+    ),
     contract_check_skipped: bool,
     spark_conf: Mapping[str, str] | None = None,
     lock_path: Path = LOCK_PATH,
@@ -206,6 +221,16 @@ def write_params(
             "parameters": {
                 name: _jsonable(getattr(parameters, name))
                 for name in MATCH_DEFINITION_FIELDS
+            },
+            "data_contract_lock_sha256": sha256(lock_path),
+        }
+    elif isinstance(parameters, OrderTripsStageParameters):
+        payload = {
+            "timezone": parameters.spark.session_time_zone,
+            "spark": dict(spark_conf or {}),
+            "parameters": {
+                name: _jsonable(getattr(parameters, name))
+                for name in ORDER_DEFINITION_FIELDS
             },
             "data_contract_lock_sha256": sha256(lock_path),
         }
@@ -910,5 +935,26 @@ def write_network_digest(
         "baseline_comparison": compare_network_to_baseline(
             stats, baselines_path=baselines_path
         ),
+    }
+    return _write_json(run_dir / "digest.json", payload)
+
+
+def write_order_digest(run_dir: Path, trips: DataFrame, counts: DataFrame) -> Path:
+    """Content digest of the trip table and its funnel (ADR-0003)."""
+    from .funnel import digest_funnel, funnel_observations, funnel_records
+    from .orders import ORDER_TRIP_COLUMNS
+
+    trip_sha, trip_rows = digest_frame(
+        trips, ORDER_TRIP_COLUMNS, ("source_date", "BICYCLE_ID", "trip_index")
+    )
+    count_sha, count_rows = digest_funnel(counts)
+    stages = funnel_records(counts)
+    payload = {
+        "tables": {
+            "order_trips": {"sha256": trip_sha, "rows": trip_rows},
+            "stage_counts_order_trips": {"sha256": count_sha, "rows": count_rows},
+        },
+        "stage_counts": stages,
+        "observations": funnel_observations(stages),
     }
     return _write_json(run_dir / "digest.json", payload)

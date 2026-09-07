@@ -1,4 +1,4 @@
-"""Helpers shared by the track-splitting and map-matching tests.
+"""Helpers shared by the pipeline CLI tests.
 
 The pipeline is driven as a subprocess, the way an operator drives it, so the tests
 survive any later reshuffling of the modules behind the CLI. Every input is either the
@@ -19,11 +19,16 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).parents[1]
 SCRIPT = PROJECT_ROOT / "scripts" / "split_tracks.py"
 MATCH_SCRIPT = PROJECT_ROOT / "scripts" / "match_tracks.py"
+ORDER_SCRIPT = PROJECT_ROOT / "scripts" / "order_trips.py"
 ARTIFACTS_ROOT = PROJECT_ROOT / "artifacts" / "runs"
 FIXTURE = PROJECT_ROOT / "tests" / "fixtures" / "regression-sample-20201221.csv"
+ORDER_FIXTURE = PROJECT_ROOT / "tests" / "fixtures" / "order-sample-20201221.csv"
 FIXTURE_NETWORK = PROJECT_ROOT / "tests" / "fixtures"
 FIXTURE_DATE = "2020-12-21"
 FIXTURE_POINTS = 4460
+ORDER_FIXTURE_TRIPS = 45
+ORDER_FIXTURE_DURATION_KEPT = 42
+ORDER_FIXTURE_VALID = 39
 
 # Deliberately not Asia/Shanghai: the session time zone is pinned in code, and the
 # timestamps written under this machine time zone are what proves it.
@@ -46,6 +51,17 @@ def run_match_cli(
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(MATCH_SCRIPT), *arguments],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "TZ": RUNNER_TIME_ZONE, **(env or {})},
+    )
+
+
+def run_order_cli(
+    *arguments: str, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(ORDER_SCRIPT), *arguments],
         capture_output=True,
         text=True,
         env={**os.environ, "TZ": RUNNER_TIME_ZONE, **(env or {})},
@@ -84,6 +100,12 @@ def read_match_pieces(pieces: Path) -> pd.DataFrame:
 
 def read_track_match(tracks: Path) -> pd.DataFrame:
     return pd.read_parquet(tracks).sort_values("TRACK_ID").reset_index(drop=True)
+
+
+def read_order_trips(trips: Path) -> pd.DataFrame:
+    return pd.read_parquet(trips).sort_values(
+        ["source_date", "BICYCLE_ID", "trip_index"]
+    ).reset_index(drop=True)
 
 
 def staging_copy(directory: Path, day: str) -> Path:

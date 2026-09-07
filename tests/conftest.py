@@ -1,8 +1,9 @@
-"""The one pipeline run the track-splitting assertions read.
+"""The one pipeline run the later-stage assertions read.
 
-A JVM start costs seconds, so the pipeline runs once per session over the committed
+A JVM start costs seconds, so each stage runs once per session over the committed
 fixture and the assertions read that run's products. Cases that need their own run —
-overwrite behaviour, refused arguments — pay for it themselves.
+overwrite behaviour, refused arguments — pay for it themselves. The chain is
+split → match → order-trips.
 """
 
 from __future__ import annotations
@@ -19,8 +20,10 @@ from support import (
     FIXTURE,
     FIXTURE_DATE,
     FIXTURE_NETWORK,
+    ORDER_FIXTURE,
     run_cli,
     run_match_cli,
+    run_order_cli,
 )
 
 
@@ -93,6 +96,40 @@ def match_run(split_run: SplitRun, tmp_path_factory: pytest.TempPathFactory) -> 
             pieces=output / "match_pieces",
             track_match=output / "track_match",
             stage_counts_match=output / "stage_counts_match",
+            artifacts=artifacts,
+        )
+    finally:
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+@dataclass(frozen=True)
+class OrderTripsRun:
+    output: Path
+    order_trips: Path
+    stage_counts: Path
+    artifacts: Path
+
+
+@pytest.fixture(scope="session")
+def order_trips_run(tmp_path_factory: pytest.TempPathFactory) -> Iterator[OrderTripsRun]:
+    """Pair the committed order fixture. Defined after match_run; later stages
+    that need both will take both fixtures.
+    """
+    output = tmp_path_factory.mktemp("orders") / "orders"
+    artifacts = ARTIFACTS_ROOT / "test-order-trips"
+    shutil.rmtree(artifacts, ignore_errors=True)
+    completed = run_order_cli(
+        "--input", str(ORDER_FIXTURE),
+        "--dates", FIXTURE_DATE,
+        "--output", str(output),
+        "--run-id", "test-order-trips",
+    )
+    assert completed.returncode == 0, completed.stderr
+    try:
+        yield OrderTripsRun(
+            output=output,
+            order_trips=output / "order_trips",
+            stage_counts=output / "stage_counts_order_trips",
             artifacts=artifacts,
         )
     finally:
