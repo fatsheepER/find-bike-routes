@@ -503,3 +503,28 @@ class AssignRegionsStageParameters:
         "被无区域段切断",
         "两端都直接落在分析几何内",
     )
+
+
+@dataclass(frozen=True, slots=True)
+class RegionProfilesStageParameters:
+    """Everything the dense region-profile stage runs on (ADR-0002)."""
+
+    dates: tuple[date, ...] = STUDY_DATES
+    spark: SparkParameters = SparkParameters()
+    hours: tuple[int, ...] = (6, 7, 8, 9)
+    core_start_time: str = "06:30:00"
+    core_end_time: str = "09:30:00"
+    min_chord_length_m: float = 1.0
+    sector_count: int = 16
+    track_funnel_stage_names: tuple[str, ...] = (
+        "有效轨迹",
+        "有 ≥ 1 次进入",
+        "有 ≥ 2 次进入",
+        "有过境区域",
+        "起始时刻在时段集合内",
+    )
+    trip_funnel_stage_names: tuple[str, ...] = (
+        "有效行程",
+        "两端归属已知",
+        "解锁与上锁时刻都在时段集合内",
+    )

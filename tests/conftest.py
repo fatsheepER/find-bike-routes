@@ -31,6 +31,7 @@ from support import (
     run_regions_cli,
     run_assign_regions_cli,
     run_region_context_cli,
+    run_region_profiles_cli,
 )
 
 
@@ -336,6 +337,62 @@ def region_context_run(
             artifacts=artifacts,
             osm_context=FIXTURE_OSM_CONTEXT,
             regions=assign_regions_run.regions,
+        )
+    finally:
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+@dataclass(frozen=True)
+class RegionProfilesRun:
+    output: Path
+    region_metrics: Path
+    region_transit_core: Path
+    stage_counts: Path
+    artifacts: Path
+    trajectory: Path
+    matching: Path
+    orders: Path
+    assignment: Path
+    regions: Path
+    region_context: Path
+
+
+@pytest.fixture(scope="session")
+def region_profiles_run(
+    split_run: SplitRun,
+    assign_regions_run: AssignRegionsRun,
+    region_context_run: RegionContextRun,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[RegionProfilesRun]:
+    """Build dense metrics after assignment and functional composition."""
+    output = tmp_path_factory.mktemp("region_profiles") / "region_profiles"
+    artifacts = ARTIFACTS_ROOT / "test-region-profiles"
+    shutil.rmtree(artifacts, ignore_errors=True)
+    completed = run_region_profiles_cli(
+        "--trajectory", str(split_run.output),
+        "--matching", str(assign_regions_run.matching),
+        "--orders", str(assign_regions_run.orders),
+        "--assignment", str(assign_regions_run.output),
+        "--regions", str(assign_regions_run.regions),
+        "--region-context", str(region_context_run.output),
+        "--dates", FIXTURE_DATE,
+        "--output", str(output),
+        "--run-id", "test-region-profiles",
+    )
+    assert completed.returncode == 0, completed.stderr
+    try:
+        yield RegionProfilesRun(
+            output=output,
+            region_metrics=output / "region_metrics",
+            region_transit_core=output / "region_transit_core",
+            stage_counts=output / "stage_counts_region_profiles",
+            artifacts=artifacts,
+            trajectory=split_run.output,
+            matching=assign_regions_run.matching,
+            orders=assign_regions_run.orders,
+            assignment=assign_regions_run.output,
+            regions=assign_regions_run.regions,
+            region_context=region_context_run.output,
         )
     finally:
         shutil.rmtree(artifacts, ignore_errors=True)

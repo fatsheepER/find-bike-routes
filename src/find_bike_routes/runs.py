@@ -29,6 +29,7 @@ from .config import (
     OrderTripsStageParameters,
     OsmContextStageParameters,
     RegionContextStageParameters,
+    RegionProfilesStageParameters,
     RegionsStageParameters,
     SplitStageParameters,
 )
@@ -186,6 +187,15 @@ REGION_CONTEXT_DEFINITION_FIELDS = (
     "area_funnel_stage_name",
     "point_funnel_stage_name",
 )
+REGION_PROFILES_DEFINITION_FIELDS = (
+    "hours",
+    "core_start_time",
+    "core_end_time",
+    "min_chord_length_m",
+    "sector_count",
+    "track_funnel_stage_names",
+    "trip_funnel_stage_names",
+)
 OSM_CONTEXT_DEFINITION_FIELDS = (
     "island_tolerance_m",
     "crs",
@@ -283,6 +293,7 @@ def write_params(
         | RegionsStageParameters
         | AssignRegionsStageParameters
         | RegionContextStageParameters
+        | RegionProfilesStageParameters
     ),
     contract_check_skipped: bool,
     spark_conf: Mapping[str, str] | None = None,
@@ -363,6 +374,18 @@ def write_params(
             "parameters": {
                 name: _jsonable(getattr(parameters, name))
                 for name in ASSIGN_REGIONS_DEFINITION_FIELDS
+            },
+            "data_contract_lock_sha256": sha256(lock_path),
+        }
+    elif isinstance(parameters, RegionProfilesStageParameters):
+        payload = {
+            "timezone": parameters.spark.session_time_zone,
+            "spark": dict(spark_conf or {}),
+            "dates": [day.isoformat() for day in parameters.dates],
+            "region_cells_digest": region_cells_digest,
+            "parameters": {
+                name: _jsonable(getattr(parameters, name))
+                for name in REGION_PROFILES_DEFINITION_FIELDS
             },
             "data_contract_lock_sha256": sha256(lock_path),
         }
@@ -1399,6 +1422,52 @@ def write_assign_regions_digest(
         "observations": {
             **funnel_observations(stages),
             "assign_regions": dict(observations),
+        },
+    }
+    return _write_json(run_dir / "digest.json", payload)
+
+
+def write_region_profiles_digest(
+    run_dir: Path,
+    metrics: DataFrame,
+    core: DataFrame,
+    counts: DataFrame,
+    observations: Mapping[str, Mapping[str, object]],
+) -> Path:
+    """Content digest of dense hourly metrics, core transit, and the funnel."""
+    from .funnel import digest_funnel, funnel_observations, funnel_records
+    from .profiles import (
+        BEARING_NOTE,
+        REGION_METRIC_COLUMNS,
+        REGION_TRANSIT_CORE_COLUMNS,
+    )
+
+    metric_sha, metric_rows = digest_frame(
+        metrics,
+        REGION_METRIC_COLUMNS,
+        ("source_date", "hour", "region_id"),
+    )
+    core_sha, core_rows = digest_frame(
+        core,
+        REGION_TRANSIT_CORE_COLUMNS,
+        ("source_date", "region_id"),
+    )
+    count_sha, count_rows = digest_funnel(counts)
+    stages = funnel_records(counts)
+    payload = {
+        "tables": {
+            "region_metrics": {"sha256": metric_sha, "rows": metric_rows},
+            "region_transit_core": {"sha256": core_sha, "rows": core_rows},
+            "stage_counts_region_profiles": {
+                "sha256": count_sha,
+                "rows": count_rows,
+            },
+        },
+        "stage_counts": stages,
+        "observations": {
+            **funnel_observations(stages),
+            "bearing_note": BEARING_NOTE,
+            "region_profiles": dict(observations),
         },
     }
     return _write_json(run_dir / "digest.json", payload)
