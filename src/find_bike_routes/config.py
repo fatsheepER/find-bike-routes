@@ -202,3 +202,16 @@ class DebounceParameters:
 
     min_length_m: float = 100.0
     min_match_points: int = 2
+
+
+@dataclass(frozen=True, slots=True)
+class DisplayFillParameters:
+    """Which uncovered island cells the display layer may fill.
+
+    Opening (erode then dilate this many cells) drops narrow network gaps;
+    remaining 4-connected blocks larger than max_fill_hole_km2 stay empty
+    (hills, airport, lakes). ADR-0002: these values are the definition.
+    """
+
+    max_fill_hole_km2: float = 2.0
+    hole_erosion_steps: int = 2
