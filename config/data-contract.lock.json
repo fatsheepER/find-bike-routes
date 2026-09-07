@@ -269,6 +269,22 @@
       ]
     },
     {
+      "path": "tests/fixtures/osm_features.parquet",
+      "role": "fixture",
+      "bytes": 444263,
+      "sha256": "c4c6e704b944a93e589ff75131c21a3d1aa27b089a67df6d5b4afc12456dca74",
+      "data_rows": 3870,
+      "columns": [
+        "osm_type",
+        "osm_id",
+        "category",
+        "is_area",
+        "geometry",
+        "area_m2",
+        "matched_tag"
+      ]
+    },
+    {
       "path": "tests/fixtures/region-of-cell-20201221.parquet",
       "role": "fixture",
       "bytes": 8222,

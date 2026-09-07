@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from pathlib import Path
 
+import pandas as pd
 from pyspark.sql import DataFrame
 
 FUNNEL_COLUMNS = (
@@ -43,6 +44,14 @@ def write_funnel(
     if partitioned:
         writer = writer.partitionBy("source_date")
     writer.parquet(str(path))
+    return path
+
+
+def write_funnel_frame(frame: pd.DataFrame, output_root: Path, stage: str) -> Path:
+    """Write a driver-side funnel as one file. No partitions: no day to split on."""
+    path = output_root / f"{funnel_table_name(stage)}.parquet"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame.loc[:, list(FUNNEL_COLUMNS)].to_parquet(path, index=False)
     return path
 
 

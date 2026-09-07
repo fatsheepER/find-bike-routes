@@ -13,13 +13,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-import osmium.io
-import osmium.osm.mutable
 import pandas as pd
 import shapely
 
 from find_bike_routes.config import NetworkStageParameters
 from find_bike_routes.network import extract_bike_network
+from support import write_island, write_pbf
 
 PROJECT_ROOT = Path(__file__).parents[1]
 SCRIPT = PROJECT_ROOT / "scripts" / "extract_bike_network.py"
@@ -27,56 +26,19 @@ ARTIFACTS_ROOT = PROJECT_ROOT / "artifacts" / "runs"
 FIXTURE_SEGMENTS = PROJECT_ROOT / "tests" / "fixtures" / "network_segments.parquet"
 FIXTURE_EDGES = PROJECT_ROOT / "tests" / "fixtures" / "network_edges.parquet"
 
-# A square that contains every node used in the synthetic PBF cases.
-ISLAND = {
-    "type": "Feature",
-    "properties": {},
-    "geometry": {
-        "type": "Polygon",
-        "coordinates": [
-            [
-                [118.10, 24.48],
-                [118.20, 24.48],
-                [118.20, 24.58],
-                [118.10, 24.58],
-                [118.10, 24.48],
-            ]
-        ],
-    },
-}
-
-
-def write_island(path: Path) -> Path:
-    path.write_text(json.dumps(ISLAND), encoding="utf-8")
-    return path
-
-
-def write_pbf(
-    path: Path,
-    nodes: list[tuple[int, float, float]],
-    ways: list[tuple[int, list[int], dict[str, str]]],
-) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    writer = osmium.SimpleWriter(str(path), header=osmium.io.Header())
-    for node_id, lon, lat in nodes:
-        writer.add_node(
-            osmium.osm.mutable.Node(id=node_id, location=(lon, lat), version=1)
-        )
-    for way_id, node_ids, tags in ways:
-        writer.add_way(
-            osmium.osm.mutable.Way(id=way_id, nodes=node_ids, tags=tags, version=1)
-        )
-    writer.close()
-    return path
-
 
 def extract(
     tmp_path: Path,
     nodes: list[tuple[int, float, float]],
     ways: list[tuple[int, list[int], dict[str, str]]],
 ):
+    """The network stage on a tiny PBF. Its nodes carry no tags of their own."""
     return extract_bike_network(
-        write_pbf(tmp_path / "tiny.osm.pbf", nodes, ways),
+        write_pbf(
+            tmp_path / "tiny.osm.pbf",
+            [(node_id, lon, lat, {}) for node_id, lon, lat in nodes],
+            ways,
+        ),
         write_island(tmp_path / "island.geojson"),
         NetworkStageParameters(),
     )
@@ -223,7 +185,7 @@ def run_cli(*arguments: str) -> subprocess.CompletedProcess[str]:
 def tiny_inputs(tmp_path: Path) -> tuple[Path, Path]:
     pbf = write_pbf(
         tmp_path / "tiny.osm.pbf",
-        nodes=[(1, 118.12, 24.50), (2, 118.13, 24.50)],
+        nodes=[(1, 118.12, 24.50, {}), (2, 118.13, 24.50, {})],
         ways=[(10, [1, 2], {"highway": "residential", "name": "Test Rd"})],
     )
     return pbf, write_island(tmp_path / "island.geojson")

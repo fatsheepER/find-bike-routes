@@ -8,12 +8,15 @@ runs in a clean clone.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
+import osmium.io
+import osmium.osm.mutable
 import pandas as pd
 
 PROJECT_ROOT = Path(__file__).parents[1]
@@ -23,11 +26,16 @@ ORDER_SCRIPT = PROJECT_ROOT / "scripts" / "order_trips.py"
 GRID_FLOW_SCRIPT = PROJECT_ROOT / "scripts" / "grid_flow.py"
 REGIONS_SCRIPT = PROJECT_ROOT / "scripts" / "regions.py"
 ASSIGN_REGIONS_SCRIPT = PROJECT_ROOT / "scripts" / "assign_regions.py"
+OSM_CONTEXT_SCRIPT = PROJECT_ROOT / "scripts" / "extract_osm_context.py"
 ARTIFACTS_ROOT = PROJECT_ROOT / "artifacts" / "runs"
 AUDIT_MAPS = PROJECT_ROOT / "artifacts" / "audit" / "maps"
 FIXTURE = PROJECT_ROOT / "tests" / "fixtures" / "regression-sample-20201221.csv"
 ORDER_FIXTURE = PROJECT_ROOT / "tests" / "fixtures" / "order-sample-20201221.csv"
 FIXTURE_NETWORK = PROJECT_ROOT / "tests" / "fixtures"
+FIXTURE_OSM_FEATURES = PROJECT_ROOT / "tests" / "fixtures" / "osm_features.parquet"
+FIXTURE_OSM_EXTENT = (
+    PROJECT_ROOT / "tests" / "fixtures" / "osm-features-extent.geojson"
+)
 FIXTURE_DATE = "2020-12-21"
 FIXTURE_POINTS = 4460
 ORDER_FIXTURE_TRIPS = 45
@@ -102,6 +110,23 @@ def run_assign_regions_cli(
         capture_output=True,
         text=True,
         env={**os.environ, "TZ": RUNNER_TIME_ZONE, **(env or {})},
+    )
+
+
+def run_osm_context_cli(
+    *arguments: str, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(OSM_CONTEXT_SCRIPT), *arguments],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "TZ": RUNNER_TIME_ZONE, **(env or {})},
+    )
+
+
+def read_osm_features(features: Path) -> pd.DataFrame:
+    return pd.read_parquet(features).sort_values(["osm_type", "osm_id"]).reset_index(
+        drop=True
     )
 
 
@@ -217,3 +242,50 @@ def staging_copy(directory: Path, day: str) -> Path:
     destination = directory / f"trajectory-data-{day.replace('-', '')}.csv"
     shutil.copy(FIXTURE, destination)
     return destination
+
+
+# A square that contains every node used in the synthetic PBF cases.
+TINY_ISLAND = {
+    "type": "Feature",
+    "properties": {},
+    "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+            [
+                [118.10, 24.48],
+                [118.20, 24.48],
+                [118.20, 24.58],
+                [118.10, 24.58],
+                [118.10, 24.48],
+            ]
+        ],
+    },
+}
+
+
+def write_island(path: Path) -> Path:
+    """The synthetic island boundary the tiny-PBF cases are judged against."""
+    path.write_text(json.dumps(TINY_ISLAND), encoding="utf-8")
+    return path
+
+
+def write_pbf(
+    path: Path,
+    nodes: list[tuple[int, float, float, dict[str, str]]],
+    ways: list[tuple[int, list[int], dict[str, str]]],
+) -> Path:
+    """A PBF with exactly these nodes and ways, written by osmium itself."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    writer = osmium.SimpleWriter(str(path), header=osmium.io.Header())
+    for node_id, longitude, latitude, tags in nodes:
+        writer.add_node(
+            osmium.osm.mutable.Node(
+                id=node_id, location=(longitude, latitude), tags=tags, version=1
+            )
+        )
+    for way_id, node_ids, tags in ways:
+        writer.add_way(
+            osmium.osm.mutable.Way(id=way_id, nodes=node_ids, tags=tags, version=1)
+        )
+    writer.close()
+    return path

@@ -146,6 +146,111 @@ class NetworkStageParameters:
     opposite_cycleway: tuple[str, ...] = OPPOSITE_CYCLEWAY
 
 
+# Tag rules for the OSM functional-feature extraction. Membership and order here are
+# the definition of the four functional categories plus the bus stop (ADR-0002); a
+# change voids every published functional-composition number. Serialized into the run
+# params so a given `osm_features` names the rule set it was cut with.
+
+
+@dataclass(frozen=True, slots=True)
+class TagRule:
+    """One `key` test."""
+
+    key: str
+    values: tuple[str, ...] = ()
+
+    def matches(self, value: str | None) -> bool:
+        """Empty `values` means any non-empty value of this key hits."""
+        if not value:
+            return False
+        return not self.values or value in self.values
+
+
+@dataclass(frozen=True, slots=True)
+class CategoryRule:
+    """One feature category and the tag tests that put a feature in it."""
+
+    category: str
+    tags: tuple[TagRule, ...]
+
+
+# First hit wins, in this order: education outranks employment so a campus canteen
+# stays education, and the bus stop is taken out before employment so a shop beside
+# it cannot swallow it. Order is the definition, not an implementation detail.
+FEATURE_RULES: tuple[CategoryRule, ...] = (
+    CategoryRule(
+        "education",
+        (
+            TagRule("amenity", ("school", "university", "college", "kindergarten")),
+            TagRule("landuse", ("education", "school", "university")),
+            TagRule("building", ("school", "university", "college", "kindergarten")),
+        ),
+    ),
+    CategoryRule(
+        "transport",
+        (
+            TagRule("railway", ("station", "halt", "subway_entrance")),
+            TagRule("amenity", ("bus_station",)),
+            TagRule("public_transport", ("station",)),
+            TagRule("aeroway", ("terminal",)),
+        ),
+    ),
+    CategoryRule("bus_stop", (TagRule("highway", ("bus_stop",)),)),
+    CategoryRule(
+        "employment",
+        (
+            TagRule("shop"),
+            TagRule("office"),
+            TagRule("landuse", ("commercial", "retail", "industrial", "office")),
+            TagRule(
+                "building",
+                ("commercial", "office", "retail", "industrial", "supermarket"),
+            ),
+            TagRule(
+                "amenity",
+                ("bank", "marketplace", "restaurant", "cafe", "fast_food", "hospital"),
+            ),
+        ),
+    ),
+    CategoryRule(
+        "residential",
+        (
+            TagRule("landuse", ("residential",)),
+            TagRule(
+                "building",
+                ("residential", "apartments", "house", "dormitory", "detached"),
+            ),
+            TagRule("place", ("neighbourhood", "quarter")),
+        ),
+    ),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class OsmContextStageParameters:
+    """Everything the OSM functional-feature extraction stage runs on."""
+
+    island_tolerance_m: float = 100.0
+    crs: str = NETWORK_CRS
+    feature_rules: tuple[CategoryRule, ...] = FEATURE_RULES
+    funnel_unit: str = "要素"
+    funnel_stage_names: tuple[str, ...] = (
+        "分类命中",
+        "几何有效",
+        "与本岛 100 米缓冲相交",
+    )
+
+    @property
+    def feature_categories(self) -> tuple[str, ...]:
+        """Every value `osm_features.category` can take, in rule order.
+
+        The bus stop is one of them, and it is not part of the functional
+        composition: `region-context` keeps it out of the four shares and out of
+        the POI total (spec, 功能构成).
+        """
+        return tuple(rule.category for rule in self.feature_rules)
+
+
 @dataclass(frozen=True, slots=True)
 class MatchStageParameters:
     """Everything the map-matching stage runs on."""

@@ -27,6 +27,7 @@ from .config import (
     MatchStageParameters,
     NetworkStageParameters,
     OrderTripsStageParameters,
+    OsmContextStageParameters,
     RegionsStageParameters,
     SplitStageParameters,
 )
@@ -38,6 +39,13 @@ from .matching import (
     TRACK_MATCH_COLUMNS,
 )
 from .network import BikeNetwork, EDGE_COLUMNS, SEGMENT_COLUMNS
+from .osm_context import (
+    FEATURE_COLUMNS,
+    FEATURE_ORDER,
+    FEATURE_TABLE,
+    OsmContext,
+    STAGE as OSM_CONTEXT_STAGE,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 LOCK_PATH = PROJECT_ROOT / "config" / "data-contract.lock.json"
@@ -161,6 +169,19 @@ REGIONS_DEFINITION_FIELDS = (
     "community_funnel_stages",
     "cell_funnel_stages",
 )
+OSM_CONTEXT_DEFINITION_FIELDS = (
+    "island_tolerance_m",
+    "crs",
+    "feature_rules",
+    "funnel_unit",
+    "funnel_stage_names",
+)
+# The two stages that read the PBF on the driver: no Spark conf and no dates to
+# record, so their params are the definition fields and nothing else.
+PBF_STAGE_DEFINITION_FIELDS = {
+    NetworkStageParameters: NETWORK_DEFINITION_FIELDS,
+    OsmContextStageParameters: OSM_CONTEXT_DEFINITION_FIELDS,
+}
 ACCEPTANCE_POINT_MATCH_RATE_MIN = 0.9
 ACCEPTANCE_SNAP_MEDIAN_MAX_M = 20.0
 
@@ -238,6 +259,7 @@ def write_params(
     parameters: (
         SplitStageParameters
         | NetworkStageParameters
+        | OsmContextStageParameters
         | MatchStageParameters
         | OrderTripsStageParameters
         | GridFlowStageParameters
@@ -250,11 +272,11 @@ def write_params(
     region_cells_digest: str | None = None,
 ) -> Path:
     """Serialize the effective run parameters. A skipped check is marked in all caps."""
-    if isinstance(parameters, NetworkStageParameters):
+    if type(parameters) in PBF_STAGE_DEFINITION_FIELDS:
         payload: dict[str, object] = {
             "parameters": {
                 name: _jsonable(getattr(parameters, name))
-                for name in NETWORK_DEFINITION_FIELDS
+                for name in PBF_STAGE_DEFINITION_FIELDS[type(parameters)]
             },
             "data_contract_lock_sha256": sha256(lock_path),
         }
@@ -1030,6 +1052,29 @@ def write_network_digest(
         "baseline_comparison": compare_network_to_baseline(
             stats, baselines_path=baselines_path
         ),
+    }
+    return _write_json(run_dir / "digest.json", payload)
+
+
+def write_osm_context_digest(run_dir: Path, context: OsmContext) -> Path:
+    """Content digest of the feature table and its funnel (ADR-0003)."""
+    from .funnel import FUNNEL_COLUMNS, funnel_observations, funnel_table_name
+
+    stages = _pandas_funnel_records(context.funnel)
+    payload = {
+        "tables": {
+            FEATURE_TABLE: _named_digest(
+                context.features, FEATURE_COLUMNS, FEATURE_ORDER
+            ),
+            funnel_table_name(OSM_CONTEXT_STAGE): _named_digest(
+                context.funnel, FUNNEL_COLUMNS, ("stage_index",)
+            ),
+        },
+        "stage_counts": stages,
+        "observations": {
+            **funnel_observations(stages),
+            "osm_context": context.observations,
+        },
     }
     return _write_json(run_dir / "digest.json", payload)
 
