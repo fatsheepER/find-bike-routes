@@ -22,6 +22,7 @@ from .config import (
     CLEAR_DAY_DATES,
     ISLAND_RULE,
     RAIN_DATE,
+    AssignRegionsStageParameters,
     GridFlowStageParameters,
     MatchStageParameters,
     NetworkStageParameters,
@@ -140,6 +141,11 @@ GRID_FLOW_OBSERVATION_FIELDS = (
     "cells_with_1_track",
     "cells_without_link",
 )
+ASSIGN_REGIONS_DEFINITION_FIELDS = (
+    "cell_size_m",
+    "debounce",
+    "funnel_stage_names",
+)
 REGIONS_DEFINITION_FIELDS = (
     "dates",
     "cell_size_m",
@@ -236,10 +242,12 @@ def write_params(
         | OrderTripsStageParameters
         | GridFlowStageParameters
         | RegionsStageParameters
+        | AssignRegionsStageParameters
     ),
     contract_check_skipped: bool,
     spark_conf: Mapping[str, str] | None = None,
     lock_path: Path = LOCK_PATH,
+    region_cells_digest: str | None = None,
 ) -> Path:
     """Serialize the effective run parameters. A skipped check is marked in all caps."""
     if isinstance(parameters, NetworkStageParameters):
@@ -295,6 +303,18 @@ def write_params(
         }
         if not payload["dates_are_default"]:
             payload["note"] = "非默认日期，不比基线"
+    elif isinstance(parameters, AssignRegionsStageParameters):
+        payload = {
+            "timezone": parameters.spark.session_time_zone,
+            "spark": dict(spark_conf or {}),
+            "dates": [day.isoformat() for day in parameters.dates],
+            "region_cells_digest": region_cells_digest,
+            "parameters": {
+                name: _jsonable(getattr(parameters, name))
+                for name in ASSIGN_REGIONS_DEFINITION_FIELDS
+            },
+            "data_contract_lock_sha256": sha256(lock_path),
+        }
     else:
         payload = {
             "timezone": parameters.spark.session_time_zone,
@@ -1247,3 +1267,41 @@ def _named_digest(
 ) -> dict[str, object]:
     digest, rows = digest_table(frame, columns, order)
     return {"sha256": digest, "rows": rows}
+
+
+def write_assign_regions_digest(
+    run_dir: Path,
+    visits: DataFrame,
+    trips: DataFrame,
+    counts: DataFrame,
+    observations: Mapping[str, Mapping[str, object]],
+) -> Path:
+    """Content digest of the two assignment tables and the funnel (ADR-0003)."""
+    from .assignment import ORDER_TRIP_REGION_COLUMNS, TRACK_REGION_COLUMNS
+    from .funnel import digest_funnel, funnel_observations, funnel_records
+
+    visit_sha, visit_rows = digest_frame(
+        visits,
+        TRACK_REGION_COLUMNS,
+        ("source_date", "TRACK_ID", "piece_index", "run_index"),
+    )
+    trip_sha, trip_rows = digest_frame(
+        trips,
+        ORDER_TRIP_REGION_COLUMNS,
+        ("source_date", "BICYCLE_ID", "trip_index"),
+    )
+    count_sha, count_rows = digest_funnel(counts)
+    stages = funnel_records(counts)
+    payload = {
+        "tables": {
+            "track_regions": {"sha256": visit_sha, "rows": visit_rows},
+            "order_trip_regions": {"sha256": trip_sha, "rows": trip_rows},
+            "stage_counts_assign_regions": {"sha256": count_sha, "rows": count_rows},
+        },
+        "stage_counts": stages,
+        "observations": {
+            **funnel_observations(stages),
+            "assign_regions": dict(observations),
+        },
+    }
+    return _write_json(run_dir / "digest.json", payload)

@@ -352,3 +352,23 @@ class RegionsStageParameters:
         "成图层格",
         "有覆盖无链路的格",
     )
+
+
+@dataclass(frozen=True, slots=True)
+class AssignRegionsStageParameters:
+    """Everything the assign-regions stage runs on.
+
+    Dates default to the five study days, rain day included. Debounce
+    thresholds are the visit definition (ADR-0002), the same object the
+    regions scan already serializes.
+    """
+
+    dates: tuple[date, ...] = STUDY_DATES
+    spark: SparkParameters = SparkParameters()
+    cell_size_m: int = 150
+    debounce: DebounceParameters = DebounceParameters()
+    funnel_stage_names: tuple[str, ...] = (
+        "有 ≥ 1 次进入的轨迹",
+        "去抖后",
+        "两端都直接落在分析几何内",
+    )

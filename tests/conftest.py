@@ -3,7 +3,7 @@
 A JVM start costs seconds, so each stage runs once per session over the committed
 fixture and the assertions read that run's products. Cases that need their own run —
 overwrite behaviour, refused arguments — pay for it themselves. The chain is
-split → match → order-trips → grid-flow → regions.
+split → match → order-trips → grid-flow → regions → assign-regions.
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ from support import (
     run_match_cli,
     run_order_cli,
     run_regions_cli,
+    run_assign_regions_cli,
 )
 
 
@@ -244,3 +245,51 @@ def regions_run(
     finally:
         shutil.rmtree(artifacts, ignore_errors=True)
         map_path.unlink(missing_ok=True)
+
+
+@dataclass(frozen=True)
+class AssignRegionsRun:
+    output: Path
+    track_regions: Path
+    order_trip_regions: Path
+    stage_counts: Path
+    artifacts: Path
+    grid_flow: Path
+    matching: Path
+    orders: Path
+    regions: Path
+
+
+@pytest.fixture(scope="session")
+def assign_regions_run(
+    regions_run: RegionsRun,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[AssignRegionsRun]:
+    """Assign the fixture's frozen partition. Runs after regions."""
+    output = tmp_path_factory.mktemp("assignment") / "region_assignment"
+    artifacts = ARTIFACTS_ROOT / "test-assign-regions"
+    shutil.rmtree(artifacts, ignore_errors=True)
+    completed = run_assign_regions_cli(
+        "--grid-flow", str(regions_run.grid_flow),
+        "--matching", str(regions_run.matching),
+        "--orders", str(regions_run.orders),
+        "--regions", str(regions_run.output),
+        "--dates", FIXTURE_DATE,
+        "--output", str(output),
+        "--run-id", "test-assign-regions",
+    )
+    assert completed.returncode == 0, completed.stderr
+    try:
+        yield AssignRegionsRun(
+            output=output,
+            track_regions=output / "track_regions",
+            order_trip_regions=output / "order_trip_regions",
+            stage_counts=output / "stage_counts_assign_regions",
+            artifacts=artifacts,
+            grid_flow=regions_run.grid_flow,
+            matching=regions_run.matching,
+            orders=regions_run.orders,
+            regions=regions_run.output,
+        )
+    finally:
+        shutil.rmtree(artifacts, ignore_errors=True)

@@ -22,6 +22,7 @@ MATCH_SCRIPT = PROJECT_ROOT / "scripts" / "match_tracks.py"
 ORDER_SCRIPT = PROJECT_ROOT / "scripts" / "order_trips.py"
 GRID_FLOW_SCRIPT = PROJECT_ROOT / "scripts" / "grid_flow.py"
 REGIONS_SCRIPT = PROJECT_ROOT / "scripts" / "regions.py"
+ASSIGN_REGIONS_SCRIPT = PROJECT_ROOT / "scripts" / "assign_regions.py"
 ARTIFACTS_ROOT = PROJECT_ROOT / "artifacts" / "runs"
 AUDIT_MAPS = PROJECT_ROOT / "artifacts" / "audit" / "maps"
 FIXTURE = PROJECT_ROOT / "tests" / "fixtures" / "regression-sample-20201221.csv"
@@ -87,6 +88,17 @@ def run_regions_cli(
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(REGIONS_SCRIPT), *arguments],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "TZ": RUNNER_TIME_ZONE, **(env or {})},
+    )
+
+
+def run_assign_regions_cli(
+    *arguments: str, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(ASSIGN_REGIONS_SCRIPT), *arguments],
         capture_output=True,
         text=True,
         env={**os.environ, "TZ": RUNNER_TIME_ZONE, **(env or {})},
@@ -185,6 +197,18 @@ def read_seed_check(check: Path) -> pd.DataFrame:
     return pd.read_parquet(check).sort_values(["seed", "markov_time"]).reset_index(
         drop=True
     )
+
+
+def read_track_regions(regions: Path) -> pd.DataFrame:
+    return pd.read_parquet(regions).sort_values(
+        ["TRACK_ID", "piece_index", "run_index"]
+    ).reset_index(drop=True)
+
+
+def read_order_trip_regions(trips: Path) -> pd.DataFrame:
+    return pd.read_parquet(trips).sort_values(
+        ["source_date", "BICYCLE_ID", "trip_index"]
+    ).reset_index(drop=True)
 
 
 def staging_copy(directory: Path, day: str) -> Path:
