@@ -21,6 +21,7 @@ SCRIPT = PROJECT_ROOT / "scripts" / "split_tracks.py"
 MATCH_SCRIPT = PROJECT_ROOT / "scripts" / "match_tracks.py"
 ORDER_SCRIPT = PROJECT_ROOT / "scripts" / "order_trips.py"
 GRID_FLOW_SCRIPT = PROJECT_ROOT / "scripts" / "grid_flow.py"
+REGIONS_SCRIPT = PROJECT_ROOT / "scripts" / "regions.py"
 ARTIFACTS_ROOT = PROJECT_ROOT / "artifacts" / "runs"
 FIXTURE = PROJECT_ROOT / "tests" / "fixtures" / "regression-sample-20201221.csv"
 ORDER_FIXTURE = PROJECT_ROOT / "tests" / "fixtures" / "order-sample-20201221.csv"
@@ -80,6 +81,17 @@ def run_grid_flow_cli(
     )
 
 
+def run_regions_cli(
+    *arguments: str, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(REGIONS_SCRIPT), *arguments],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "TZ": RUNNER_TIME_ZONE, **(env or {})},
+    )
+
+
 def read_points(points: Path) -> pd.DataFrame:
     return pd.read_parquet(points).sort_values("source_row").reset_index(drop=True)
 
@@ -130,6 +142,38 @@ def read_cell_links(links: Path) -> pd.DataFrame:
     return pd.read_parquet(links).sort_values(
         ["from_x", "from_y", "to_x", "to_y"]
     ).reset_index(drop=True)
+
+
+def read_region_cells(cells: Path) -> pd.DataFrame:
+    return pd.read_parquet(cells).sort_values(["cell_x", "cell_y"]).reset_index(
+        drop=True
+    )
+
+
+def read_display_cells(cells: Path) -> pd.DataFrame:
+    return pd.read_parquet(cells).sort_values(["cell_x", "cell_y"]).reset_index(
+        drop=True
+    )
+
+
+def read_regions(regions: Path) -> pd.DataFrame:
+    return pd.read_parquet(regions).sort_values("region_id").reset_index(drop=True)
+
+
+def read_districts(districts: Path) -> pd.DataFrame:
+    return pd.read_parquet(districts).sort_values("district_id").reset_index(
+        drop=True
+    )
+
+
+def read_region_links(links: Path) -> pd.DataFrame:
+    return pd.read_parquet(links).sort_values(
+        ["from_region", "to_region"]
+    ).reset_index(drop=True)
+
+
+def read_postprocess_steps(steps: Path) -> pd.DataFrame:
+    return pd.read_parquet(steps).sort_values("step_index").reset_index(drop=True)
 
 
 def staging_copy(directory: Path, day: str) -> Path:

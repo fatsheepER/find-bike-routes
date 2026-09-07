@@ -3,7 +3,7 @@
 A JVM start costs seconds, so each stage runs once per session over the committed
 fixture and the assertions read that run's products. Cases that need their own run —
 overwrite behaviour, refused arguments — pay for it themselves. The chain is
-split → match → order-trips → grid-flow.
+split → match → order-trips → grid-flow → regions.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from support import (
     run_grid_flow_cli,
     run_match_cli,
     run_order_cli,
+    run_regions_cli,
 )
 
 
@@ -155,7 +156,7 @@ def grid_flow_run(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> Iterator[GridFlowRun]:
     """Expand the matched fixture. Declared after order_trips_run so the chain
-    stays split → match → order-trips → grid-flow.
+    stays split → match → order-trips → grid-flow → regions.
     """
     del order_trips_run
     output = tmp_path_factory.mktemp("grid_flow") / "grid_flow"
@@ -177,6 +178,61 @@ def grid_flow_run(
             stage_counts=output / "stage_counts_grid_flow",
             artifacts=artifacts,
             match_track_match=match_run.track_match,
+        )
+    finally:
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+@dataclass(frozen=True)
+class RegionsRun:
+    output: Path
+    region_cells: Path
+    display_cells: Path
+    regions: Path
+    districts: Path
+    region_links: Path
+    postprocess_steps: Path
+    stage_counts: Path
+    artifacts: Path
+    grid_flow: Path
+    matching: Path
+    orders: Path
+
+
+@pytest.fixture(scope="session")
+def regions_run(
+    grid_flow_run: GridFlowRun,
+    order_trips_run: OrderTripsRun,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[RegionsRun]:
+    """Partition the fixture's one clear day. Runs after grid-flow."""
+    output = tmp_path_factory.mktemp("regions") / "regions"
+    artifacts = ARTIFACTS_ROOT / "test-regions"
+    shutil.rmtree(artifacts, ignore_errors=True)
+    completed = run_regions_cli(
+        "--grid-flow", str(grid_flow_run.output),
+        "--matching", str(grid_flow_run.input),
+        "--orders", str(order_trips_run.output),
+        "--network", str(FIXTURE_NETWORK),
+        "--dates", FIXTURE_DATE,
+        "--output", str(output),
+        "--run-id", "test-regions",
+    )
+    assert completed.returncode == 0, completed.stderr
+    try:
+        yield RegionsRun(
+            output=output,
+            region_cells=output / "region_cells",
+            display_cells=output / "display_cells",
+            regions=output / "regions",
+            districts=output / "districts",
+            region_links=output / "region_links",
+            postprocess_steps=output / "postprocess_steps",
+            stage_counts=output / "stage_counts_regions",
+            artifacts=artifacts,
+            grid_flow=grid_flow_run.output,
+            matching=grid_flow_run.input,
+            orders=order_trips_run.output,
         )
     finally:
         shutil.rmtree(artifacts, ignore_errors=True)

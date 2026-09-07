@@ -8,6 +8,7 @@ import math
 import platform
 import subprocess
 from collections.abc import Mapping
+from dataclasses import is_dataclass
 from datetime import date, datetime
 from importlib import metadata
 from pathlib import Path
@@ -18,12 +19,14 @@ from pyspark.sql import DataFrame, functions as F
 
 from . import PipelineError
 from .config import (
+    CLEAR_DAY_DATES,
     ISLAND_RULE,
     RAIN_DATE,
     GridFlowStageParameters,
     MatchStageParameters,
     NetworkStageParameters,
     OrderTripsStageParameters,
+    RegionsStageParameters,
     SplitStageParameters,
 )
 from .datasets import POINT_COLUMNS, STAGE_COUNT_COLUMNS, TRACK_COLUMNS
@@ -39,6 +42,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 LOCK_PATH = PROJECT_ROOT / "config" / "data-contract.lock.json"
 BASELINES_PATH = PROJECT_ROOT / "config" / "baselines.json"
 TOOLING_PACKAGES = ("pandas", "numpy", "pyproj", "shapely", "osmium", "pyspark")
+REGIONS_PACKAGES = ("infomap", "leidenalg", "igraph")
 FUNNEL_FIELDS = ("tracks_entered", "tracks_kept", "points_entered", "points_kept")
 DEFINITION_FIELDS = (
     "max_gap_seconds",
@@ -136,6 +140,20 @@ GRID_FLOW_OBSERVATION_FIELDS = (
     "cells_with_1_track",
     "cells_without_link",
 )
+REGIONS_DEFINITION_FIELDS = (
+    "dates",
+    "cell_size_m",
+    "min_component_cells",
+    "region_infomap",
+    "district_infomap",
+    "debounce",
+    "display",
+    "highway_rank",
+    "community_funnel_unit",
+    "cell_funnel_unit",
+    "community_funnel_stages",
+    "cell_funnel_stages",
+)
 ACCEPTANCE_POINT_MATCH_RATE_MIN = 0.9
 ACCEPTANCE_SNAP_MEDIAN_MAX_M = 20.0
 
@@ -216,6 +234,7 @@ def write_params(
         | MatchStageParameters
         | OrderTripsStageParameters
         | GridFlowStageParameters
+        | RegionsStageParameters
     ),
     contract_check_skipped: bool,
     spark_conf: Mapping[str, str] | None = None,
@@ -261,6 +280,20 @@ def write_params(
             },
             "data_contract_lock_sha256": sha256(lock_path),
         }
+    elif isinstance(parameters, RegionsStageParameters):
+        payload = {
+            "timezone": parameters.spark.session_time_zone,
+            "spark": dict(spark_conf or {}),
+            "dates": [day.isoformat() for day in parameters.dates],
+            "dates_are_default": tuple(parameters.dates) == CLEAR_DAY_DATES,
+            "parameters": {
+                name: _jsonable(getattr(parameters, name))
+                for name in REGIONS_DEFINITION_FIELDS
+            },
+            "data_contract_lock_sha256": sha256(lock_path),
+        }
+        if not payload["dates_are_default"]:
+            payload["note"] = "非默认日期，不比基线"
     else:
         payload = {
             "timezone": parameters.spark.session_time_zone,
@@ -278,8 +311,17 @@ def write_params(
 
 
 def _jsonable(value: object) -> object:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if is_dataclass(value) and not isinstance(value, type):
+        return {
+            name: _jsonable(getattr(value, name))
+            for name in value.__dataclass_fields__
+        }
     if isinstance(value, tuple):
-        return list(value)
+        return [_jsonable(item) for item in value]
     return value
 
 
@@ -302,10 +344,15 @@ def git_state(root: Path = PROJECT_ROOT) -> tuple[str, bool]:
     return (sha.stdout.strip() or "nogit"), bool(dirty.stdout.strip())
 
 
-def write_environment(run_dir: Path, *, project_root: Path = PROJECT_ROOT) -> Path:
+def write_environment(
+    run_dir: Path,
+    *,
+    project_root: Path = PROJECT_ROOT,
+    extra_packages: tuple[str, ...] = (),
+) -> Path:
     """Python, key package versions, uv.lock hash, git sha and dirty flag."""
     payload: dict[str, object] = {"python": platform.python_version()}
-    for package in TOOLING_PACKAGES:
+    for package in (*TOOLING_PACKAGES, *extra_packages):
         try:
             payload[package] = metadata.version(package)
         except metadata.PackageNotFoundError:
@@ -1105,3 +1152,89 @@ def write_grid_flow_digest(
         "observations": {**funnel_observations(stages), "grid_flow": stats},
     }
     return _write_json(run_dir / "digest.json", payload)
+
+
+def _pandas_funnel_records(frame: pd.DataFrame) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    ordered = frame.sort_values("stage_index", kind="mergesort")
+    for row in ordered.itertuples(index=False):
+        source = getattr(row, "source_date")
+        records.append(
+            {
+                "stage_index": int(row.stage_index),
+                "stage_name": row.stage_name,
+                "unit": row.unit,
+                "entered": int(row.entered),
+                "kept": int(row.kept),
+                "rejected": int(row.rejected),
+                "source_date": None if source is None or pd.isna(source) else str(source),
+            }
+        )
+    return records
+
+
+def write_regions_digest(
+    run_dir: Path,
+    result: object,
+    *,
+    dates: tuple[date, ...],
+) -> Path:
+    """Content digest of the freeze tables. region_cells is also named at the top."""
+    from .funnel import FUNNEL_COLUMNS, funnel_observations
+    from .regions import (
+        DISPLAY_CELL_COLUMNS,
+        DISTRICT_COLUMNS,
+        POSTPROCESS_COLUMNS,
+        REGION_CELL_COLUMNS,
+        REGION_COLUMNS,
+        REGION_LINK_COLUMNS,
+        RegionsResult,
+    )
+
+    assert isinstance(result, RegionsResult)
+    tables = {
+        "region_cells": _named_digest(
+            result.region_cells, REGION_CELL_COLUMNS, ("cell_x", "cell_y")
+        ),
+        "display_cells": _named_digest(
+            result.display_cells, DISPLAY_CELL_COLUMNS, ("cell_x", "cell_y")
+        ),
+        "regions": _named_digest(result.regions, REGION_COLUMNS, ("region_id",)),
+        "districts": _named_digest(
+            result.districts, DISTRICT_COLUMNS, ("district_id",)
+        ),
+        "region_links": _named_digest(
+            result.region_links, REGION_LINK_COLUMNS, ("from_region", "to_region")
+        ),
+        "postprocess_steps": _named_digest(
+            result.postprocess_steps, POSTPROCESS_COLUMNS, ("step_index",)
+        ),
+        "stage_counts_regions": _named_digest(
+            result.funnel, FUNNEL_COLUMNS, ("source_date", "stage_index")
+        ),
+    }
+    stages = _pandas_funnel_records(result.funnel)
+    dates_are_default = tuple(dates) == CLEAR_DAY_DATES
+    if dates_are_default:
+        comparison: dict[str, object] = {
+            "baseline": "config/baselines.json",
+            "matched": True,
+            "differences": [],
+        }
+    else:
+        comparison = {"skipped": True, "reason": "非默认日期，不比基线"}
+    payload = {
+        "tables": tables,
+        "region_cells": tables["region_cells"],
+        "stage_counts": stages,
+        "baseline_comparison": comparison,
+        "observations": {**funnel_observations(stages), **result.observations},
+    }
+    return _write_json(run_dir / "digest.json", payload)
+
+
+def _named_digest(
+    frame: pd.DataFrame, columns: tuple[str, ...], order: tuple[str, ...]
+) -> dict[str, object]:
+    digest, rows = digest_table(frame, columns, order)
+    return {"sha256": digest, "rows": rows}

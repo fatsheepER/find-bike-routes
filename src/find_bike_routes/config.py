@@ -24,6 +24,14 @@ STUDY_DATES: tuple[date, ...] = (
 # The one rainy day in the window. The rain-day comparison stage reads it from here.
 RAIN_DATE: date = date(2020, 12, 23)
 
+# The freeze runs on the four non-rain days. 12-23 is held out (ADR-0007).
+CLEAR_DAY_DATES: tuple[date, ...] = (
+    date(2020, 12, 21),
+    date(2020, 12, 22),
+    date(2020, 12, 24),
+    date(2020, 12, 25),
+)
+
 # Named because the run digest looks this stage up by name to report how many points
 # the island rule drops. Naming it here keeps that lookup and the funnel on one string.
 ISLAND_RULE = "点全在岛内 +100m"
@@ -257,3 +265,59 @@ class DisplayFillParameters:
 
     max_fill_hole_km2: float = 2.0
     hole_erosion_steps: int = 2
+
+
+# Road-name candidates sort by this rank, then by length inside the region.
+HIGHWAY_RANK: tuple[str, ...] = (
+    "trunk",
+    "trunk_link",
+    "primary",
+    "primary_link",
+    "secondary",
+    "secondary_link",
+    "tertiary",
+    "tertiary_link",
+    "unclassified",
+    "residential",
+    "living_street",
+    "cycleway",
+    "service",
+    "path",
+    "track",
+    "footway",
+    "pedestrian",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class RegionsStageParameters:
+    """Everything the regions stage runs on.
+
+    Dates default to the clear-day set. --dates may narrow them for a
+    single-day check; that run is marked and is not compared to baselines.
+    Infomap, postprocess, debounce, and display fill are definitions
+    (ADR-0002), not knobs.
+    """
+
+    dates: tuple[date, ...] = CLEAR_DAY_DATES
+    spark: SparkParameters = SparkParameters()
+    cell_size_m: int = 150
+    min_component_cells: int = 14
+    region_infomap: InfomapParameters = InfomapParameters(markov_time=1.25)
+    district_infomap: InfomapParameters = InfomapParameters(markov_time=0.5)
+    debounce: DebounceParameters = DebounceParameters()
+    display: DisplayFillParameters = DisplayFillParameters()
+    highway_rank: tuple[str, ...] = HIGHWAY_RANK
+    community_funnel_unit: str = "社区/区域"
+    cell_funnel_unit: str = "单元格"
+    community_funnel_stages: tuple[str, ...] = (
+        "连通分量",
+        "合并小分量后",
+        "填补包围格后",
+        "重编号",
+    )
+    cell_funnel_stages: tuple[str, ...] = (
+        "分析几何格",
+        "成图层格",
+        "有覆盖无链路的格",
+    )
