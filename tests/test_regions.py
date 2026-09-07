@@ -18,6 +18,7 @@ import pytest
 
 from support import (
     ARTIFACTS_ROOT,
+    AUDIT_MAPS,
     FIXTURE_DATE,
     FIXTURE_NETWORK,
     ORDER_FIXTURE,
@@ -184,6 +185,7 @@ def test_skip_data_contract_bypasses_the_check_and_marks_the_params(
         assert params["DATA_CONTRACT_CHECK_SKIPPED"] is True
     finally:
         rmtree(artifacts, ignore_errors=True)
+        (AUDIT_MAPS / f"districts-{run_id}.html").unlink(missing_ok=True)
 
 
 @pytest.mark.spark
@@ -338,6 +340,7 @@ def test_same_input_twice_writes_the_same_digest(regions_run, tmp_path):
         assert first["tables"]["seed_check"] == second["tables"]["seed_check"]
     finally:
         rmtree(artifacts, ignore_errors=True)
+        (AUDIT_MAPS / f"districts-{run_id}.html").unlink(missing_ok=True)
 
 
 MARKOV_SCAN_GRID = (
@@ -399,3 +402,35 @@ def test_fixture_writes_markov_scan_and_seed_check(regions_run):
     assert (
         Path(__file__).parents[1] / "tests" / "fixtures" / "region-of-cell-20201221.parquet"
     ).is_file()
+
+
+@pytest.mark.spark
+def test_fixture_writes_district_map_named_with_run_id(regions_run):
+    path = AUDIT_MAPS / "districts-test-regions.html"
+    districts = read_districts(regions_run.districts)
+
+    assert path.is_file()
+    html = path.read_text(encoding="utf-8")
+    assert html.lstrip().startswith("<!DOCTYPE html>")
+    assert "<html>" in html.lower()
+    for district_id in districts["district_id"].astype(int):
+        assert f'"district_id": {district_id}' in html
+
+
+@pytest.mark.spark
+def test_district_map_does_not_enter_the_digest(regions_run):
+    digest = loads((regions_run.artifacts / "digest.json").read_text(encoding="utf-8"))
+
+    assert set(digest["tables"]) == {
+        "region_cells",
+        "display_cells",
+        "regions",
+        "districts",
+        "region_links",
+        "postprocess_steps",
+        "markov_scan",
+        "seed_check",
+        "stage_counts_regions",
+    }
+    assert "maps" not in digest
+    assert "districts-test-regions" not in dumps(digest)

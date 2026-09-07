@@ -17,6 +17,7 @@ import pytest
 
 from support import (
     ARTIFACTS_ROOT,
+    AUDIT_MAPS,
     FIXTURE,
     FIXTURE_DATE,
     FIXTURE_NETWORK,
@@ -210,7 +211,9 @@ def regions_run(
     """Partition the fixture's one clear day. Runs after grid-flow."""
     output = tmp_path_factory.mktemp("regions") / "regions"
     artifacts = ARTIFACTS_ROOT / "test-regions"
+    map_path = AUDIT_MAPS / "districts-test-regions.html"
     shutil.rmtree(artifacts, ignore_errors=True)
+    map_path.unlink(missing_ok=True)
     completed = run_regions_cli(
         "--grid-flow", str(grid_flow_run.output),
         "--matching", str(grid_flow_run.input),
@@ -240,3 +243,4 @@ def regions_run(
         )
     finally:
         shutil.rmtree(artifacts, ignore_errors=True)
+        map_path.unlink(missing_ok=True)

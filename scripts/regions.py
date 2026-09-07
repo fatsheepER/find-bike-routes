@@ -21,6 +21,7 @@ from find_bike_routes import PipelineError
 from find_bike_routes.config import RegionsStageParameters
 from find_bike_routes.geography import BOUNDARY_PATH
 from find_bike_routes.grid_flow import CELL_LINK_TABLE, TRACK_CELL_TABLE
+from find_bike_routes.maps import district_map_path, write_district_map
 from find_bike_routes.matching import MATCH_POINT_TABLE
 from find_bike_routes.orders import ORDER_TABLE
 from find_bike_routes.regions import (
@@ -147,6 +148,12 @@ def run(args: argparse.Namespace) -> None:
         )
         paths = write_region_tables(session, result, args.output, args.overwrite)
         write_regions_digest(run_dir, result, dates=parameters.dates)
+        write_district_map(
+            district_map_path(args.run_id),
+            districts=result.districts,
+            regions=result.regions,
+            island=island,
+        )
     finally:
         session.stop()
 
