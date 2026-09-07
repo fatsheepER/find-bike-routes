@@ -146,6 +146,7 @@ REGIONS_DEFINITION_FIELDS = (
     "min_component_cells",
     "region_infomap",
     "district_infomap",
+    "audit",
     "debounce",
     "display",
     "highway_rank",
@@ -1188,6 +1189,8 @@ def write_regions_digest(
         REGION_CELL_COLUMNS,
         REGION_COLUMNS,
         REGION_LINK_COLUMNS,
+        MARKOV_SCAN_COLUMNS,
+        SEED_CHECK_COLUMNS,
         RegionsResult,
     )
 
@@ -1208,6 +1211,12 @@ def write_regions_digest(
         ),
         "postprocess_steps": _named_digest(
             result.postprocess_steps, POSTPROCESS_COLUMNS, ("step_index",)
+        ),
+        "markov_scan": _named_digest(
+            result.markov_scan, MARKOV_SCAN_COLUMNS, ("markov_time",)
+        ),
+        "seed_check": _named_digest(
+            result.seed_check, SEED_CHECK_COLUMNS, ("seed", "markov_time")
         ),
         "stage_counts_regions": _named_digest(
             result.funnel, FUNNEL_COLUMNS, ("source_date", "stage_index")

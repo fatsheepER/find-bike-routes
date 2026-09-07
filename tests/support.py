@@ -176,6 +176,16 @@ def read_postprocess_steps(steps: Path) -> pd.DataFrame:
     return pd.read_parquet(steps).sort_values("step_index").reset_index(drop=True)
 
 
+def read_markov_scan(scan: Path) -> pd.DataFrame:
+    return pd.read_parquet(scan).sort_values("markov_time").reset_index(drop=True)
+
+
+def read_seed_check(check: Path) -> pd.DataFrame:
+    return pd.read_parquet(check).sort_values(["seed", "markov_time"]).reset_index(
+        drop=True
+    )
+
+
 def staging_copy(directory: Path, day: str) -> Path:
     """The fixture under the staging naming convention, standing in for another day."""
     directory.mkdir(parents=True, exist_ok=True)

@@ -37,6 +37,7 @@ class PostprocessStep:
 class RegionAssignment:
     assignment: dict[Cell, int]
     steps: tuple[PostprocessStep, ...]
+    cells_filled: int
 
 
 def min_cells_for_size(cell_size_m: float) -> int:
@@ -100,7 +101,7 @@ def postprocess(
             len(set(merged.values())),
         )
     )
-    filled = _fill_enclosed(merged)
+    filled, cells_filled = _fill_enclosed(merged)
     steps.append(
         PostprocessStep(
             "fill enclosed cells",
@@ -116,7 +117,9 @@ def postprocess(
             len(set(numbered.values())),
         )
     )
-    return RegionAssignment(assignment=numbered, steps=tuple(steps))
+    return RegionAssignment(
+        assignment=numbered, steps=tuple(steps), cells_filled=cells_filled
+    )
 
 
 def _symmetrise(
@@ -207,8 +210,9 @@ def _merge_target(
     )
 
 
-def _fill_enclosed(assignment: Mapping[Cell, int]) -> dict[Cell, int]:
+def _fill_enclosed(assignment: Mapping[Cell, int]) -> tuple[dict[Cell, int], int]:
     current = dict(assignment)
+    filled = 0
     while True:
         snapshot = dict(current)
         changes: dict[Cell, int] = {}
@@ -224,8 +228,9 @@ def _fill_enclosed(assignment: Mapping[Cell, int]) -> dict[Cell, int]:
             ):
                 changes[cell] = others.pop()
         if not changes:
-            return current
+            return current, filled
         current.update(changes)
+        filled += len(changes)
 
 
 def _renumber(assignment: Mapping[Cell, int]) -> dict[Cell, int]:

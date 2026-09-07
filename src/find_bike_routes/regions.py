@@ -9,10 +9,12 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
+from itertools import combinations
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import shapely
 from pyproj import Transformer
@@ -31,10 +33,11 @@ from shapely.geometry import Polygon
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import transform as shapely_transform
 from shapely.ops import unary_union
+from sklearn.metrics import adjusted_mutual_info_score
 
 from . import PipelineError
 from .cells import Crossing, cell_of
-from .config import CellParameters, RegionsStageParameters
+from .config import CellParameters, InfomapParameters, RegionsStageParameters
 from .datasets import PARTITION_COLUMN
 from .display import DisplayFill, fill_display, island_cells
 from .funnel import FUNNEL_COLUMNS, funnel_table_name, write_funnel
@@ -54,7 +57,16 @@ REGION_TABLE = "regions"
 DISTRICT_TABLE = "districts"
 REGION_LINK_TABLE = "region_links"
 POSTPROCESS_TABLE = "postprocess_steps"
+MARKOV_SCAN_TABLE = "markov_scan"
+SEED_CHECK_TABLE = "seed_check"
 STAGE = "regions"
+
+NOTEBOOK_REGION_OF_CELL = (
+    Path(__file__).resolve().parents[2]
+    / "tests"
+    / "fixtures"
+    / "region-of-cell-20201221.parquet"
+)
 
 REGION_CELL_COLUMNS = ("cell_x", "cell_y", "region_id")
 DISPLAY_CELL_COLUMNS = ("cell_x", "cell_y", "region_id", "is_filled")
@@ -78,6 +90,23 @@ DISTRICT_COLUMNS = (
 )
 REGION_LINK_COLUMNS = ("from_region", "to_region", "tracks")
 POSTPROCESS_COLUMNS = ("step_index", "step_name", "before", "after", "changed")
+MARKOV_SCAN_COLUMNS = (
+    "markov_time",
+    "communities",
+    "regions",
+    "median_width_m",
+    "pairwise_ami",
+    "lattice_null_ami",
+    "excess_ami",
+    "od_self_loop_share",
+    "tracks_crossing_share",
+    "channel_pairs",
+    "channel_total",
+    "components_split",
+    "small_merged",
+    "cells_filled",
+)
+SEED_CHECK_COLUMNS = ("seed", "markov_time", "regions", "od_self_loop_share", "channel_total")
 
 REGION_CELL_SCHEMA = StructType(
     [
@@ -132,6 +161,33 @@ POSTPROCESS_SCHEMA = StructType(
         StructField("changed", IntegerType(), False),
     ]
 )
+MARKOV_SCAN_SCHEMA = StructType(
+    [
+        StructField("markov_time", DoubleType(), False),
+        StructField("communities", IntegerType(), False),
+        StructField("regions", IntegerType(), False),
+        StructField("median_width_m", DoubleType(), False),
+        StructField("pairwise_ami", DoubleType(), True),
+        StructField("lattice_null_ami", DoubleType(), True),
+        StructField("excess_ami", DoubleType(), True),
+        StructField("od_self_loop_share", DoubleType(), True),
+        StructField("tracks_crossing_share", DoubleType(), True),
+        StructField("channel_pairs", LongType(), False),
+        StructField("channel_total", LongType(), False),
+        StructField("components_split", IntegerType(), False),
+        StructField("small_merged", IntegerType(), False),
+        StructField("cells_filled", IntegerType(), False),
+    ]
+)
+SEED_CHECK_SCHEMA = StructType(
+    [
+        StructField("seed", IntegerType(), False),
+        StructField("markov_time", DoubleType(), False),
+        StructField("regions", IntegerType(), False),
+        StructField("od_self_loop_share", DoubleType(), True),
+        StructField("channel_total", LongType(), False),
+    ]
+)
 FUNNEL_SCHEMA = StructType(
     [
         StructField("stage_index", IntegerType(), False),
@@ -160,6 +216,8 @@ class RegionsResult:
     districts: pd.DataFrame
     region_links: pd.DataFrame
     postprocess_steps: pd.DataFrame
+    markov_scan: pd.DataFrame
+    seed_check: pd.DataFrame
     funnel: pd.DataFrame
     observations: dict[str, object]
 
@@ -186,6 +244,14 @@ def region_link_table_path(output_root: Path) -> Path:
 
 def postprocess_table_path(output_root: Path) -> Path:
     return output_root / POSTPROCESS_TABLE
+
+
+def markov_scan_table_path(output_root: Path) -> Path:
+    return output_root / MARKOV_SCAN_TABLE
+
+
+def seed_check_table_path(output_root: Path) -> Path:
+    return output_root / SEED_CHECK_TABLE
 
 
 def funnel_path(output_root: Path) -> Path:
@@ -243,6 +309,8 @@ def refuse_to_clobber(output_root: Path, overwrite: bool) -> None:
             district_table_path(output_root),
             region_link_table_path(output_root),
             postprocess_table_path(output_root),
+            markov_scan_table_path(output_root),
+            seed_check_table_path(output_root),
             funnel_path(output_root),
         )
         if path.exists() and (path.is_file() or any(path.iterdir()))
@@ -278,6 +346,42 @@ def read_dated_table(
     )
 
 
+def shuffle_link_weights(
+    links: Sequence[tuple[object, object, float]],
+    seed: int,
+) -> list[tuple[object, object, float]]:
+    """Keep the directed link set, permute weights with a fresh Generator(seed)."""
+    return _permute_weights(links, np.random.default_rng(seed))
+
+
+def assignment_ami(
+    left: Mapping[Cell, int], right: Mapping[Cell, int]
+) -> float:
+    """AMI on the cells present in both assignments."""
+    shared = sorted(set(left) & set(right))
+    if len(shared) < 2:
+        return float("nan")
+    return float(
+        adjusted_mutual_info_score(
+            [left[cell] for cell in shared],
+            [right[cell] for cell in shared],
+        )
+    )
+
+
+def mean_pairwise_ami(
+    partitions: Sequence[Mapping[Cell, int]],
+) -> float | None:
+    """Mean AMI of every unordered pair. None when there are fewer than two partitions."""
+    if len(partitions) < 2:
+        return None
+    scores = [
+        assignment_ami(left, right)
+        for left, right in combinations(partitions, 2)
+    ]
+    return float(np.mean(scores))
+
+
 def discover_regions(
     cell_links: pd.DataFrame,
     track_cells: pd.DataFrame,
@@ -285,8 +389,12 @@ def discover_regions(
     segments: pd.DataFrame,
     island: BaseGeometry,
     parameters: RegionsStageParameters,
+    order_trips: pd.DataFrame | None = None,
+    *,
+    include_audit: bool = True,
 ) -> RegionsResult:
-    """Driver-side freeze: Infomap, postprocess, districts, fill, labels."""
+    """Driver-side freeze: Infomap, postprocess, districts, fill, labels, then audit."""
+    trips = order_trips if order_trips is not None else pd.DataFrame()
     merged_links, linked_cells, covered_cells = _merged_links(cell_links, track_cells)
     unlinked = len(covered_cells) - len(linked_cells)
     min_cells = int(
@@ -331,6 +439,19 @@ def discover_regions(
         assignment, district_of, filled, names["region"], parameters.cell_size_m
     )
     districts = _district_frame(regions, filled, names["district"])
+    if include_audit:
+        markov_scan, seed_check = _granularity_audit(
+            cell_links,
+            track_cells,
+            match_points,
+            trips,
+            merged_links,
+            min_cells,
+            parameters,
+        )
+    else:
+        markov_scan = pd.DataFrame(columns=list(MARKOV_SCAN_COLUMNS))
+        seed_check = pd.DataFrame(columns=list(SEED_CHECK_COLUMNS))
     observations = {
         "analysis": {
             "cells": filled.analysis.cells,
@@ -354,6 +475,7 @@ def discover_regions(
         "regions": int(len(regions)),
         "districts": int(len(districts)),
         "cells_without_link": unlinked,
+        "ami_vs_notebook": _ami_vs_notebook(assignment, parameters.dates),
     }
     return RegionsResult(
         region_cells=_region_cell_frame(assignment),
@@ -362,6 +484,8 @@ def discover_regions(
         districts=districts,
         region_links=region_links,
         postprocess_steps=_postprocess_frame(steps),
+        markov_scan=markov_scan,
+        seed_check=seed_check,
         funnel=_funnel_frame(
             steps,
             island_cells=island_cell_count,
@@ -427,8 +551,239 @@ def _region_links(
     assignment: Mapping[Cell, int],
     parameters: RegionsStageParameters,
 ) -> pd.DataFrame:
+    stats = _channel_stats(track_cells, match_points, assignment, parameters)
+    return stats.links
+
+
+def _permute_weights(
+    links: Sequence[tuple[object, object, float]],
+    generator: np.random.Generator,
+) -> list[tuple[object, object, float]]:
+    ordered = sorted(links, key=lambda link: (link[0], link[1]))
+    weights = generator.permutation(np.fromiter(
+        (float(weight) for _source, _target, weight in ordered), dtype=float
+    ))
+    return [
+        (source, target, float(weight))
+        for (source, target, _old), weight in zip(ordered, weights, strict=True)
+    ]
+
+
+def _links_by_day(
+    cell_links: pd.DataFrame,
+) -> dict[str, list[tuple[Cell, Cell, float]]]:
+    if cell_links.empty:
+        return {}
+    grouped: dict[str, dict[tuple[Cell, Cell], float]] = defaultdict(
+        lambda: defaultdict(float)
+    )
+    for row in cell_links.itertuples(index=False):
+        day = _day_key(row.source_date)
+        grouped[day][
+            ((int(row.from_x), int(row.from_y)), (int(row.to_x), int(row.to_y)))
+        ] += float(row.tracks)
+    return {
+        day: [
+            (source, target, weight)
+            for (source, target), weight in sorted(links.items())
+        ]
+        for day, links in grouped.items()
+    }
+
+
+def _assignment_from_frame(frame: pd.DataFrame) -> dict[Cell, int]:
+    return {
+        (int(row.cell_x), int(row.cell_y)): int(row.region_id)
+        for row in frame.itertuples(index=False)
+    }
+
+
+def _ami_vs_notebook(
+    assignment: Mapping[Cell, int],
+    dates: Sequence[date],
+) -> float | None:
+    if tuple(dates) != (date(2020, 12, 21),):
+        return None
+    if not NOTEBOOK_REGION_OF_CELL.is_file():
+        return None
+    score = assignment_ami(
+        assignment, _assignment_from_frame(pd.read_parquet(NOTEBOOK_REGION_OF_CELL))
+    )
+    if np.isnan(score):
+        return None
+    return float(score)
+
+
+def _granularity_audit(
+    cell_links: pd.DataFrame,
+    track_cells: pd.DataFrame,
+    match_points: pd.DataFrame,
+    order_trips: pd.DataFrame,
+    merged_links: Sequence[tuple[Cell, Cell, float]],
+    min_cells: int,
+    parameters: RegionsStageParameters,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    audit = parameters.audit
+    day_links = _links_by_day(cell_links)
+    days = sorted(day_links)
+    rng = np.random.default_rng(audit.lattice_null_seed)
+    null_links = {day: _permute_weights(day_links[day], rng) for day in days}
+    scan_rows = [
+        _scan_row(
+            markov_time,
+            day_links,
+            null_links,
+            days,
+            merged_links,
+            track_cells,
+            match_points,
+            order_trips,
+            min_cells,
+            parameters,
+        )
+        for markov_time in audit.markov_times
+    ]
+    seed_rows = [
+        _seed_row(
+            seed,
+            markov_time,
+            merged_links,
+            track_cells,
+            match_points,
+            order_trips,
+            min_cells,
+            parameters,
+        )
+        for seed in audit.seed_check_seeds
+        for markov_time in audit.seed_check_markov_times
+    ]
+    return (
+        pd.DataFrame(scan_rows, columns=list(MARKOV_SCAN_COLUMNS)),
+        pd.DataFrame(seed_rows, columns=list(SEED_CHECK_COLUMNS)),
+    )
+
+
+def _scan_infomap(
+    markov_time: float, parameters: RegionsStageParameters, seed: int | None = None
+) -> InfomapParameters:
+    values = {"markov_time": markov_time, "num_trials": parameters.audit.num_trials}
+    if seed is not None:
+        values["seed"] = seed
+    return replace(parameters.region_infomap, **values)
+
+
+def _scan_row(
+    markov_time: float,
+    day_links: Mapping[str, Sequence[tuple[Cell, Cell, float]]],
+    null_links: Mapping[str, Sequence[tuple[Cell, Cell, float]]],
+    days: Sequence[str],
+    merged_links: Sequence[tuple[Cell, Cell, float]],
+    track_cells: pd.DataFrame,
+    match_points: pd.DataFrame,
+    order_trips: pd.DataFrame,
+    min_cells: int,
+    parameters: RegionsStageParameters,
+) -> tuple[object, ...]:
+    infomap_params = _scan_infomap(markov_time, parameters)
+    if len(days) >= 2:
+        pairwise = mean_pairwise_ami(
+            [
+                infomap_partition(day_links[day], infomap_params).assignment
+                for day in days
+            ]
+        )
+        lattice = mean_pairwise_ami(
+            [
+                infomap_partition(null_links[day], infomap_params).assignment
+                for day in days
+            ]
+        )
+        excess = (
+            None
+            if pairwise is None or lattice is None
+            else float(pairwise - lattice)
+        )
+    else:
+        pairwise = lattice = excess = None
+    assignment, communities, steps, cells_filled = _partition_merged(
+        merged_links, infomap_params, min_cells
+    )
+    stats = _partition_stats(
+        track_cells, match_points, order_trips, assignment, parameters
+    )
+    return (
+        float(markov_time),
+        communities,
+        stats["regions"],
+        stats["median_width_m"],
+        pairwise,
+        lattice,
+        excess,
+        stats["od_self_loop_share"],
+        stats["tracks_crossing_share"],
+        stats["channel_pairs"],
+        stats["channel_total"],
+        steps[0].after - steps[0].before,
+        steps[1].before - steps[1].after,
+        cells_filled,
+    )
+
+
+def _seed_row(
+    seed: int,
+    markov_time: float,
+    merged_links: Sequence[tuple[Cell, Cell, float]],
+    track_cells: pd.DataFrame,
+    match_points: pd.DataFrame,
+    order_trips: pd.DataFrame,
+    min_cells: int,
+    parameters: RegionsStageParameters,
+) -> tuple[object, ...]:
+    assignment, _communities, _steps, _filled = _partition_merged(
+        merged_links, _scan_infomap(markov_time, parameters, seed=seed), min_cells
+    )
+    stats = _partition_stats(
+        track_cells, match_points, order_trips, assignment, parameters
+    )
+    return (
+        int(seed),
+        float(markov_time),
+        stats["regions"],
+        stats["od_self_loop_share"],
+        stats["channel_total"],
+    )
+
+
+def _partition_merged(
+    merged_links: Sequence[tuple[Cell, Cell, float]],
+    infomap_params: InfomapParameters,
+    min_cells: int,
+) -> tuple[dict[Cell, int], int, tuple, int]:
+    if not merged_links:
+        processed = postprocess({}, (), min_cells)
+        return {}, 0, processed.steps, processed.cells_filled
+    raw = infomap_partition(merged_links, infomap_params)
+    processed = postprocess(raw.assignment, merged_links, min_cells)
+    return processed.assignment, raw.community_count, processed.steps, processed.cells_filled
+
+
+@dataclass(frozen=True, slots=True)
+class _ChannelStats:
+    links: pd.DataFrame
+    tracks_crossing: int
+    tracks_total: int
+
+
+def _channel_stats(
+    track_cells: pd.DataFrame,
+    match_points: pd.DataFrame,
+    assignment: Mapping[Cell, int],
+    parameters: RegionsStageParameters,
+) -> _ChannelStats:
     if track_cells.empty or not assignment:
-        return pd.DataFrame(columns=list(REGION_LINK_COLUMNS))
+        return _ChannelStats(
+            pd.DataFrame(columns=list(REGION_LINK_COLUMNS)), 0, 0
+        )
     offsets: dict[tuple[object, object, object], list[float]] = defaultdict(list)
     if not match_points.empty:
         points = match_points.loc[match_points["offset_m"].notna()]
@@ -436,6 +791,8 @@ def _region_links(
             key = (_day_key(row.source_date), row.TRACK_ID, int(row.piece_index))
             offsets[key].append(float(row.offset_m))
     votes: dict[tuple[int, int], set[tuple[object, object]]] = defaultdict(set)
+    crossing: set[tuple[object, object]] = set()
+    tracks: set[tuple[object, object]] = set()
     ordered = track_cells.sort_values(
         ["source_date", "TRACK_ID", "piece_index", "run_index"]
     )
@@ -443,6 +800,8 @@ def _region_links(
         ["source_date", "TRACK_ID", "piece_index"], sort=False
     )
     for (day, track_id, piece_index), group in grouped:
+        track_key = (_day_key(day), track_id)
+        tracks.add(track_key)
         crossings: list[Crossing] = [
             (
                 int(row.cell_x),
@@ -455,24 +814,78 @@ def _region_links(
             )
             for row in group.itertuples(index=False)
         ]
-        debounced = debounce_visits(
+        visits = debounce_visits(
             crossings,
             assignment,
             offsets.get((_day_key(day), track_id, int(piece_index)), ()),
             parameters.debounce,
-        )
+        ).visits
+        if len(visits) >= 2:
+            crossing.add(track_key)
         previous = None
-        for visit in debounced.visits:
+        for visit in visits:
             if previous is not None and not visit.gap_before:
-                votes[(previous.region_id, visit.region_id)].add(
-                    (_day_key(day), track_id)
-                )
+                votes[(previous.region_id, visit.region_id)].add(track_key)
             previous = visit
     rows = [
-        (source, target, len(tracks))
-        for (source, target), tracks in sorted(votes.items())
+        (source, target, len(track_ids))
+        for (source, target), track_ids in sorted(votes.items())
     ]
-    return pd.DataFrame(rows, columns=list(REGION_LINK_COLUMNS))
+    return _ChannelStats(
+        pd.DataFrame(rows, columns=list(REGION_LINK_COLUMNS)),
+        len(crossing),
+        len(tracks),
+    )
+
+
+def _od_self_loop_share(
+    order_trips: pd.DataFrame,
+    assignment: Mapping[Cell, int],
+    cell_size_m: float,
+) -> float | None:
+    if order_trips.empty or "is_valid" not in order_trips.columns:
+        return None
+    valid = order_trips.loc[order_trips["is_valid"]]
+    if valid.empty:
+        return None
+    same = 0
+    for row in valid.itertuples(index=False):
+        unlock = assignment.get(cell_of(float(row.unlock_x), float(row.unlock_y), cell_size_m))
+        lock = assignment.get(cell_of(float(row.lock_x), float(row.lock_y), cell_size_m))
+        if unlock is not None and unlock == lock:
+            same += 1
+    return float(same / len(valid))
+
+
+def _partition_stats(
+    track_cells: pd.DataFrame,
+    match_points: pd.DataFrame,
+    order_trips: pd.DataFrame,
+    assignment: Mapping[Cell, int],
+    parameters: RegionsStageParameters,
+) -> dict[str, object]:
+    channel = _channel_stats(track_cells, match_points, assignment, parameters)
+    sizes = list(_cell_counts(assignment).values())
+    median_width = (
+        float(np.sqrt(np.median(sizes))) * parameters.cell_size_m if sizes else 0.0
+    )
+    crossing_share = (
+        float(channel.tracks_crossing / channel.tracks_total)
+        if channel.tracks_total
+        else None
+    )
+    return {
+        "regions": len(sizes),
+        "median_width_m": median_width,
+        "od_self_loop_share": _od_self_loop_share(
+            order_trips, assignment, parameters.cell_size_m
+        ),
+        "tracks_crossing_share": crossing_share,
+        "channel_pairs": int(len(channel.links)),
+        "channel_total": (
+            int(channel.links["tracks"].sum()) if not channel.links.empty else 0
+        ),
+    }
 
 
 def _districts_of(
@@ -691,6 +1104,16 @@ def _funnel_frame(
     return pd.DataFrame(rows, columns=list(FUNNEL_COLUMNS))
 
 
+def _spark_cell(value: object) -> object:
+    if value is None:
+        return None
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, float) and np.isnan(value):
+        return None
+    return value
+
+
 def _write_frame(
     session: SparkSession,
     frame: pd.DataFrame,
@@ -702,7 +1125,10 @@ def _write_frame(
         spark_frame = session.createDataFrame([], schema)
     else:
         spark_frame = session.createDataFrame(
-            [tuple(row) for row in frame.itertuples(index=False, name=None)],
+            [
+                tuple(_spark_cell(cell) for cell in row)
+                for row in frame.itertuples(index=False, name=None)
+            ],
             schema,
         )
     spark_frame.write.mode(
@@ -763,6 +1189,20 @@ def write_region_tables(
             result.postprocess_steps,
             postprocess_table_path(output_root),
             POSTPROCESS_SCHEMA,
+            overwrite,
+        ),
+        "markov_scan": _write_frame(
+            session,
+            result.markov_scan,
+            markov_scan_table_path(output_root),
+            MARKOV_SCAN_SCHEMA,
+            overwrite,
+        ),
+        "seed_check": _write_frame(
+            session,
+            result.seed_check,
+            seed_check_table_path(output_root),
+            SEED_CHECK_SCHEMA,
             overwrite,
         ),
         "funnel": write_funnel(

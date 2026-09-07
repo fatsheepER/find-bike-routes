@@ -267,6 +267,36 @@ class DisplayFillParameters:
     hole_erosion_steps: int = 2
 
 
+@dataclass(frozen=True, slots=True)
+class GranularityAuditParameters:
+    """Markov-time scan and seed check. Reports only; never writes region_cells.
+
+    ADR-0002: the grid, trial count, null-model seed, and seed-check pairs are
+    the audit definition. The adopted freeze still uses region_infomap.
+    """
+
+    num_trials: int = 5
+    markov_times: tuple[float, ...] = (
+        0.5,
+        0.75,
+        1.0,
+        1.25,
+        1.5,
+        1.75,
+        2.0,
+        2.5,
+        3.0,
+        4.0,
+        5.0,
+        6.0,
+        8.0,
+        12.0,
+    )
+    lattice_null_seed: int = 7
+    seed_check_seeds: tuple[int, ...] = (42, 7, 2020, 1234)
+    seed_check_markov_times: tuple[float, ...] = (1.0, 1.25, 1.5)
+
+
 # Road-name candidates sort by this rank, then by length inside the region.
 HIGHWAY_RANK: tuple[str, ...] = (
     "trunk",
@@ -295,8 +325,8 @@ class RegionsStageParameters:
 
     Dates default to the clear-day set. --dates may narrow them for a
     single-day check; that run is marked and is not compared to baselines.
-    Infomap, postprocess, debounce, and display fill are definitions
-    (ADR-0002), not knobs.
+    Infomap, postprocess, debounce, display fill, and the granularity
+    audit are definitions (ADR-0002), not knobs.
     """
 
     dates: tuple[date, ...] = CLEAR_DAY_DATES
@@ -305,6 +335,7 @@ class RegionsStageParameters:
     min_component_cells: int = 14
     region_infomap: InfomapParameters = InfomapParameters(markov_time=1.25)
     district_infomap: InfomapParameters = InfomapParameters(markov_time=0.5)
+    audit: GranularityAuditParameters = GranularityAuditParameters()
     debounce: DebounceParameters = DebounceParameters()
     display: DisplayFillParameters = DisplayFillParameters()
     highway_rank: tuple[str, ...] = HIGHWAY_RANK

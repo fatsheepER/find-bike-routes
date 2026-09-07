@@ -289,6 +289,18 @@
       ]
     },
     {
+      "path": "tests/fixtures/region-of-cell-20201221.parquet",
+      "role": "fixture",
+      "bytes": 8222,
+      "sha256": "7242021cc43be79fc4a110b7677b02728a2f978b37a224a69d79e47686aa49b5",
+      "data_rows": 3526,
+      "columns": [
+        "cell_x",
+        "cell_y",
+        "region_id"
+      ]
+    },
+    {
       "path": "tests/fixtures/regression-sample-20201221.csv",
       "role": "fixture",
       "bytes": 205216,

@@ -23,10 +23,12 @@ from support import (
     ORDER_FIXTURE,
     read_display_cells,
     read_districts,
+    read_markov_scan,
     read_postprocess_steps,
     read_region_cells,
     read_region_links,
     read_regions,
+    read_seed_check,
     read_stage_counts,
     run_regions_cli,
 )
@@ -332,5 +334,68 @@ def test_same_input_twice_writes_the_same_digest(regions_run, tmp_path):
         assert first["tables"] == second["tables"]
         assert first["region_cells"] == second["region_cells"]
         assert first["stage_counts"] == second["stage_counts"]
+        assert first["tables"]["markov_scan"] == second["tables"]["markov_scan"]
+        assert first["tables"]["seed_check"] == second["tables"]["seed_check"]
     finally:
         rmtree(artifacts, ignore_errors=True)
+
+
+MARKOV_SCAN_GRID = (
+    0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0, 12.0,
+)
+MARKOV_SCAN_COLUMNS = (
+    "markov_time",
+    "communities",
+    "regions",
+    "median_width_m",
+    "pairwise_ami",
+    "lattice_null_ami",
+    "excess_ami",
+    "od_self_loop_share",
+    "tracks_crossing_share",
+    "channel_pairs",
+    "channel_total",
+    "components_split",
+    "small_merged",
+    "cells_filled",
+)
+SEED_CHECK_SEEDS = (42, 7, 2020, 1234)
+SEED_CHECK_TIMES = (1.0, 1.25, 1.5)
+
+
+@pytest.mark.spark
+def test_fixture_writes_markov_scan_and_seed_check(regions_run):
+    scan = read_markov_scan(regions_run.markov_scan)
+    seeds = read_seed_check(regions_run.seed_check)
+    params = loads((regions_run.artifacts / "params.json").read_text(encoding="utf-8"))
+    digest = loads((regions_run.artifacts / "digest.json").read_text(encoding="utf-8"))
+
+    assert list(scan["markov_time"]) == list(MARKOV_SCAN_GRID)
+    assert set(MARKOV_SCAN_COLUMNS) <= set(scan.columns)
+    assert scan["pairwise_ami"].isna().all()
+    assert scan["lattice_null_ami"].isna().all()
+    assert scan["excess_ami"].isna().all()
+
+    assert len(seeds) == 12
+    assert set(seeds.loc[:, ["seed", "markov_time"]].itertuples(index=False, name=None)) == {
+        (seed, markov_time)
+        for seed in SEED_CHECK_SEEDS
+        for markov_time in SEED_CHECK_TIMES
+    }
+    assert {"regions", "od_self_loop_share", "channel_total"} <= set(seeds.columns)
+
+    audit = params["parameters"]["audit"]
+    assert audit["num_trials"] == 5
+    assert audit["markov_times"] == list(MARKOV_SCAN_GRID)
+    assert audit["lattice_null_seed"] == 7
+    assert audit["seed_check_seeds"] == list(SEED_CHECK_SEEDS)
+    assert audit["seed_check_markov_times"] == list(SEED_CHECK_TIMES)
+    assert params["parameters"]["region_infomap"]["num_trials"] == 20
+    assert params["parameters"]["region_infomap"]["markov_time"] == 1.25
+
+    assert digest["tables"]["markov_scan"]["rows"] == 14
+    assert digest["tables"]["seed_check"]["rows"] == 12
+    assert digest["observations"]["ami_vs_notebook"] is not None
+    assert (
+        Path(__file__).parents[1] / "tests" / "fixtures" / "region-of-cell-20201221.parquet"
+    ).is_file()

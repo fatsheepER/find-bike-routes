@@ -192,6 +192,8 @@ class RegionsRun:
     districts: Path
     region_links: Path
     postprocess_steps: Path
+    markov_scan: Path
+    seed_check: Path
     stage_counts: Path
     artifacts: Path
     grid_flow: Path
@@ -228,6 +230,8 @@ def regions_run(
             districts=output / "districts",
             region_links=output / "region_links",
             postprocess_steps=output / "postprocess_steps",
+            markov_scan=output / "markov_scan",
+            seed_check=output / "seed_check",
             stage_counts=output / "stage_counts_regions",
             artifacts=artifacts,
             grid_flow=grid_flow_run.output,

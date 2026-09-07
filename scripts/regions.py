@@ -22,6 +22,7 @@ from find_bike_routes.config import RegionsStageParameters
 from find_bike_routes.geography import BOUNDARY_PATH
 from find_bike_routes.grid_flow import CELL_LINK_TABLE, TRACK_CELL_TABLE
 from find_bike_routes.matching import MATCH_POINT_TABLE
+from find_bike_routes.orders import ORDER_TABLE
 from find_bike_routes.regions import (
     discover_regions,
     island_polygon_utm,
@@ -130,10 +131,19 @@ def run(args: argparse.Namespace) -> None:
         match_points = read_dated_table(
             session, args.matching, MATCH_POINT_TABLE, parameters.dates
         ).toPandas()
+        order_trips = read_dated_table(
+            session, args.orders, ORDER_TABLE, parameters.dates
+        ).toPandas()
         segments = pd.read_parquet(network_path)
         island = island_polygon_utm(args.boundary)
         result = discover_regions(
-            cell_links, track_cells, match_points, segments, island, parameters
+            cell_links,
+            track_cells,
+            match_points,
+            segments,
+            island,
+            parameters,
+            order_trips,
         )
         paths = write_region_tables(session, result, args.output, args.overwrite)
         write_regions_digest(run_dir, result, dates=parameters.dates)
