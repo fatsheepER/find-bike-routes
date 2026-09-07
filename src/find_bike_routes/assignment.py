@@ -535,19 +535,17 @@ def build_order_trip_regions(
     )
 
 
-def build_assign_regions_funnel(
-    track_stats: DataFrame,
-    trip_regions: DataFrame,
-    parameters: AssignRegionsStageParameters,
+def assignment_day_totals(
+    track_stats: DataFrame, trip_regions: DataFrame
 ) -> DataFrame:
-    """Valid tracks → tracks with a visit; candidates → kept visits; valid trips → both direct."""
-    track_stage, visit_stage, trip_stage = parameters.funnel_stage_names
+    """One row per date: visit funnel counts, cuts, and order fallback counts."""
     tracks = track_stats.groupBy(PARTITION_COLUMN).agg(
         F.count(F.lit(1)).alias("valid_tracks"),
         F.sum((F.col("n_visits") > 0).cast("long")).alias("tracks_with_visits"),
         F.sum("candidate_visits").cast("long").alias("candidate_visits"),
         F.sum("kept_visits").cast("long").alias("kept_visits"),
         F.sum("cuts").cast("long").alias("cuts"),
+        F.sum((F.col("cuts") > 0).cast("long")).alias("tracks_with_cuts"),
     )
     trips = trip_regions.groupBy(PARTITION_COLUMN).agg(
         F.count(F.lit(1)).alias("valid_trips"),
@@ -557,8 +555,15 @@ def build_assign_regions_funnel(
         F.sum(F.col("unlock_is_fallback").cast("long")).alias("unlock_fallback"),
         F.sum(F.col("lock_is_fallback").cast("long")).alias("lock_fallback"),
     )
-    combined = tracks.join(trips, on=PARTITION_COLUMN, how="outer").fillna(0)
-    return combined.select(
+    return tracks.join(trips, on=PARTITION_COLUMN, how="outer").fillna(0)
+
+
+def build_assign_regions_funnel(
+    totals: DataFrame, parameters: AssignRegionsStageParameters
+) -> DataFrame:
+    """Valid tracks → visits; candidates → kept → cuts; valid trips → both direct."""
+    track_stage, visit_stage, cut_stage, trip_stage = parameters.funnel_stage_names
+    return totals.select(
         F.explode(
             F.array(
                 F.struct(
@@ -585,6 +590,15 @@ def build_assign_regions_funnel(
                 ),
                 F.struct(
                     F.lit(3).alias("stage_index"),
+                    F.lit(cut_stage).alias("stage_name"),
+                    F.lit(FUNNEL_VISIT_UNIT).alias("unit"),
+                    F.col("candidate_visits").alias("entered"),
+                    (F.col("candidate_visits") - F.col("cuts")).alias("kept"),
+                    F.col("cuts").alias("rejected"),
+                    F.col(PARTITION_COLUMN).alias(PARTITION_COLUMN),
+                ),
+                F.struct(
+                    F.lit(4).alias("stage_index"),
                     F.lit(trip_stage).alias("stage_name"),
                     F.lit(FUNNEL_TRIP_UNIT).alias("unit"),
                     F.col("valid_trips").alias("entered"),
@@ -593,48 +607,39 @@ def build_assign_regions_funnel(
                     F.col(PARTITION_COLUMN).alias(PARTITION_COLUMN),
                 ),
             )
-        ).alias("row"),
-        F.col("cuts"),
-        F.col("unlock_fallback"),
-        F.col("lock_fallback"),
-        F.col("valid_trips"),
-    ).select("row.*", "cuts", "unlock_fallback", "lock_fallback", "valid_trips")
+        ).alias("row")
+    ).select("row.*")
 
 
-def assign_regions_run_stats(funnel_with_extras: DataFrame) -> dict[str, dict[str, object]]:
-    """Per-day visit cuts and order fallback shares, keyed like the funnel observations."""
-    pdf = funnel_with_extras.select(
+def assign_regions_run_stats(
+    totals: DataFrame,
+) -> dict[str, dict[str, object]]:
+    """Per-day visit cuts, affected tracks, and order fallback shares."""
+    pdf = totals.select(
         PARTITION_COLUMN,
-        "stage_index",
-        "entered",
-        "kept",
-        "rejected",
+        "tracks_with_visits",
+        "candidate_visits",
+        "kept_visits",
         "cuts",
+        "tracks_with_cuts",
+        "valid_trips",
         "unlock_fallback",
         "lock_fallback",
-        "valid_trips",
     ).toPandas()
     pdf[PARTITION_COLUMN] = pdf[PARTITION_COLUMN].map(
         lambda value: value.isoformat() if hasattr(value, "isoformat") else str(value)
     )
     days: dict[str, dict[str, object]] = {}
-    for day, group in pdf.groupby(PARTITION_COLUMN, sort=True):
-        first = group.iloc[0]
-        valid_trips = int(first["valid_trips"])
-        visit = group.loc[group["stage_index"] == 2].iloc[0]
-        track = group.loc[group["stage_index"] == 1].iloc[0]
-        trip = group.loc[group["stage_index"] == 3].iloc[0]
-        unlock_fallback = int(first["unlock_fallback"])
-        lock_fallback = int(first["lock_fallback"])
-        days[str(day)] = {
-            "tracks_with_visits": int(track["kept"]),
-            "candidate_visits": int(visit["entered"]),
-            "kept_visits": int(visit["kept"]),
-            "unassigned_gap_cuts": int(first["cuts"]),
-            "valid_trips": valid_trips,
-            "both_direct_trips": int(trip["kept"]),
-            "unlock_fallback_share": _share(unlock_fallback, valid_trips),
-            "lock_fallback_share": _share(lock_fallback, valid_trips),
+    for row in pdf.itertuples(index=False):
+        valid_trips = int(row.valid_trips)
+        days[str(getattr(row, PARTITION_COLUMN))] = {
+            "tracks_with_visits": int(row.tracks_with_visits),
+            "candidate_visits": int(row.candidate_visits),
+            "kept_visits": int(row.kept_visits),
+            "unassigned_gap_cuts": int(row.cuts),
+            "tracks_with_unassigned_gap_cuts": int(row.tracks_with_cuts),
+            "unlock_fallback_share": _share(int(row.unlock_fallback), valid_trips),
+            "lock_fallback_share": _share(int(row.lock_fallback), valid_trips),
         }
     return days
 

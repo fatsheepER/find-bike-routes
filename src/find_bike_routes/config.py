@@ -370,5 +370,6 @@ class AssignRegionsStageParameters:
     funnel_stage_names: tuple[str, ...] = (
         "有 ≥ 1 次进入的轨迹",
         "去抖后",
+        "被无区域段切断",
         "两端都直接落在分析几何内",
     )

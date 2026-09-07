@@ -17,6 +17,7 @@ from pathlib import Path
 
 from find_bike_routes import PipelineError
 from find_bike_routes.assignment import (
+    assignment_day_totals,
     assign_regions_run_stats,
     build_assign_regions_funnel,
     build_order_trip_regions,
@@ -31,7 +32,7 @@ from find_bike_routes.assignment import (
     write_track_region_table,
 )
 from find_bike_routes.config import AssignRegionsStageParameters
-from find_bike_routes.funnel import FUNNEL_COLUMNS, write_funnel
+from find_bike_routes.funnel import write_funnel
 from find_bike_routes.regions import REGION_CELL_COLUMNS
 from find_bike_routes.runs import (
     digest_table,
@@ -134,18 +135,16 @@ def run(args: argparse.Namespace) -> None:
             tracks, args.grid_flow, args.matching, broadcast, parameters
         )
         trip_regions = build_order_trip_regions(trips, broadcast, parameters)
-        counts_with_extras = build_assign_regions_funnel(
-            track_stats, trip_regions, parameters
-        )
-        counts = counts_with_extras.select(*FUNNEL_COLUMNS)
-        for frame in (visits, trip_regions, counts_with_extras):
+        totals = assignment_day_totals(track_stats, trip_regions)
+        counts = build_assign_regions_funnel(totals, parameters)
+        for frame in (visits, trip_regions, totals):
             frame.persist()
         visits_path = write_track_region_table(visits, args.output, args.overwrite)
         trips_path = write_order_trip_region_table(
             trip_regions, args.output, args.overwrite
         )
         counts_path = write_funnel(counts, args.output, "assign_regions", args.overwrite)
-        observations = assign_regions_run_stats(counts_with_extras)
+        observations = assign_regions_run_stats(totals)
         write_assign_regions_digest(
             run_dir, visits, trip_regions, counts, observations
         )

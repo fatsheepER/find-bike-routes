@@ -324,12 +324,15 @@ def test_fixture_tables_funnel_params_and_run_artifacts(assign_regions_run):
         assert bool(row.unlock_is_fallback) == (unlock_cell not in assignment)
         assert bool(row.lock_is_fallback) == (lock_cell not in assignment)
 
-    assert list(counts["unit"]) == ["轨迹", "进入", "行程"]
+    assert list(counts["unit"]) == ["轨迹", "进入", "进入", "行程"]
     assert list(counts["stage_name"]) == [
         "有 ≥ 1 次进入的轨迹",
         "去抖后",
+        "被无区域段切断",
         "两端都直接落在分析几何内",
     ]
+    cut_row = counts.loc[counts["stage_name"] == "被无区域段切断"].iloc[0]
+    assert int(cut_row["rejected"]) == int(cut_row["entered"]) - int(cut_row["kept"])
     assert (assign_regions_run.stage_counts / f"source_date={FIXTURE_DATE}").is_dir()
 
     params = json.loads(
@@ -355,8 +358,12 @@ def test_fixture_tables_funnel_params_and_run_artifacts(assign_regions_run):
     assert digest["tables"]["order_trip_regions"]["rows"] == len(assigned_trips)
     day = digest["observations"]["assign_regions"][FIXTURE_DATE]
     assert "unassigned_gap_cuts" in day
+    assert "tracks_with_unassigned_gap_cuts" in day
+    assert int(day["unassigned_gap_cuts"]) == int(cut_row["rejected"])
     assert "unlock_fallback_share" in day
     assert "lock_fallback_share" in day
+    assert "valid_trips" not in day
+    assert "both_direct_trips" not in day
 
 
 @pytest.mark.spark
