@@ -165,6 +165,34 @@ class MatchStageParameters:
 
 
 @dataclass(frozen=True, slots=True)
+class CellParameters:
+    """Analysis cell size and the area-equivalent small-component floor.
+
+    14 cells at 150 m is 0.315 km². min_cells_for_size rescales that area
+    when the cell size changes. ADR-0002: these values are the definition,
+    not knobs.
+    """
+
+    size_m: int = 150
+    min_component_cells: int = 14
+
+
+@dataclass(frozen=True, slots=True)
+class InfomapParameters:
+    """Infomap solver settings. Same object for the cell network and the district network.
+
+    ADR-0002: these values are the Infomap definition, not knobs. markov_time is
+    required because the region pass and the district pass use different values.
+    """
+
+    markov_time: float
+    seed: int = 42
+    num_trials: int = 20
+    two_level: bool = True
+    directed: bool = True
+
+
+@dataclass(frozen=True, slots=True)
 class DebounceParameters:
     """A visit counts only if it covers this much path, or this many match points.
 
