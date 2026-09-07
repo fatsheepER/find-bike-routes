@@ -3,7 +3,7 @@
 A JVM start costs seconds, so each stage runs once per session over the committed
 fixture and the assertions read that run's products. Cases that need their own run —
 overwrite behaviour, refused arguments — pay for it themselves. The chain is
-split → match → order-trips.
+split → match → order-trips → grid-flow.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from support import (
     FIXTURE_NETWORK,
     ORDER_FIXTURE,
     run_cli,
+    run_grid_flow_cli,
     run_match_cli,
     run_order_cli,
 )
@@ -131,6 +132,51 @@ def order_trips_run(tmp_path_factory: pytest.TempPathFactory) -> Iterator[OrderT
             order_trips=output / "order_trips",
             stage_counts=output / "stage_counts_order_trips",
             artifacts=artifacts,
+        )
+    finally:
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+@dataclass(frozen=True)
+class GridFlowRun:
+    input: Path
+    output: Path
+    track_cells: Path
+    cell_links: Path
+    stage_counts: Path
+    artifacts: Path
+    match_track_match: Path
+
+
+@pytest.fixture(scope="session")
+def grid_flow_run(
+    match_run: MatchRun,
+    order_trips_run: OrderTripsRun,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[GridFlowRun]:
+    """Expand the matched fixture. Declared after order_trips_run so the chain
+    stays split → match → order-trips → grid-flow.
+    """
+    del order_trips_run
+    output = tmp_path_factory.mktemp("grid_flow") / "grid_flow"
+    artifacts = ARTIFACTS_ROOT / "test-grid-flow"
+    shutil.rmtree(artifacts, ignore_errors=True)
+    completed = run_grid_flow_cli(
+        "--input", str(match_run.output),
+        "--dates", FIXTURE_DATE,
+        "--output", str(output),
+        "--run-id", "test-grid-flow",
+    )
+    assert completed.returncode == 0, completed.stderr
+    try:
+        yield GridFlowRun(
+            input=match_run.output,
+            output=output,
+            track_cells=output / "track_cells",
+            cell_links=output / "cell_links",
+            stage_counts=output / "stage_counts_grid_flow",
+            artifacts=artifacts,
+            match_track_match=match_run.track_match,
         )
     finally:
         shutil.rmtree(artifacts, ignore_errors=True)

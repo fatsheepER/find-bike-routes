@@ -20,6 +20,7 @@ PROJECT_ROOT = Path(__file__).parents[1]
 SCRIPT = PROJECT_ROOT / "scripts" / "split_tracks.py"
 MATCH_SCRIPT = PROJECT_ROOT / "scripts" / "match_tracks.py"
 ORDER_SCRIPT = PROJECT_ROOT / "scripts" / "order_trips.py"
+GRID_FLOW_SCRIPT = PROJECT_ROOT / "scripts" / "grid_flow.py"
 ARTIFACTS_ROOT = PROJECT_ROOT / "artifacts" / "runs"
 FIXTURE = PROJECT_ROOT / "tests" / "fixtures" / "regression-sample-20201221.csv"
 ORDER_FIXTURE = PROJECT_ROOT / "tests" / "fixtures" / "order-sample-20201221.csv"
@@ -68,6 +69,17 @@ def run_order_cli(
     )
 
 
+def run_grid_flow_cli(
+    *arguments: str, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(GRID_FLOW_SCRIPT), *arguments],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "TZ": RUNNER_TIME_ZONE, **(env or {})},
+    )
+
+
 def read_points(points: Path) -> pd.DataFrame:
     return pd.read_parquet(points).sort_values("source_row").reset_index(drop=True)
 
@@ -105,6 +117,18 @@ def read_track_match(tracks: Path) -> pd.DataFrame:
 def read_order_trips(trips: Path) -> pd.DataFrame:
     return pd.read_parquet(trips).sort_values(
         ["source_date", "BICYCLE_ID", "trip_index"]
+    ).reset_index(drop=True)
+
+
+def read_track_cells(cells: Path) -> pd.DataFrame:
+    return pd.read_parquet(cells).sort_values(
+        ["TRACK_ID", "piece_index", "run_index"]
+    ).reset_index(drop=True)
+
+
+def read_cell_links(links: Path) -> pd.DataFrame:
+    return pd.read_parquet(links).sort_values(
+        ["from_x", "from_y", "to_x", "to_y"]
     ).reset_index(drop=True)
 
 

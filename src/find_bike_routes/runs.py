@@ -20,6 +20,7 @@ from . import PipelineError
 from .config import (
     ISLAND_RULE,
     RAIN_DATE,
+    GridFlowStageParameters,
     MatchStageParameters,
     NetworkStageParameters,
     OrderTripsStageParameters,
@@ -120,6 +121,21 @@ ORDER_DEFINITION_FIELDS = (
     "funnel_stage_names",
     "distance_band_labels",
 )
+GRID_FLOW_DEFINITION_FIELDS = (
+    "cell_size_m",
+    "funnel_stage_names",
+)
+GRID_FLOW_COUNT_FIELDS = (
+    "covered_cells",
+    "directed_links",
+    "total_weight",
+)
+GRID_FLOW_OBSERVATION_FIELDS = (
+    "median_link_weight",
+    "max_link_weight",
+    "cells_with_1_track",
+    "cells_without_link",
+)
 ACCEPTANCE_POINT_MATCH_RATE_MIN = 0.9
 ACCEPTANCE_SNAP_MEDIAN_MAX_M = 20.0
 
@@ -199,6 +215,7 @@ def write_params(
         | NetworkStageParameters
         | MatchStageParameters
         | OrderTripsStageParameters
+        | GridFlowStageParameters
     ),
     contract_check_skipped: bool,
     spark_conf: Mapping[str, str] | None = None,
@@ -231,6 +248,16 @@ def write_params(
             "parameters": {
                 name: _jsonable(getattr(parameters, name))
                 for name in ORDER_DEFINITION_FIELDS
+            },
+            "data_contract_lock_sha256": sha256(lock_path),
+        }
+    elif isinstance(parameters, GridFlowStageParameters):
+        payload = {
+            "timezone": parameters.spark.session_time_zone,
+            "spark": dict(spark_conf or {}),
+            "parameters": {
+                name: _jsonable(getattr(parameters, name))
+                for name in GRID_FLOW_DEFINITION_FIELDS
             },
             "data_contract_lock_sha256": sha256(lock_path),
         }
@@ -956,5 +983,125 @@ def write_order_digest(run_dir: Path, trips: DataFrame, counts: DataFrame) -> Pa
         },
         "stage_counts": stages,
         "observations": funnel_observations(stages),
+    }
+    return _write_json(run_dir / "digest.json", payload)
+
+
+def grid_flow_run_stats(
+    cells: DataFrame, links: DataFrame
+) -> dict[str, dict[str, object]]:
+    """Per-day coverage, link counts, and the four exact observation values."""
+    cell_pdf = cells.select("source_date", "TRACK_ID", "cell_x", "cell_y").toPandas()
+    cell_pdf["source_date"] = cell_pdf["source_date"].map(_format_cell)
+    link_pdf = links.select(
+        "source_date", "from_x", "from_y", "to_x", "to_y", "tracks"
+    ).toPandas()
+    link_pdf["source_date"] = link_pdf["source_date"].map(_format_cell)
+    days: dict[str, dict[str, object]] = {}
+    for day in sorted(set(cell_pdf["source_date"]).union(link_pdf["source_date"])):
+        day_cells = cell_pdf.loc[cell_pdf["source_date"] == day]
+        day_links = link_pdf.loc[link_pdf["source_date"] == day]
+        days[str(day)] = _grid_flow_stats_for(day_cells, day_links)
+    return days
+
+
+def _grid_flow_stats_for(
+    cells: pd.DataFrame, links: pd.DataFrame
+) -> dict[str, object]:
+    covered = cells.loc[:, ["cell_x", "cell_y"]].drop_duplicates()
+    tracks_per_cell = (
+        cells.loc[:, ["TRACK_ID", "cell_x", "cell_y"]]
+        .drop_duplicates()
+        .groupby(["cell_x", "cell_y"], as_index=False)
+        .agg(tracks=("TRACK_ID", "nunique"))
+    )
+    if links.empty:
+        linked_cells = covered.iloc[0:0]
+        weights = pd.Series(dtype=float)
+    else:
+        linked_cells = pd.concat(
+            [
+                links.loc[:, ["from_x", "from_y"]].rename(
+                    columns={"from_x": "cell_x", "from_y": "cell_y"}
+                ),
+                links.loc[:, ["to_x", "to_y"]].rename(
+                    columns={"to_x": "cell_x", "to_y": "cell_y"}
+                ),
+            ]
+        ).drop_duplicates()
+        weights = links["tracks"]
+    return {
+        "covered_cells": int(len(covered)),
+        "directed_links": int(len(links)),
+        "total_weight": int(weights.sum()) if len(weights) else 0,
+        "median_link_weight": float(np.median(weights)) if len(weights) else 0,
+        "max_link_weight": int(weights.max()) if len(weights) else 0,
+        "cells_with_1_track": int((tracks_per_cell["tracks"] == 1).sum()),
+        "cells_without_link": int(len(covered) - len(linked_cells)),
+    }
+
+
+def compare_grid_flow_to_baseline(
+    extras: Mapping[str, Mapping[str, object]],
+    *,
+    baselines_path: Path = BASELINES_PATH,
+) -> dict[str, object]:
+    """Diff this run's grid-flow counts against the frozen 12-21 section."""
+    document = json.loads(baselines_path.read_text(encoding="utf-8"))
+    days = _day_lookup(document)
+    differences: list[dict[str, object]] = []
+    compared_days: list[str] = []
+
+    for day, observed in extras.items():
+        expected_day = days.get(day)
+        expected = expected_day.get("grid_flow") if expected_day else None
+        if not isinstance(expected, Mapping):
+            continue
+        compared_days.append(day)
+        for field in (*GRID_FLOW_COUNT_FIELDS, *GRID_FLOW_OBSERVATION_FIELDS):
+            if field not in expected:
+                continue
+            difference = _mismatch(
+                field=field,
+                expected=expected[field],
+                actual=observed.get(field),
+                date=day,
+            )
+            if difference is not None:
+                differences.append(difference)
+
+    return {
+        "baseline": "config/baselines.json",
+        "matched": not differences,
+        "compared_days": compared_days,
+        "differences": differences,
+    }
+
+
+def write_grid_flow_digest(
+    run_dir: Path, cells: DataFrame, links: DataFrame, counts: DataFrame
+) -> Path:
+    """Content digest of the two flow tables and the funnel (ADR-0003)."""
+    from .funnel import digest_funnel, funnel_observations, funnel_records
+    from .grid_flow import CELL_LINK_COLUMNS, TRACK_CELL_COLUMNS
+
+    cell_sha, cell_rows = digest_frame(
+        cells, TRACK_CELL_COLUMNS, ("source_date", "TRACK_ID", "piece_index", "run_index")
+    )
+    link_sha, link_rows = digest_frame(
+        links, CELL_LINK_COLUMNS, ("source_date", "from_x", "from_y", "to_x", "to_y")
+    )
+    count_sha, count_rows = digest_funnel(counts)
+    stages = funnel_records(counts)
+    stats = grid_flow_run_stats(cells, links)
+    payload = {
+        "tables": {
+            "track_cells": {"sha256": cell_sha, "rows": cell_rows},
+            "cell_links": {"sha256": link_sha, "rows": link_rows},
+            "stage_counts_grid_flow": {"sha256": count_sha, "rows": count_rows},
+        },
+        "stage_counts": stages,
+        "baseline_comparison": compare_grid_flow_to_baseline(stats),
+        "observations": {**funnel_observations(stages), "grid_flow": stats},
     }
     return _write_json(run_dir / "digest.json", payload)

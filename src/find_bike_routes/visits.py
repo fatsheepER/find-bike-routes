@@ -13,10 +13,10 @@ from bisect import bisect_left
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
+from .cells import Crossing
 from .config import DebounceParameters
 
-# Crossing columns match track_cells: cell_x, cell_y, length_m, entry_x, entry_y, exit_x, exit_y.
-Crossing = tuple[int, int, float, float, float, float, float]
+# Crossing is defined in cells.py: the same seven columns as track_cells.
 _END_EPS = 1e-9
 
 

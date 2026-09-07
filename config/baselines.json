@@ -40,6 +40,15 @@
           "tracks_with_path_breaks": 663,
           "matched_length_median_m": 935.4436,
           "inferred_share_mean": 0.0504
+        },
+        "grid_flow": {
+          "covered_cells": {"value": 3587, "tolerance": 0.001},
+          "directed_links": {"value": 8714, "tolerance": 0.001},
+          "total_weight": {"value": 146141, "tolerance": 0.001},
+          "median_link_weight": 8,
+          "max_link_weight": 336,
+          "cells_with_1_track": 238,
+          "cells_without_link": 4
         }
       }
     },

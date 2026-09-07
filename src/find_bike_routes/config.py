@@ -229,6 +229,24 @@ class OrderTripsStageParameters:
 
 
 @dataclass(frozen=True, slots=True)
+class GridFlowStageParameters:
+    """Everything the grid-flow stage runs on.
+
+    Cell size is the analysis definition (ADR-0002). The same function is
+    later called at 200 m and 300 m for the sensitivity pass; the CLI does
+    not expose that knob.
+    """
+
+    dates: tuple[date, ...] = STUDY_DATES
+    spark: SparkParameters = SparkParameters()
+    cell_size_m: int = 150
+    funnel_stage_names: tuple[str, ...] = (
+        "有 ≥ 1 次穿越的轨迹",
+        "有链路的单元格",
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class DisplayFillParameters:
     """Which uncovered island cells the display layer may fill.
 
