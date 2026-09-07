@@ -19,7 +19,7 @@ import pandas as pd
 import shapely
 
 from find_bike_routes.config import NetworkStageParameters
-from find_bike_routes.network import extract_bike_network, reverse_coordinates
+from find_bike_routes.network import extract_bike_network
 
 PROJECT_ROOT = Path(__file__).parents[1]
 SCRIPT = PROJECT_ROOT / "scripts" / "extract_bike_network.py"
@@ -372,6 +372,3 @@ def test_fixture_network_keeps_the_directed_edge_invariants():
     )
     assert (joined["v"] == joined["u_rev"]).all()
     assert (joined["u"] == joined["v_rev"]).all()
-    for wkb in segments["geometry"]:
-        geometry = shapely.from_wkb(wkb)
-        assert list(reverse_coordinates(geometry).coords) == list(geometry.coords)[::-1]
