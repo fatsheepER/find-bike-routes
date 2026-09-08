@@ -154,7 +154,7 @@ def run(args: argparse.Namespace) -> None:
             session, track_summaries, regions, parameters
         )
         flow_od, flow_channel, flow_track_od = build_flow_tables(
-            visits, track_summaries, trip_summaries
+            visits, track_summaries, trip_summaries, parameters
         )
         counts = build_region_profiles_funnel(
             session, track_summaries, trip_summaries, parameters

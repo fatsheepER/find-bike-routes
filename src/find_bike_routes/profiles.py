@@ -685,10 +685,13 @@ def build_flow_tables(
     visits: DataFrame,
     track_summaries: DataFrame,
     trip_summaries: DataFrame,
+    parameters: RegionProfilesStageParameters,
 ) -> tuple[DataFrame, DataFrame, DataFrame]:
     """Sparse order, adjacent-region, and whole-track endpoint flows."""
     flow_od = (
-        trip_summaries.where("endpoints_known and in_hours")
+        trip_summaries.where("endpoints_known").where(
+            F.col("unlock_hour").isin(*parameters.hours)
+        )
         .groupBy(
             PARTITION_COLUMN,
             F.col("unlock_hour").alias("hour"),

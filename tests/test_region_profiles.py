@@ -28,7 +28,6 @@ from support import (
     ORDER_FIXTURE,
     read_flow_channel,
     read_flow_od,
-    read_flow_track_od,
     read_order_trip_regions,
     read_region_cells,
     read_region_metrics,
@@ -403,7 +402,7 @@ def test_fixture_writes_sparse_flow_tables_from_their_source_units(
 ):
     flow_od = read_flow_od(region_profiles_run.flow_od)
     flow_channel = read_flow_channel(region_profiles_run.flow_channel)
-    flow_track_od = read_flow_track_od(region_profiles_run.flow_track_od)
+    flow_track_od = read_flow_channel(region_profiles_run.flow_track_od)
 
     assert list(flow_od.columns) == [
         "hour",
@@ -581,6 +580,7 @@ def test_out_of_window_events_are_rejected_independently_and_observations_match(
     try:
         assert completed.returncode == 0, completed.stderr
         metrics = read_region_metrics(tmp_path / "output" / "region_metrics")
+        flow_od = read_flow_od(tmp_path / "output" / "flow_od")
         counts = read_stage_counts(
             tmp_path / "output" / "stage_counts_region_profiles"
         )
@@ -595,6 +595,7 @@ def test_out_of_window_events_are_rejected_independently_and_observations_match(
 
         assert int(metrics["unlocks"].sum()) == len(assigned)
         assert int(metrics["locks"].sum()) == len(assigned) - 1
+        assert int(flow_od["trips"].sum()) == len(assigned)
         assert int(final_trip["rejected"]) == 1
         assert observed["tracks_with_transit_regions"] == int(final_track["kept"])
     finally:
