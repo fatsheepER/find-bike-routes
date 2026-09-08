@@ -423,6 +423,11 @@ def read_null_audit(audit: Path) -> pd.DataFrame:
     return pd.read_parquet(audit)
 
 
+def read_flow_consistency(consistency: Path) -> pd.DataFrame:
+    """Read `flow_consistency` as written. Row order is the assertion, so no sort."""
+    return pd.read_parquet(consistency)
+
+
 def read_sequence_support_scan(scan: Path) -> pd.DataFrame:
     """Read `sequence_support_scan` as written. Row order is the assertion."""
     return pd.read_parquet(scan)

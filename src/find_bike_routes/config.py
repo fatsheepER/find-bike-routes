@@ -36,6 +36,11 @@ CLEAR_DAY_DATES: tuple[date, ...] = (
 # the island rule drops. Naming it here keeps that lookup and the funnel on one string.
 ISLAND_RULE = "点全在岛内 +100m"
 
+# The §3.4 distance bands, in the order the two cuts produce them. Defined once
+# because the rain-day comparison reports one row per band and a second spelling
+# of the same three labels would let the two tables disagree about the bands.
+DISTANCE_BAND_LABELS: tuple[str, ...] = ("< 1 km", "1–3 km", "≥ 3 km")
+
 
 @dataclass(frozen=True, slots=True)
 class SparkParameters:
@@ -363,7 +368,7 @@ class OrderTripsStageParameters:
         "时长 60–3,600 秒",
         "两端在岛 +100 米",
     )
-    distance_band_labels: tuple[str, ...] = ("< 1 km", "1–3 km", "≥ 3 km")
+    distance_band_labels: tuple[str, ...] = DISTANCE_BAND_LABELS
 
 
 @dataclass(frozen=True, slots=True)
@@ -579,6 +584,15 @@ class ValidateFlowsStageParameters:
     null-model names are parameters because they are the definition of what the
     `z` in each matrix means, and a run has to name the constructions it used
     (ADR-0014).
+
+    The consistency half of the stage adds three 口径 of its own. `cross_day_topk`
+    is the two K it reports Top-K region-pair overlap at. `sequence_relative_floor`
+    is the uniform relative support threshold the sequence overlap is recomputed
+    under as a side witness — a *post-hoc filter*, never the mining threshold:
+    re-mining at a different floor would void the six scopes already recorded.
+    `single_sample_weekdays` names the weekdays the window holds exactly one
+    peripheral instance of (Monday and Friday), which therefore get a row saying
+    so instead of a test.
     """
 
     dates: tuple[date, ...] = STUDY_DATES
@@ -588,6 +602,17 @@ class ValidateFlowsStageParameters:
     null_seed: int = 42
     min_observed: int = 5
     fdr_q: float = 0.05
+    # The rain day the exposure-normalised comparison is taken on. A parameter
+    # rather than a constant only so a fixture can point it at the day it has.
+    rain_date: date = RAIN_DATE
+    cross_day_topk: tuple[int, ...] = (50, 200)
+    contiguous_topk: int = 50
+    sequence_relative_floor: float = 0.003
+    distance_bands: tuple[str, ...] = DISTANCE_BAND_LABELS
+    # What `distance_band` says on the row that is not split by band at all.
+    # Empty would read as "not applicable", and it is applicable — it is the sum.
+    all_bands_label: str = "all"
+    single_sample_weekdays: tuple[int, ...] = (0, 4)
     # The closed-form audit is maximised only over cells whose closed-form sd
     # reaches this, because 100 draws of a near-deterministic cell estimate its
     # sd too poorly for a deviation there to mean anything about the sampler.

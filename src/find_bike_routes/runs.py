@@ -218,6 +218,13 @@ VALIDATE_FLOWS_DEFINITION_FIELDS = (
     "fdr_q",
     "audit_min_null_sd",
     "clear_days",
+    "rain_date",
+    "cross_day_topk",
+    "contiguous_topk",
+    "sequence_relative_floor",
+    "distance_bands",
+    "all_bands_label",
+    "single_sample_weekdays",
     "od_null_model",
     "channel_null_model",
     "pair_funnel_unit",
@@ -1643,18 +1650,22 @@ def write_validate_flows_digest(
     run_dir: Path,
     significance: DataFrame,
     audit: DataFrame,
+    consistency: DataFrame,
     counts: DataFrame,
     observations: Mapping[str, object],
     notes: Sequence[str] = (),
 ) -> Path:
-    """Content digest of the significance table, the null audit and the funnel."""
+    """Content digest of the three validation tables and the funnel."""
     from .funnel import digest_funnel, funnel_observations, funnel_records
     from .validation import (
+        FLOW_CONSISTENCY_COLUMNS,
+        FLOW_CONSISTENCY_TABLE,
         FLOW_SIGNIFICANCE_COLUMNS,
         FLOW_SIGNIFICANCE_TABLE,
         NULL_AUDIT_COLUMNS,
         NULL_AUDIT_TABLE,
         STAGE,
+        consistency_sort_key,
         significance_sort_key,
     )
 
@@ -1663,6 +1674,9 @@ def write_validate_flows_digest(
     )
     audit_sha, audit_rows = digest_frame(
         audit, NULL_AUDIT_COLUMNS, ("matrix", "scope")
+    )
+    consistency_sha, consistency_rows = digest_frame(
+        consistency, FLOW_CONSISTENCY_COLUMNS, consistency_sort_key()
     )
     count_sha, count_rows = digest_funnel(counts)
     stages = funnel_records(counts)
@@ -1676,6 +1690,10 @@ def write_validate_flows_digest(
                 "rows": significance_rows,
             },
             NULL_AUDIT_TABLE: {"sha256": audit_sha, "rows": audit_rows},
+            FLOW_CONSISTENCY_TABLE: {
+                "sha256": consistency_sha,
+                "rows": consistency_rows,
+            },
             f"stage_counts_{STAGE}": {"sha256": count_sha, "rows": count_rows},
         },
         "stage_counts": stages,

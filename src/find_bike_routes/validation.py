@@ -32,6 +32,45 @@ the permutation, the multinomial for the strength model — and the audit table
 reports how far the 100 replicates landed from them. That is the only
 independent reference this stage has, which is why it is here rather than in a
 report: a wrong null model produces a table that looks entirely normal.
+
+The second half of the stage answers a different question — not "is this pair
+above chance on one day" but "is this the same structure on another day, and
+what did the rain day change" — and it lands in one long table,
+`flow_consistency`, with three families.
+
+`cross-day` correlates two days' matrices and reports Top-K region-pair overlap.
+Pairs are taken as a **union with zeros filled in**: a pair carrying 300 on one
+day and 0 on the other is the strongest cross-day difference there is, and an
+intersection would drop it entirely. Spearman leads and Pearson on `log1p`
+follows, and the correlations are **not** exposure-normalised because scaling a
+whole day is exactly what a difference in exposure looks like and a rank
+correlation cannot see it. That holds exactly for Spearman only: `log1p(0) = 0`
+is an anchor that does not move with the scale factor, so on the zero-filled
+union the secondary coefficient *is* mildly scale-sensitive (on a support both
+days share it moves by ~0.001, on one with absent pairs by more). It is the
+secondary coefficient for that reason, and a report quoting "both are
+scale-free" should say it of Spearman. The diagonal is out, for the same
+reason it is out of the FDR: a self-loop is not a flow between two regions, and
+at roughly 29% of `flow_od` it would make Top-K a ranking of self-loops rather
+than of corridors. The rain-day family gives it a row of its own.
+
+`rain-day` is the whole comparison **after dividing by exposure**. 12-23 kept
+only 71.5% of its points upstream, so comparing raw totals would report "there
+was less data" as "people rode less". Every ratio here is a rain-day rate over
+the clear-day mean of the same rate, `left` and `right` naming the two sides, so
+one row is the entire comparison. The three upstream deviation numbers sit in
+this family too rather than in a report footnote: they are the competing
+explanation for everything else in it.
+
+`sequence` is the only family with **no null model, deliberately**. Randomising
+the sequence library destroys every long pattern, so the overlap would come back
+at ≈ 0 and the conclusion is known before the run: it is not evidence. The
+general rule of this feature is one null model per metric, and an exception that
+is not written down reads as an omission — so it is written here, in the stage
+entry point, and in the run products. The uniform relative floor is likewise a
+*post-hoc filter* over the already-mined table, never a mining threshold: the
+main table was mined at the lowest rung, and re-mining at another floor would
+void the six scopes already recorded.
 """
 
 from __future__ import annotations
@@ -44,6 +83,7 @@ from datetime import date
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 from pyspark.sql import Column, DataFrame, SparkSession, functions as F
 from pyspark.sql.types import (
     BooleanType,
@@ -57,23 +97,59 @@ from pyspark.sql.types import (
 )
 
 from . import PipelineError
-from .assignment import TRACK_REGION_TABLE
-from .config import ValidateFlowsStageParameters
-from .datasets import PARTITION_COLUMN
+from .assignment import (
+    ORDER_TRIP_REGION_TABLE,
+    STAGE as ASSIGN_REGIONS_STAGE,
+    TRACK_REGION_TABLE,
+)
+from .config import AssignRegionsStageParameters, ValidateFlowsStageParameters
+from .datasets import PARTITION_COLUMN, TRACK_TABLE
 from .funnel import FUNNEL_COLUMNS, funnel_table_name
 from .orders import ORDER_TABLE
-from .profiles import FLOW_CHANNEL_TABLE, FLOW_OD_TABLE
+from .profiles import FLOW_CHANNEL_TABLE, FLOW_OD_TABLE, pearson, spearman
+from .sequences import (
+    CLEAR_DAY_SCOPE as SEQUENCE_CLEAR_DAY_SCOPE,
+    SEQUENCE_PATTERN_TABLE,
+    TRACK_SEQUENCE_TABLE,
+)
 
 STAGE = "validate_flows"
 FLOW_SIGNIFICANCE_TABLE = "flow_significance"
 NULL_AUDIT_TABLE = "null_audit"
+FLOW_CONSISTENCY_TABLE = "flow_consistency"
 OD_MATRIX = FLOW_OD_TABLE
 CHANNEL_MATRIX = FLOW_CHANNEL_TABLE
 MATRICES = (OD_MATRIX, CHANNEL_MATRIX)
 # The counted column of each matrix: trips for the OD table, tracks for the
 # channel table. Both are summed over the four hours into one test unit.
 MATRIX_MEASURES = {OD_MATRIX: "trips", CHANNEL_MATRIX: "tracks"}
+# What each matrix is normalised by before the rain day is compared to the clear
+# days: `flow_od` counts trips, so its exposure is the day's valid trips;
+# `flow_channel` counts tracks, so its exposure is the tracks that entered any
+# region at all.
+MATRIX_EXPOSURES = {OD_MATRIX: "valid_trips", CHANNEL_MATRIX: "tracks_with_visits"}
 STABLE_SCOPE = "clear-days-stable"
+
+# The three families of `flow_consistency`. One long table rather than three
+# wide ones: it carries correlation coefficients, Jaccard indices, ratios, share
+# agreement and upstream deviations, and a wide shape would grow a column that
+# is null for everything except one family.
+CROSS_DAY_FAMILY = "cross-day"
+RAIN_DAY_FAMILY = "rain-day"
+SEQUENCE_FAMILY = "sequence"
+FAMILIES = (CROSS_DAY_FAMILY, RAIN_DAY_FAMILY, SEQUENCE_FAMILY)
+# The merged clear-day side of every comparison, spelled the way the sequence
+# stage already spells its merged scope so the two tables join by eye.
+MERGED_SCOPE = SEQUENCE_CLEAR_DAY_SCOPE
+WEEKDAY_LABELS = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+
+# The written-down exception to "every metric gets a null model". It goes into
+# the run products verbatim, because an exception nobody can find reads as a
+# thing nobody did.
+SEQUENCE_NO_NULL_MODEL_NOTE = (
+    "序列重合率不配零模型：随机化序列库后长模式必然全部消失、重合率必然≈0，"
+    "结论预先就知道，不构成证据。这是「每个指标配零模型」这条通则的显式例外。"
+)
 
 FLOW_SIGNIFICANCE_COLUMNS = (
     "scope",
@@ -142,6 +218,33 @@ _NULL_AUDIT = StructType(
         StructField("margin_deviation", DoubleType(), True),
     ]
 )
+FLOW_CONSISTENCY_COLUMNS = (
+    "family",
+    "metric",
+    "matrix",
+    "left",
+    "right",
+    "distance_band",
+    "k",
+    "value",
+    "n",
+)
+# Every locator column is nullable, and a locator that does not apply to a row
+# is left null rather than filled with a stand-in: `matrix` on a sequence row or
+# `k` on a correlation row would otherwise read as a real coordinate.
+_CONSISTENCY = StructType(
+    [
+        StructField("family", StringType(), False),
+        StructField("metric", StringType(), False),
+        StructField("matrix", StringType(), True),
+        StructField("left", StringType(), True),
+        StructField("right", StringType(), True),
+        StructField("distance_band", StringType(), True),
+        StructField("k", IntegerType(), True),
+        StructField("value", DoubleType(), True),
+        StructField("n", LongType(), True),
+    ]
+)
 _FUNNEL = StructType(
     [
         StructField("stage_index", IntegerType(), False),
@@ -154,11 +257,42 @@ _FUNNEL = StructType(
     ]
 )
 
+# Upstream tables with one partition per requested day.
 _UPSTREAM = (
     (FLOW_OD_TABLE, "profiles", "region-profiles", "scripts/region_profiles.py"),
     (FLOW_CHANNEL_TABLE, "profiles", "region-profiles", "scripts/region_profiles.py"),
     (TRACK_REGION_TABLE, "assignment", "assign-regions", "scripts/assign_regions.py"),
+    (
+        ORDER_TRIP_REGION_TABLE,
+        "assignment",
+        "assign-regions",
+        "scripts/assign_regions.py",
+    ),
+    (
+        funnel_table_name(ASSIGN_REGIONS_STAGE),
+        "assignment",
+        "assign-regions",
+        "scripts/assign_regions.py",
+    ),
     (ORDER_TABLE, "orders", "order-trips", "scripts/order_trips.py"),
+    (TRACK_TABLE, "trajectory", "split-tracks", "scripts/split_tracks.py"),
+    (
+        TRACK_SEQUENCE_TABLE,
+        "sequences",
+        "region-sequences",
+        "scripts/region_sequences.py",
+    ),
+)
+# `sequence_patterns` carries a `scope` column instead of a date partition — the
+# merged scope has no `source_date` that would not be a lie — so it is checked
+# for existence once rather than per day.
+_UPSTREAM_UNPARTITIONED = (
+    (
+        SEQUENCE_PATTERN_TABLE,
+        "sequences",
+        "region-sequences",
+        "scripts/region_sequences.py",
+    ),
 )
 
 
@@ -602,6 +736,764 @@ def enumerate_scopes(
 
 
 # --------------------------------------------------------------------------- #
+# Cross-day, rain-day and sequence consistency
+# --------------------------------------------------------------------------- #
+
+
+PairCounts = Mapping[tuple[int, int], int]
+PatternSupport = Mapping[tuple[int, ...], tuple[int, int]]
+
+
+def off_diagonal(counts: PairCounts) -> dict[tuple[int, int], int]:
+    """The pairs that are flows *between* two regions.
+
+    The diagonal leaves the cross-day comparison for the same reason it leaves
+    the FDR: a self-loop is not a flow between regions. It also carries about
+    29% of `flow_od`, so leaving it in would turn Top-K into a ranking of which
+    regions are large rather than of which corridors are used.
+    """
+    return {
+        pair: count for pair, count in counts.items() if pair[0] != pair[1]
+    }
+
+
+def union_pair_vectors(
+    left: PairCounts, right: PairCounts
+) -> tuple[tuple[tuple[int, int], ...], np.ndarray, np.ndarray]:
+    """Both days over the union of their pairs, missing ones filled with zero.
+
+    A pair seen on one day and not the other is the strongest cross-day evidence
+    there is; an intersection would drop it and quietly raise the correlation of
+    whatever is left. The pair order is sorted so the vectors are the same on
+    every run.
+    """
+    pairs = tuple(sorted(set(left) | set(right)))
+    return (
+        pairs,
+        np.array([float(left.get(pair, 0)) for pair in pairs]),
+        np.array([float(right.get(pair, 0)) for pair in pairs]),
+    )
+
+
+def pair_spearman(left: PairCounts, right: PairCounts) -> tuple[float | None, int]:
+    """Rank correlation of two days over the zero-filled union, and its length."""
+    pairs, first, second = union_pair_vectors(left, right)
+    return spearman(pd.Series(first), pd.Series(second)), len(pairs)
+
+
+def pair_pearson_log1p(
+    left: PairCounts, right: PairCounts
+) -> tuple[float | None, int]:
+    """Pearson on `log1p` of the two days, the secondary coefficient.
+
+    `log1p` rather than `log` because the union is zero-filled, and the counts
+    are heavy-tailed enough that a linear correlation on the raw values would be
+    a statement about the three biggest pairs.
+    """
+    pairs, first, second = union_pair_vectors(left, right)
+    return (
+        pearson(pd.Series(np.log1p(first)), pd.Series(np.log1p(second))),
+        len(pairs),
+    )
+
+
+def top_pairs(counts: PairCounts, k: int) -> set[tuple[int, int]]:
+    """The `k` heaviest pairs, ties broken by pair id so the set is reproducible."""
+    ordered = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    return {pair for pair, _count in ordered[:k]}
+
+
+def jaccard(left: set[object], right: set[object]) -> tuple[float | None, int]:
+    """`|A ∩ B| / |A ∪ B|` and the size of the union it was taken over."""
+    union = left | right
+    if not union:
+        return None, 0
+    return len(left & right) / len(union), len(union)
+
+
+def coverage(left: set[object], right: set[object]) -> tuple[float | None, int]:
+    """The share of `left` that `right` also holds, and the size of `left`.
+
+    Not symmetric, and that is the point: "how much of this day is in the merged
+    set" is a different question from "how much do these two days share".
+    """
+    if not left:
+        return None, 0
+    return len(left & right) / len(left), len(left)
+
+
+def merged_counts(
+    by_day: Mapping[str, PairCounts], days: Sequence[str]
+) -> dict[tuple[int, int], int]:
+    """The named days summed pair by pair."""
+    merged: dict[tuple[int, int], int] = {}
+    for day in days:
+        for pair, count in by_day.get(day, {}).items():
+            merged[pair] = merged.get(pair, 0) + count
+    return merged
+
+
+def share_vector(counts: PairCounts) -> dict[tuple[int, int], float]:
+    """Each pair's share of the total, so two days of different size can be compared."""
+    total = float(sum(counts.values()))
+    if total <= 0:
+        return {}
+    return {pair: count / total for pair, count in counts.items()}
+
+
+def cosine_similarity(
+    left: Mapping[tuple[int, int], float], right: Mapping[tuple[int, int], float]
+) -> float | None:
+    """Cosine of two share vectors over the zero-filled union of their pairs.
+
+    Reported beside Spearman because the two disagree in a useful way: Spearman
+    asks whether the pairs are in the same order, cosine asks whether the shares
+    have the same shape, and a day that keeps its ranking while flattening its
+    distribution shows up in one and not the other.
+    """
+    pairs = sorted(set(left) | set(right))
+    if not pairs:
+        return None
+    first = np.array([left.get(pair, 0.0) for pair in pairs])
+    second = np.array([right.get(pair, 0.0) for pair in pairs])
+    norms = float(np.linalg.norm(first) * np.linalg.norm(second))
+    if norms <= 0:
+        return None
+    return float(np.dot(first, second) / norms)
+
+
+def exposure_normalised_ratio(
+    *,
+    rain_total: float,
+    rain_exposure: float,
+    clear_totals: Mapping[str, float],
+    clear_exposures: Mapping[str, float],
+) -> float | None:
+    """The rain day's flow per unit of exposure over the clear days' mean of the same.
+
+    Dividing first and averaging second is deliberate: 12-23 kept 71.5% of its
+    points upstream, so a ratio of raw totals reports missing data as missing
+    riders. The clear-day reference is the mean of the four per-day rates rather
+    than the rate of the summed days, so a single very large clear day cannot
+    quietly become the reference on its own.
+    """
+    if rain_exposure <= 0:
+        return None
+    rates = [
+        clear_totals.get(day, 0.0) / clear_exposures[day]
+        for day in sorted(clear_exposures)
+        if clear_exposures.get(day, 0) > 0
+    ]
+    if not rates:
+        return None
+    reference = float(np.mean(rates))
+    if reference <= 0:
+        return None
+    return (rain_total / rain_exposure) / reference
+
+
+def band_ratio_summary(
+    ratios: Mapping[str, float | None],
+) -> tuple[float | None, str | None, float | None]:
+    """Spread over mean of the band ratios, and which band sits furthest from it.
+
+    No direction is assumed and no threshold is set: the pre-registration says
+    only that the band furthest from the mean gets named. Three ratios landing
+    on one constant reads as proportional shrinkage; one of them standing apart
+    reads as a change in the mix, and the report needs to know which one before
+    it can say which.
+    """
+    live = {
+        band: float(value) for band, value in ratios.items() if value is not None
+    }
+    if not live:
+        return None, None, None
+    values = np.array(sorted(live.values()))
+    mean = float(values.mean())
+    if mean == 0:
+        return None, None, None
+    spread = float(values.max() - values.min()) / mean
+    worst = min(
+        live.items(), key=lambda item: (-abs(item[1] - mean), item[0])
+    )
+    return spread, worst[0], abs(worst[1] - mean) / mean
+
+
+def relative_support_floor(sequences: int, ratio: float) -> int:
+    """`ceil(ratio × sequences)`: one uniform relative threshold for every scope.
+
+    Ceiling rather than half-up rounding, and spelled out here rather than left
+    to a reader's assumption: this is a *filter* applied to an already-mined
+    table, so it may only ever move the bar up. Rounding down could admit a
+    pattern the scope's own mining floor already rejected, and the published
+    number would then not be reachable from the published table.
+    """
+    if sequences <= 0:
+        return 0
+    return int(math.ceil(ratio * sequences))
+
+
+def top_contiguous_patterns(patterns: PatternSupport, k: int) -> set[tuple[int, ...]]:
+    """The `k` patterns with the most contiguous support: the corridors.
+
+    Contiguous support, not support: a pattern whose steps are all real
+    adjacencies is a route someone rode through, while one held together by
+    containment alone only says the regions appeared in that order. Ties break on
+    support and then on the pattern itself, so the set does not depend on read
+    order.
+    """
+    ordered = sorted(
+        patterns.items(),
+        key=lambda item: (-item[1][1], -item[1][0], item[0]),
+    )
+    return {pattern for pattern, _support in ordered[:k]}
+
+
+def filtered_patterns(patterns: PatternSupport, floor: int) -> PatternSupport:
+    """The patterns whose support reaches a floor. A filter, never a mining threshold."""
+    return {
+        pattern: support
+        for pattern, support in patterns.items()
+        if support[0] >= floor
+    }
+
+
+def clear_days_in_run(
+    parameters: ValidateFlowsStageParameters,
+) -> tuple[str, ...]:
+    """The clear days this run covers, in date order."""
+    covered = {day.isoformat() for day in parameters.dates}
+    return tuple(
+        day.isoformat() for day in parameters.clear_days if day.isoformat() in covered
+    )
+
+
+def day_pairs(days: Sequence[str]) -> list[tuple[str, str]]:
+    """Every unordered pair of days, each written with the earlier date on the left."""
+    return [
+        (days[index], other)
+        for index in range(len(days))
+        for other in days[index + 1 :]
+    ]
+
+
+def _consistency_row(
+    family: str,
+    metric: str,
+    value: float | None,
+    *,
+    matrix: str | None = None,
+    left: str | None = None,
+    right: str | None = None,
+    distance_band: str | None = None,
+    k: int | None = None,
+    n: int | None = None,
+) -> dict[str, object]:
+    return {
+        "family": family,
+        "metric": metric,
+        "matrix": matrix,
+        "left": left,
+        "right": right,
+        "distance_band": distance_band,
+        "k": None if k is None else int(k),
+        "value": None if value is None else round(float(value), 6),
+        "n": None if n is None else int(n),
+    }
+
+
+def consistency_sort_order(record: Mapping[str, object]) -> tuple[object, ...]:
+    """`(family, metric, matrix, left, right, distance_band, k)` with nulls first.
+
+    A missing locator sorts before every present one, which is what
+    `asc_nulls_first` does on the written table, so the driver-side order and the
+    Parquet order are the same order.
+    """
+    return (
+        str(record["family"]),
+        str(record["metric"]),
+        "" if record["matrix"] is None else str(record["matrix"]),
+        "" if record["left"] is None else str(record["left"]),
+        "" if record["right"] is None else str(record["right"]),
+        "" if record["distance_band"] is None else str(record["distance_band"]),
+        -1 if record["k"] is None else int(record["k"]),
+    )
+
+
+def cross_day_records(
+    counts: Mapping[str, Mapping[str, PairCounts]],
+    parameters: ValidateFlowsStageParameters,
+) -> list[dict[str, object]]:
+    """Both matrices, every clear-day pair and every day against the clear-day merge.
+
+    **The 6 pairwise rows are the cross-day evidence; the `clear-days` rows are
+    not.** The merge is the sum of the four clear days, so a clear day compared
+    against it is compared against a total it contributes about a quarter of, and
+    the coefficient is autocorrelated upwards by construction. Those rows answer
+    "how much of the headline structure does this one day carry", which is a
+    description, not an out-of-sample agreement — the only genuinely
+    out-of-sample row against the merge is 12-23's, because the rain day is not
+    in the clear-day set. A report arguing "the corridors are not single-day
+    noise" has to quote the pairwise rows.
+
+    Nothing here is exposure-normalised. Scaling a whole day is what a difference
+    in exposure looks like, and Spearman cannot see it at all; Pearson on `log1p`
+    is only approximately blind to it, because `log1p(0) = 0` does not move with
+    the scale factor and the 口径 here is the zero-filled union — which is why it
+    is the secondary coefficient. Monday and Friday each get a row recording that
+    the window holds one of them, which is why no weekday effect is tested
+    anywhere in this table.
+    """
+    clear = clear_days_in_run(parameters)
+    days = tuple(day.isoformat() for day in sorted(set(parameters.dates)))
+    comparisons: list[tuple[str, str]] = list(day_pairs(clear))
+    if clear:
+        comparisons.extend((day, MERGED_SCOPE) for day in days)
+    records: list[dict[str, object]] = []
+    for matrix in MATRICES:
+        by_day = {
+            day: off_diagonal(counts.get(matrix, {}).get(day, {})) for day in days
+        }
+        merged = off_diagonal(merged_counts(counts.get(matrix, {}), clear))
+        for left, right in comparisons:
+            first = by_day.get(left, {})
+            second = merged if right == MERGED_SCOPE else by_day.get(right, {})
+            rho, pairs = pair_spearman(first, second)
+            linear, _pairs = pair_pearson_log1p(first, second)
+            records.append(
+                _consistency_row(
+                    CROSS_DAY_FAMILY,
+                    "spearman",
+                    rho,
+                    matrix=matrix,
+                    left=left,
+                    right=right,
+                    n=pairs,
+                )
+            )
+            records.append(
+                _consistency_row(
+                    CROSS_DAY_FAMILY,
+                    "pearson_log1p",
+                    linear,
+                    matrix=matrix,
+                    left=left,
+                    right=right,
+                    n=pairs,
+                )
+            )
+            for k in parameters.cross_day_topk:
+                value, union = jaccard(top_pairs(first, k), top_pairs(second, k))
+                records.append(
+                    _consistency_row(
+                        CROSS_DAY_FAMILY,
+                        "topk_jaccard",
+                        value,
+                        matrix=matrix,
+                        left=left,
+                        right=right,
+                        k=k,
+                        n=union,
+                    )
+                )
+    for day in sorted(set(parameters.dates)):
+        if day.weekday() not in parameters.single_sample_weekdays:
+            continue
+        records.append(
+            _consistency_row(
+                CROSS_DAY_FAMILY,
+                "weekday_samples",
+                1.0,
+                left=day.isoformat(),
+                right=WEEKDAY_LABELS[day.weekday()],
+                n=1,
+            )
+        )
+    return records
+
+
+def rain_day_records(
+    counts: Mapping[str, Mapping[str, PairCounts]],
+    band_totals: Mapping[str, Mapping[str, int]],
+    exposures: Mapping[str, Mapping[str, int]],
+    deviations: Mapping[str, Mapping[str, float]],
+    parameters: ValidateFlowsStageParameters,
+) -> list[dict[str, object]]:
+    """The rain day against the clear-day mean, every row already divided by exposure.
+
+    Four things, in this order: the exposure-normalised total ratio per distance
+    band and over all bands, the agreement of the off-diagonal share vectors, the
+    self-loop share on its own row, and the three upstream deviation numbers.
+    The last three are in this table rather than in a footnote because they are
+    the competing explanation for the first: 12-23 kept 71.5% of its points, cut
+    8 sequences on unassigned gaps where the clear days cut none, and fell back
+    on more order endpoints, so a report that quotes the ratios without them is
+    quoting half of the evidence.
+
+    **`flow_od`'s all-bands ratio is 1 by construction and must not be read as a
+    measurement.** Every valid trip contributes exactly one `flow_od` row — the
+    nearest-region fallback leaves no endpoint unknown and the source window is
+    already the four hours — so `flow_od` total *is* the day's valid trips and
+    dividing one by the other gives 1 on every day. That is worth writing down
+    rather than hiding: it says the entire drop in `flow_od` is upstream exposure,
+    with nothing left over to attribute to riding. The question that still has an
+    answer is whether the **mix** moved, and that is what the three band rows and
+    their spread are for; `flow_channel`'s ratio is a real measurement too, since
+    a track can cross many region boundaries or none.
+    """
+    rain = parameters.rain_date.isoformat()
+    clear = clear_days_in_run(parameters)
+    if rain not in {day.isoformat() for day in parameters.dates} or not clear:
+        return []
+    records: list[dict[str, object]] = []
+    band_ratios = _band_ratios(band_totals, exposures, rain, clear, parameters)
+    for matrix in MATRICES:
+        measure = MATRIX_EXPOSURES[matrix]
+        totals = {
+            day: float(sum(counts.get(matrix, {}).get(day, {}).values()))
+            for day in {rain, *clear}
+        }
+        bands: list[tuple[str, float | None]] = [
+            (
+                parameters.all_bands_label,
+                exposure_normalised_ratio(
+                    rain_total=totals[rain],
+                    rain_exposure=float(exposures.get(rain, {}).get(measure, 0)),
+                    clear_totals={day: totals[day] for day in clear},
+                    clear_exposures={
+                        day: float(exposures.get(day, {}).get(measure, 0))
+                        for day in clear
+                    },
+                ),
+            )
+        ]
+        if matrix == OD_MATRIX:
+            bands.extend(
+                (band, band_ratios[band]) for band in parameters.distance_bands
+            )
+        for band, value in bands:
+            records.append(
+                _consistency_row(
+                    RAIN_DAY_FAMILY,
+                    "exposure_normalised_total_ratio",
+                    value,
+                    matrix=matrix,
+                    left=rain,
+                    right=MERGED_SCOPE,
+                    distance_band=band,
+                    n=int(exposures.get(rain, {}).get(measure, 0)),
+                )
+            )
+
+    spread, worst_band, worst_deviation = band_ratio_summary(band_ratios)
+    records.append(
+        _consistency_row(
+            RAIN_DAY_FAMILY,
+            "band_ratio_spread",
+            spread,
+            matrix=OD_MATRIX,
+            left=rain,
+            right=MERGED_SCOPE,
+            n=len(parameters.distance_bands),
+        )
+    )
+    records.append(
+        _consistency_row(
+            RAIN_DAY_FAMILY,
+            "band_ratio_max_deviation",
+            worst_deviation,
+            matrix=OD_MATRIX,
+            left=rain,
+            right=MERGED_SCOPE,
+            distance_band=worst_band,
+            n=len(parameters.distance_bands),
+        )
+    )
+
+    for matrix in MATRICES:
+        records.extend(_share_agreement_records(counts, matrix, rain, clear))
+
+    records.append(_self_loop_record(counts, parameters, rain, clear))
+    records.extend(_upstream_deviation_records(deviations, rain))
+    return records
+
+
+def _band_ratios(
+    band_totals: Mapping[str, Mapping[str, int]],
+    exposures: Mapping[str, Mapping[str, int]],
+    rain: str,
+    clear: Sequence[str],
+    parameters: ValidateFlowsStageParameters,
+) -> dict[str, float | None]:
+    """One exposure-normalised ratio per distance band.
+
+    Only `flow_od` has bands to split by, so only its exposure appears here. The
+    total over all bands is not one of these: it divides by the same exposure but
+    is dominated by the largest band, and the question the bands answer is
+    whether the mix moved, which the total cannot show.
+    """
+    exposure = MATRIX_EXPOSURES[OD_MATRIX]
+    return {
+        band: exposure_normalised_ratio(
+            rain_total=float(band_totals.get(rain, {}).get(band, 0)),
+            rain_exposure=float(exposures.get(rain, {}).get(exposure, 0)),
+            clear_totals={
+                day: float(band_totals.get(day, {}).get(band, 0)) for day in clear
+            },
+            clear_exposures={
+                day: float(exposures.get(day, {}).get(exposure, 0)) for day in clear
+            },
+        )
+        for band in parameters.distance_bands
+    }
+
+
+def _share_agreement_records(
+    counts: Mapping[str, Mapping[str, PairCounts]],
+    matrix: str,
+    rain: str,
+    clear: Sequence[str],
+) -> list[dict[str, object]]:
+    """Spearman and cosine of the rain day's share vector against the clear merge.
+
+    Both, because they disagree usefully: Spearman asks whether the pairs are in
+    the same order and cosine asks whether the shares have the same shape, so a
+    day that keeps its ranking while flattening its distribution shows up in one
+    and not the other. Shares rather than counts, so the comparison survives the
+    day being a third the size; the union is zero-filled for the same reason the
+    cross-day family's is.
+    """
+    rain_shares = share_vector(off_diagonal(counts.get(matrix, {}).get(rain, {})))
+    clear_shares = share_vector(
+        off_diagonal(merged_counts(counts.get(matrix, {}), clear))
+    )
+    pairs = sorted(set(rain_shares) | set(clear_shares))
+    return [
+        _consistency_row(
+            RAIN_DAY_FAMILY,
+            "off_diagonal_share_spearman",
+            spearman(
+                pd.Series([rain_shares.get(pair, 0.0) for pair in pairs]),
+                pd.Series([clear_shares.get(pair, 0.0) for pair in pairs]),
+            ),
+            matrix=matrix,
+            left=rain,
+            right=MERGED_SCOPE,
+            n=len(pairs),
+        ),
+        _consistency_row(
+            RAIN_DAY_FAMILY,
+            "off_diagonal_share_cosine",
+            cosine_similarity(rain_shares, clear_shares),
+            matrix=matrix,
+            left=rain,
+            right=MERGED_SCOPE,
+            n=len(pairs),
+        ),
+    ]
+
+
+def self_loop_share(counts: PairCounts) -> float | None:
+    """The share of a matrix's flow that starts and ends in the same region."""
+    total = float(sum(counts.values()))
+    if total <= 0:
+        return None
+    inside = float(
+        sum(count for pair, count in counts.items() if pair[0] == pair[1])
+    )
+    return inside / total
+
+
+def _self_loop_record(
+    counts: Mapping[str, Mapping[str, PairCounts]],
+    parameters: ValidateFlowsStageParameters,
+    rain: str,
+    clear: Sequence[str],
+) -> dict[str, object]:
+    """The self-loop share on its own row, as a rain-over-clear ratio.
+
+    It gets its own row because it is excluded from the share vector above — a
+    self-loop is not a flow between regions — and a share that is excluded from
+    the comparison and reported nowhere else is a share nobody checked.
+    """
+    rain_counts = counts.get(OD_MATRIX, {}).get(rain, {})
+    rain_share = self_loop_share(rain_counts)
+    clear_shares = [
+        share
+        for share in (
+            self_loop_share(counts.get(OD_MATRIX, {}).get(day, {})) for day in clear
+        )
+        if share is not None
+    ]
+    reference = float(np.mean(clear_shares)) if clear_shares else None
+    value = (
+        rain_share / reference
+        if rain_share is not None and reference not in (None, 0)
+        else None
+    )
+    return _consistency_row(
+        RAIN_DAY_FAMILY,
+        "self_loop_share_ratio",
+        value,
+        matrix=OD_MATRIX,
+        left=rain,
+        right=MERGED_SCOPE,
+        n=int(
+            sum(count for pair, count in rain_counts.items() if pair[0] == pair[1])
+        ),
+    )
+
+
+def _upstream_deviation_records(
+    deviations: Mapping[str, Mapping[str, float]], rain: str
+) -> list[dict[str, object]]:
+    """The rain day's three upstream deviation numbers, as shares and a count.
+
+    Shares are fractions here, not percentages, because they share the `value`
+    column with the ratios and correlations above and one column cannot carry two
+    units. `order_fallback_share` pools the two order endpoints — a fallback is a
+    fallback whichever end of the trip it happened on — and the unlock/lock split
+    is kept in the run products beside it.
+    """
+    day = deviations.get(rain, {})
+    return [
+        _consistency_row(
+            RAIN_DAY_FAMILY,
+            "point_retention_rate",
+            day.get("point_retention_rate"),
+            left=rain,
+            n=int(day.get("raw_points", 0)),
+        ),
+        _consistency_row(
+            RAIN_DAY_FAMILY,
+            "unassigned_gap_cuts",
+            day.get("unassigned_gap_cuts"),
+            left=rain,
+            n=int(day.get("candidate_visits", 0)),
+        ),
+        _consistency_row(
+            RAIN_DAY_FAMILY,
+            "order_fallback_share",
+            day.get("order_fallback_share"),
+            left=rain,
+            n=int(day.get("order_endpoints", 0)),
+        ),
+    ]
+
+
+def sequence_records(
+    patterns: Mapping[str, PatternSupport],
+    sequences: Mapping[str, int],
+    parameters: ValidateFlowsStageParameters,
+) -> list[dict[str, object]]:
+    """Pattern-set overlap across days, twice: as mined and under one relative floor.
+
+    Deliberately without a null model. Randomising the sequence library removes
+    every long pattern, so the overlap would come back at ≈ 0 whatever the data
+    said; the comparison's answer is known before it is run and it is therefore
+    not evidence. `SEQUENCE_NO_NULL_MODEL_NOTE` carries the reason into the run
+    products so the gap cannot be read as an omission.
+
+    The relative floor is a filter over `sequence_patterns`, applied here and
+    nowhere upstream. Re-mining at `ceil(0.003 × sequences)` would void six
+    already recorded scopes, and it is not necessary: the table was mined at the
+    lowest rung of the support ladder, so every pattern the higher bar admits is
+    already in it.
+    """
+    clear = clear_days_in_run(parameters)
+    days = tuple(day.isoformat() for day in sorted(set(parameters.dates)))
+    merged_sequences = sum(sequences.get(day, 0) for day in clear)
+    floors = {day: sequences.get(day, 0) for day in days}
+    floors[MERGED_SCOPE] = merged_sequences
+    records = [
+        _consistency_row(
+            SEQUENCE_FAMILY,
+            "relative_support_floor",
+            relative_support_floor(count, parameters.sequence_relative_floor),
+            left=scope,
+            n=count,
+        )
+        for scope, count in sorted(floors.items())
+    ]
+
+    have_merged = MERGED_SCOPE in patterns
+    comparisons: list[tuple[str, str]] = list(day_pairs(clear))
+    if have_merged:
+        comparisons.extend((day, MERGED_SCOPE) for day in days)
+    # As mined, then the same comparisons over the uniform relative floor. The
+    # second regime filters a copy: `patterns` is what was read off disk and this
+    # stage never rewrites the mined table.
+    regimes: tuple[tuple[str, Mapping[str, PatternSupport]], ...] = (
+        ("", patterns),
+        (
+            "_relative_floor",
+            {
+                scope: filtered_patterns(
+                    scope_patterns,
+                    relative_support_floor(
+                        floors.get(scope, 0), parameters.sequence_relative_floor
+                    ),
+                )
+                for scope, scope_patterns in patterns.items()
+            },
+        ),
+    )
+    # Two pattern universes: everything mined, and the contiguous chains that are
+    # the corridors. Against the merged scope the question is coverage — how much
+    # of this day the merge holds — and between two days it is Jaccard.
+    universes: tuple[tuple[str, int | None], ...] = (
+        ("pattern", None),
+        ("contiguous_topk", parameters.contiguous_topk),
+    )
+    for suffix, filtered in regimes:
+        for left, right in comparisons:
+            merged_side = right == MERGED_SCOPE
+            for prefix, k in universes:
+                first = _pattern_set(filtered.get(left, {}), k)
+                second = _pattern_set(filtered.get(right, {}), k)
+                value, size = (
+                    coverage(first, second)
+                    if merged_side
+                    else jaccard(first, second)
+                )
+                records.append(
+                    _consistency_row(
+                        SEQUENCE_FAMILY,
+                        f"{prefix}_{'coverage' if merged_side else 'jaccard'}{suffix}",
+                        value,
+                        left=left,
+                        right=right,
+                        k=k,
+                        n=size,
+                    )
+                )
+    return records
+
+
+def _pattern_set(patterns: PatternSupport, k: int | None) -> set[tuple[int, ...]]:
+    """Every mined pattern, or the `k` with the most contiguous support."""
+    return set(patterns) if k is None else top_contiguous_patterns(patterns, k)
+
+
+def consistency_records(
+    counts: Mapping[str, Mapping[str, PairCounts]],
+    band_totals: Mapping[str, Mapping[str, int]],
+    exposures: Mapping[str, Mapping[str, int]],
+    deviations: Mapping[str, Mapping[str, float]],
+    patterns: Mapping[str, PatternSupport],
+    sequences: Mapping[str, int],
+    parameters: ValidateFlowsStageParameters,
+) -> list[dict[str, object]]:
+    """All three families of `flow_consistency`, in the table's own sort order."""
+    records = [
+        *cross_day_records(counts, parameters),
+        *rain_day_records(counts, band_totals, exposures, deviations, parameters),
+        *sequence_records(patterns, sequences, parameters),
+    ]
+    return sorted(records, key=consistency_sort_order)
+
+
+# --------------------------------------------------------------------------- #
 # Funnel and observations
 # --------------------------------------------------------------------------- #
 
@@ -673,15 +1565,68 @@ def null_audit_observations(
     ]
 
 
+def consistency_observations(
+    records: Sequence[Mapping[str, object]],
+    deviations: Mapping[str, Mapping[str, float]],
+    parameters: ValidateFlowsStageParameters,
+) -> dict[str, object]:
+    """`flow_consistency` as the report reads it: one block per family.
+
+    The unlock and lock fallback shares are quoted here as percentages beside the
+    pooled fraction the table carries, because they are two different numbers on
+    the two ends of a trip and the row that pools them should not be the only
+    place the pair survives.
+    """
+    families: dict[str, list[dict[str, object]]] = {family: [] for family in FAMILIES}
+    for record in records:
+        families[str(record["family"])].append(
+            {
+                name: record[name]
+                for name in FLOW_CONSISTENCY_COLUMNS
+                if name != "family" and record[name] is not None
+            }
+        )
+    rain = parameters.rain_date.isoformat()
+    day = deviations.get(rain, {})
+    payload: dict[str, object] = dict(families)
+    payload["rain_day_upstream"] = {
+        "date": rain,
+        "raw_points": int(day.get("raw_points", 0)),
+        "valid_points": int(day.get("valid_points", 0)),
+        "point_retention_rate": day.get("point_retention_rate"),
+        "unassigned_gap_cuts": int(day.get("unassigned_gap_cuts", 0)),
+        "candidate_visits": int(day.get("candidate_visits", 0)),
+        "unlock_fallback_share": _percent(
+            day.get("unlock_fallback"), day.get("trips")
+        ),
+        "lock_fallback_share": _percent(day.get("lock_fallback"), day.get("trips")),
+    }
+    payload["sequence_null_model"] = SEQUENCE_NO_NULL_MODEL_NOTE
+    return payload
+
+
+def _percent(part: float | None, whole: float | None) -> float | None:
+    if not part and not whole:
+        return None
+    if not whole:
+        return None
+    return round(100 * float(part or 0) / float(whole), 2)
+
+
 def validate_flows_observations(
     rows: Sequence[Mapping[str, object]],
     audits: Sequence[Mapping[str, object]],
+    consistency: Sequence[Mapping[str, object]],
+    deviations: Mapping[str, Mapping[str, float]],
     parameters: ValidateFlowsStageParameters,
 ) -> dict[str, object]:
-    """Everything the digest quotes from this stage's two tables."""
+    """Everything the digest quotes from this stage's three tables."""
     return {
         "matrices": significance_observations(rows, parameters),
         "null_audit": null_audit_observations(audits),
+        "consistency": consistency_observations(
+            consistency, deviations, parameters
+        ),
     }
 
 
@@ -750,6 +1695,10 @@ def null_audit_table_path(output_root: Path) -> Path:
     return output_root / NULL_AUDIT_TABLE
 
 
+def flow_consistency_table_path(output_root: Path) -> Path:
+    return output_root / FLOW_CONSISTENCY_TABLE
+
+
 def funnel_path(output_root: Path) -> Path:
     return output_root / funnel_table_name(STAGE)
 
@@ -759,16 +1708,28 @@ def resolve_upstream(
     profiles: Path,
     assignment: Path,
     orders: Path,
+    trajectory: Path,
+    sequences: Path,
     dates: Sequence[date],
 ) -> None:
     """Name every requested date that is missing an upstream partition.
 
-    `track_regions` and `order_trips` are checked although this stage's tables
-    are built from the two flow matrices alone: they are the exposure
-    denominators the day comparisons divide by, and a run that cannot produce
-    those should fail before Spark starts rather than half way through.
+    The significance half of the stage reads the two flow matrices and nothing
+    else, but the consistency half divides by exposure and reports the rain
+    day's upstream deviations, so it also needs the day's valid trips, the tracks
+    that entered a region, the order endpoints that fell back, the split funnel's
+    point counts and both sequence tables. A run that cannot produce one of them
+    should fail before Spark starts rather than half way through, so every one of
+    them is named here — `sequence_patterns` by existence, since its scope column
+    stands in for the date partition it cannot have.
     """
-    roots = {"profiles": profiles, "assignment": assignment, "orders": orders}
+    roots = {
+        "profiles": profiles,
+        "assignment": assignment,
+        "orders": orders,
+        "trajectory": trajectory,
+        "sequences": sequences,
+    }
     problems = [
         f"no {table} partition for {day.isoformat()} under {roots[root] / table}; "
         f"run the {stage} stage first ({script})"
@@ -778,6 +1739,12 @@ def resolve_upstream(
             roots[root] / table / f"{PARTITION_COLUMN}={day.isoformat()}"
         ).is_dir()
     ]
+    problems.extend(
+        f"no {table} under {roots[root] / table}; "
+        f"run the {stage} stage first ({script})"
+        for table, root, stage, script in _UPSTREAM_UNPARTITIONED
+        if not (roots[root] / table).is_dir()
+    )
     if problems:
         raise PipelineError("\n".join(problems))
 
@@ -790,6 +1757,7 @@ def refuse_to_clobber(output_root: Path, overwrite: bool) -> None:
         for path in (
             flow_significance_table_path(output_root),
             null_audit_table_path(output_root),
+            flow_consistency_table_path(output_root),
             funnel_path(output_root),
         )
         if path.is_dir() and any(path.iterdir())
@@ -798,7 +1766,7 @@ def refuse_to_clobber(output_root: Path, overwrite: bool) -> None:
         listed = "\n".join(str(path) for path in existing)
         raise PipelineError(
             f"output already exists:\n{listed}\n"
-            f"pass --overwrite to replace it; the two tables hold only the scopes "
+            f"pass --overwrite to replace it; the three tables hold only the scopes "
             f"this run judged"
         )
 
@@ -838,6 +1806,267 @@ def read_flow_counts(
             ] = int(row.observed)
         counts[matrix] = by_day
     return counts
+
+
+def read_band_totals(
+    session: SparkSession,
+    *,
+    profiles: Path,
+    parameters: ValidateFlowsStageParameters,
+) -> dict[str, dict[str, int]]:
+    """`flow_od` trips per (day, distance band).
+
+    The bands are dropped for the null models — a pair's count after the split is
+    a single digit for most pairs — and kept only here, because the rain-day
+    question is whether the day shrank in proportion or changed its trip mix, and
+    the mix is exactly what the bands measure.
+    """
+    wanted = [day.isoformat() for day in parameters.dates]
+    frame = (
+        session.read.parquet(str(profiles / OD_MATRIX))
+        .where(F.col(PARTITION_COLUMN).cast("string").isin(wanted))
+        .where(F.col("hour").isin(*parameters.hours))
+        .groupBy(PARTITION_COLUMN, "distance_band")
+        .agg(F.sum(MATRIX_MEASURES[OD_MATRIX]).cast("long").alias("trips"))
+        .toPandas()
+    )
+    totals: dict[str, dict[str, int]] = {day: {} for day in wanted}
+    for row in frame.itertuples(index=False):
+        day = getattr(row, PARTITION_COLUMN)
+        key = day.isoformat() if hasattr(day, "isoformat") else str(day)
+        totals.setdefault(key, {})[str(row.distance_band)] = int(row.trips)
+    return totals
+
+
+def read_exposures(
+    session: SparkSession,
+    *,
+    assignment: Path,
+    orders: Path,
+    parameters: ValidateFlowsStageParameters,
+) -> dict[str, dict[str, int]]:
+    """Each day's two exposures: valid trips, and tracks that entered any region.
+
+    One denominator per matrix, matching what the matrix counts. `flow_od` counts
+    trips, so a day with fewer trips recorded has less `flow_od` for reasons that
+    have nothing to do with where people rode; `flow_channel` counts tracks
+    crossing a region boundary, so its denominator is the tracks that got as far
+    as one region.
+    """
+    wanted = [day.isoformat() for day in parameters.dates]
+    trips = (
+        session.read.parquet(str(orders / ORDER_TABLE))
+        .where(F.col(PARTITION_COLUMN).cast("string").isin(wanted))
+        .where("is_valid")
+        .groupBy(PARTITION_COLUMN)
+        .agg(F.count(F.lit(1)).cast("long").alias("valid_trips"))
+    )
+    tracks = (
+        session.read.parquet(str(assignment / TRACK_REGION_TABLE))
+        .where(F.col(PARTITION_COLUMN).cast("string").isin(wanted))
+        .groupBy(PARTITION_COLUMN)
+        .agg(
+            F.countDistinct("TRACK_ID").cast("long").alias("tracks_with_visits")
+        )
+    )
+    frame = trips.join(tracks, PARTITION_COLUMN, "outer").toPandas()
+    exposures: dict[str, dict[str, int]] = {
+        day: {"valid_trips": 0, "tracks_with_visits": 0} for day in wanted
+    }
+    for row in frame.itertuples(index=False):
+        day = getattr(row, PARTITION_COLUMN)
+        key = day.isoformat() if hasattr(day, "isoformat") else str(day)
+        exposures[key] = {
+            "valid_trips": _as_number(row.valid_trips),
+            "tracks_with_visits": _as_number(row.tracks_with_visits),
+        }
+    return exposures
+
+
+def _as_number(value: object) -> int:
+    """A missing or absent aggregate is zero exposure, not a crash.
+
+    An outer join over a day whose upstream partition exists but holds no rows
+    comes back as a null, and `int(nan)` would take the whole run down over a day
+    that simply had nothing in it.
+    """
+    if value is None:
+        return 0
+    number = float(value)
+    return 0 if math.isnan(number) else int(number)
+
+
+def read_upstream_deviations(
+    session: SparkSession,
+    *,
+    trajectory: Path,
+    assignment: Path,
+    parameters: ValidateFlowsStageParameters,
+) -> dict[str, dict[str, float]]:
+    """The three upstream deviation numbers per day, re-measured this run.
+
+    Point retention comes off the split stage's own `tracks` table rather than
+    its funnel, so it is a count of bytes on disk rather than a quotation of
+    another stage's summary. The unassigned-gap cuts do come from the
+    `assign-regions` funnel, and deliberately: a gap at the very end of a piece
+    is a cut with no following visit to mark, so counting `gap_before` in
+    `track_regions` would report fewer cuts than the number `assign-regions`
+    published, and two spellings of one count is the thing this stage exists to
+    avoid.
+    """
+    wanted = [day.isoformat() for day in parameters.dates]
+    points = (
+        session.read.parquet(str(trajectory / TRACK_TABLE))
+        .where(F.col(PARTITION_COLUMN).cast("string").isin(wanted))
+        .groupBy(PARTITION_COLUMN)
+        .agg(
+            F.sum("points").cast("long").alias("raw_points"),
+            F.sum(F.when(F.col("is_valid"), F.col("points")).otherwise(F.lit(0)))
+            .cast("long")
+            .alias("valid_points"),
+        )
+        .toPandas()
+    )
+    cut_stage = AssignRegionsStageParameters().funnel_stage_names[2]
+    cuts = (
+        session.read.parquet(
+            str(assignment / funnel_table_name(ASSIGN_REGIONS_STAGE))
+        )
+        .where(F.col(PARTITION_COLUMN).cast("string").isin(wanted))
+        .where(F.col("stage_name") == F.lit(cut_stage))
+        .groupBy(PARTITION_COLUMN)
+        .agg(
+            F.sum("rejected").cast("long").alias("cuts"),
+            F.sum("entered").cast("long").alias("candidate_visits"),
+        )
+        .toPandas()
+    )
+    fallbacks = (
+        session.read.parquet(str(assignment / ORDER_TRIP_REGION_TABLE))
+        .where(F.col(PARTITION_COLUMN).cast("string").isin(wanted))
+        .groupBy(PARTITION_COLUMN)
+        .agg(
+            F.count(F.lit(1)).cast("long").alias("trips"),
+            F.sum(F.col("unlock_is_fallback").cast("long")).alias("unlock_fallback"),
+            F.sum(F.col("lock_is_fallback").cast("long")).alias("lock_fallback"),
+        )
+        .toPandas()
+    )
+    by_day: dict[str, dict[str, float]] = {day: {} for day in wanted}
+    for frame in (points, cuts, fallbacks):
+        for row in frame.itertuples(index=False):
+            day = getattr(row, PARTITION_COLUMN)
+            key = day.isoformat() if hasattr(day, "isoformat") else str(day)
+            by_day.setdefault(key, {}).update(
+                {
+                    name: float(_as_number(value))
+                    for name, value in zip(frame.columns, row, strict=True)
+                    if name != PARTITION_COLUMN
+                }
+            )
+    for day, values in by_day.items():
+        raw = values.get("raw_points", 0.0)
+        endpoints = 2.0 * values.get("trips", 0.0)
+        fell_back = values.get("unlock_fallback", 0.0) + values.get(
+            "lock_fallback", 0.0
+        )
+        by_day[day] = {
+            **values,
+            "raw_points": raw,
+            "candidate_visits": values.get("candidate_visits", 0.0),
+            "unassigned_gap_cuts": values.get("cuts", 0.0),
+            "order_endpoints": endpoints,
+            "point_retention_rate": (
+                values.get("valid_points", 0.0) / raw if raw > 0 else None
+            ),
+            "order_fallback_share": (
+                fell_back / endpoints if endpoints > 0 else None
+            ),
+        }
+    return by_day
+
+
+def read_sequence_tables(
+    session: SparkSession,
+    *,
+    sequences: Path,
+    parameters: ValidateFlowsStageParameters,
+) -> tuple[dict[str, dict[tuple[int, ...], tuple[int, int]]], dict[str, int]]:
+    """The mined pattern sets by scope, and each day's sequence count.
+
+    The merged `clear-days` scope is read as mined, not rebuilt as a union of the
+    daily scopes: it was mined on the merged library against the merged
+    threshold, so it holds patterns no single day reaches, and a union would be a
+    different set answering a different question. The per-day sequence counts are
+    the denominators of the uniform relative floor and come from
+    `track_sequences`, one row per sequence.
+    """
+    wanted = [day.isoformat() for day in parameters.dates]
+    pattern_rows = (
+        session.read.parquet(str(sequences / SEQUENCE_PATTERN_TABLE))
+        .select("scope", "pattern", "support", "contiguous_support")
+        .toPandas()
+    )
+    patterns: dict[str, dict[tuple[int, ...], tuple[int, int]]] = {}
+    for row in pattern_rows.itertuples(index=False):
+        patterns.setdefault(str(row.scope), {})[
+            tuple(int(region) for region in row.pattern)
+        ] = (int(row.support), int(row.contiguous_support))
+    library = (
+        session.read.parquet(str(sequences / TRACK_SEQUENCE_TABLE))
+        .where(F.col(PARTITION_COLUMN).cast("string").isin(wanted))
+        .groupBy(PARTITION_COLUMN)
+        .agg(F.count(F.lit(1)).cast("long").alias("sequences"))
+        .toPandas()
+    )
+    counts = {day: 0 for day in wanted}
+    for row in library.itertuples(index=False):
+        day = getattr(row, PARTITION_COLUMN)
+        key = day.isoformat() if hasattr(day, "isoformat") else str(day)
+        counts[key] = int(row.sequences)
+    return patterns, counts
+
+
+def consistency_sort_key() -> tuple[Column, ...]:
+    """`(family, metric, matrix, left, right, distance_band, k)`, missing locators first."""
+    return (
+        F.col("family").asc(),
+        F.col("metric").asc(),
+        F.col("matrix").asc_nulls_first(),
+        F.col("left").asc_nulls_first(),
+        F.col("right").asc_nulls_first(),
+        F.col("distance_band").asc_nulls_first(),
+        F.col("k").asc_nulls_first(),
+    )
+
+
+def consistency_frame(
+    session: SparkSession, records: Sequence[Mapping[str, object]]
+) -> DataFrame:
+    return session.createDataFrame(
+        _tuples(records, FLOW_CONSISTENCY_COLUMNS), _CONSISTENCY
+    )
+
+
+def write_consistency_table(
+    frame: DataFrame, output_root: Path, overwrite: bool
+) -> Path:
+    """Write `flow_consistency` as one sorted file. No partition: it has no date.
+
+    `left` and `right` name the two sides of every comparison, and one of them is
+    regularly `clear-days`, which is not a date. Partitioning by anything here
+    would mean inventing a column that no row of a merged comparison could fill
+    honestly.
+    """
+    path = flow_consistency_table_path(output_root)
+    (
+        frame.select(*FLOW_CONSISTENCY_COLUMNS)
+        .repartition(1)
+        .sortWithinPartitions(*consistency_sort_key())
+        .write.mode("overwrite" if overwrite else "errorifexists")
+        .parquet(str(path))
+    )
+    return path
 
 
 def significance_sort_key() -> tuple[Column, ...]:
@@ -938,18 +2167,39 @@ def significance_records(
     return [*rows, *stable], audits
 
 
+@dataclass(frozen=True, slots=True)
+class FlowTables:
+    """The three tables this stage writes, and where they went."""
+
+    significance: DataFrame
+    audit: DataFrame
+    consistency: DataFrame
+    significance_path: Path
+    audit_path: Path
+    consistency_path: Path
+
+
 def write_flow_tables(
     session: SparkSession,
     rows: Sequence[Mapping[str, object]],
     audits: Sequence[Mapping[str, object]],
+    consistency: Sequence[Mapping[str, object]],
     output_root: Path,
     overwrite: bool,
-) -> tuple[DataFrame, DataFrame, Path, Path]:
-    """Both tables, kept as DataFrames so the digest reads what was written."""
+) -> FlowTables:
+    """All three tables, kept as DataFrames so the digest reads what was written."""
     significance = significance_frame(session, rows).persist()
     audit = null_audit_frame(session, audits).persist()
-    significance_path = write_significance_table(
-        significance, output_root, overwrite
+    consistency_table = consistency_frame(session, consistency).persist()
+    return FlowTables(
+        significance=significance,
+        audit=audit,
+        consistency=consistency_table,
+        significance_path=write_significance_table(
+            significance, output_root, overwrite
+        ),
+        audit_path=write_null_audit_table(audit, output_root, overwrite),
+        consistency_path=write_consistency_table(
+            consistency_table, output_root, overwrite
+        ),
     )
-    audit_path = write_null_audit_table(audit, output_root, overwrite)
-    return significance, audit, significance_path, audit_path

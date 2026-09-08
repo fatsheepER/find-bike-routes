@@ -12,42 +12,74 @@ from __future__ import annotations
 
 import json
 import shutil
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 
-from find_bike_routes.config import ValidateFlowsStageParameters
+from find_bike_routes.config import (
+    RegionSequencesStageParameters,
+    ValidateFlowsStageParameters,
+)
 from find_bike_routes.regions import REGION_CELL_COLUMNS
 from find_bike_routes.runs import digest_table
 from find_bike_routes.validation import (
     CHANNEL_MATRIX,
+    CROSS_DAY_FAMILY,
+    FAMILIES,
+    FLOW_CONSISTENCY_COLUMNS,
     FLOW_SIGNIFICANCE_COLUMNS,
+    MERGED_SCOPE,
     MatrixNull,
     NULL_AUDIT_COLUMNS,
     OD_MATRIX,
+    RAIN_DAY_FAMILY,
+    SEQUENCE_FAMILY,
+    SEQUENCE_NO_NULL_MODEL_NOTE,
     STABLE_SCOPE,
+    band_ratio_summary,
     benjamini_hochberg,
+    consistency_records,
+    consistency_sort_order,
+    cosine_similarity,
+    coverage,
+    cross_day_records,
     daily_significance,
     dense_matrix,
     endpoint_permutation_moments,
     endpoint_permutation_sample,
     enumerate_scopes,
+    exposure_normalised_ratio,
+    filtered_patterns,
+    jaccard,
     margin_deviation,
     moment_deviations,
     null_rng,
     null_sd_with_floor,
+    off_diagonal,
+    pair_pearson_log1p,
+    pair_spearman,
+    rain_day_records,
+    relative_support_floor,
     replicate_statistics,
     run_null_model,
+    sequence_records,
+    share_vector,
     stable_significance,
     support_probabilities,
     support_strength_moments,
     support_strength_sample,
+    top_contiguous_patterns,
+    top_pairs,
+    union_pair_vectors,
 )
 from support import (
     ARTIFACTS_ROOT,
     FIXTURE_DATE,
     ORDER_FIXTURE,
+    read_flow_consistency,
     read_flow_significance,
     read_null_audit,
     read_region_cells,
@@ -541,6 +573,490 @@ def test_the_stable_scope_needs_the_whole_clear_day_set_in_the_run():
 
 
 # --------------------------------------------------------------------------- #
+# Cross-day consistency
+# --------------------------------------------------------------------------- #
+
+
+def test_union_zero_fill_keeps_a_pair_that_only_one_day_saw():
+    """A pair carrying flow on one day and none on the other is the evidence.
+
+    An intersection would drop that pair entirely and report the correlation of
+    whatever survived, which is the one reading the cross-day claim must not have.
+    """
+    left = {(1, 2): 300, (2, 3): 10}
+    right = {(2, 3): 12, (3, 4): 8}
+
+    pairs, first, second = union_pair_vectors(left, right)
+
+    assert pairs == ((1, 2), (2, 3), (3, 4))
+    assert list(first) == [300.0, 10.0, 0.0]
+    assert list(second) == [0.0, 12.0, 8.0]
+    rho, count = pair_spearman(left, right)
+    assert count == 3
+    assert rho is not None
+
+
+def test_spearman_is_exactly_unchanged_by_scaling_a_whole_day():
+    """Which is why the cross-day family is not exposure-normalised.
+
+    Multiplying one day by a constant is what a difference in exposure looks
+    like, and a rank correlation cannot see it at all — so dividing by the day's
+    trips would move no number here and would only suggest the coefficient had
+    been corrected for something.
+    """
+    left = {(1, 2): 40, (2, 3): 12, (3, 1): 5, (1, 4): 1, (4, 2): 27}
+    right = {(1, 2): 30, (2, 3): 20, (3, 1): 4, (2, 4): 9, (4, 2): 15}
+    scaled = {pair: count * 7 for pair, count in right.items()}
+
+    assert pair_spearman(left, right) == pair_spearman(left, scaled)
+    assert pair_spearman(left, {pair: count * 1_000 for pair, count in right.items()})[
+        0
+    ] == pair_spearman(left, right)[0]
+
+
+def test_log1p_pearson_is_scale_free_on_a_shared_support_and_not_on_a_zero_filled_one():
+    """The secondary coefficient is only *approximately* scale-free, and here is why.
+
+    `log(c·y) = log c + log y` is an additive shift that Pearson ignores, so on a
+    support both days share the coefficient barely moves. But the cross-day
+    口径 is the zero-filled **union**, and `log1p(0) = 0` is an anchor that does
+    not shift with `c`: scaling one day therefore stretches the gap between its
+    present pairs and its absent ones, and the coefficient does move. That is a
+    property of the 口径, not a defect — a pair present on one day and absent on
+    the other is the evidence — and it is why Spearman leads and this one follows.
+    """
+    shared_left = {(1, 2): 400, (2, 3): 120, (3, 1): 50, (1, 4): 310, (4, 2): 270}
+    shared_right = {(1, 2): 300, (2, 3): 200, (3, 1): 40, (1, 4): 90, (4, 2): 150}
+    base = pair_pearson_log1p(shared_left, shared_right)[0]
+
+    for factor in (2, 7, 100):
+        scaled = {pair: count * factor for pair, count in shared_right.items()}
+        assert pair_pearson_log1p(shared_left, scaled)[0] == pytest.approx(
+            base, abs=0.005
+        )
+
+    disjoint_right = {**shared_right, (9, 9): 200}
+    del disjoint_right[(1, 4)]
+    with_zeros = pair_pearson_log1p(shared_left, disjoint_right)[0]
+    stretched = pair_pearson_log1p(
+        shared_left, {pair: count * 100 for pair, count in disjoint_right.items()}
+    )[0]
+    assert with_zeros != pytest.approx(stretched, abs=0.005)
+
+
+def test_topk_jaccard_on_a_hand_worked_example():
+    left = {(1, 2): 100, (2, 3): 90, (3, 4): 80, (4, 5): 1}
+    right = {(1, 2): 70, (2, 3): 60, (5, 6): 50, (6, 7): 2}
+
+    assert top_pairs(left, 3) == {(1, 2), (2, 3), (3, 4)}
+    assert top_pairs(right, 3) == {(1, 2), (2, 3), (5, 6)}
+    # Two shared out of four distinct.
+    assert jaccard(top_pairs(left, 3), top_pairs(right, 3)) == (0.5, 4)
+    # K larger than either side takes everything, so the union is all six distinct
+    # pairs and the two shared ones are still the only overlap.
+    assert jaccard(top_pairs(left, 50), top_pairs(right, 50)) == (2 / 6, 6)
+
+
+def test_top_pairs_break_ties_on_the_pair_and_not_on_read_order():
+    counts = {(3, 1): 5, (1, 2): 5, (2, 9): 5, (9, 9): 1}
+    reversed_counts = dict(reversed(list(counts.items())))
+
+    assert top_pairs(counts, 2) == top_pairs(reversed_counts, 2) == {(1, 2), (2, 9)}
+
+
+def test_cross_day_covers_every_clear_pair_both_k_and_one_row_per_edge_weekday():
+    days = [day.isoformat() for day in PARAMETERS.dates]
+    counts = {
+        matrix: {day: dict(source) for day in days}
+        for matrix, source in (
+            (OD_MATRIX, OD_COUNTS),
+            (CHANNEL_MATRIX, CHANNEL_COUNTS),
+        )
+    }
+
+    records = cross_day_records(counts, PARAMETERS)
+
+    for matrix in (OD_MATRIX, CHANNEL_MATRIX):
+        scoped = [row for row in records if row["matrix"] == matrix]
+        pairs = {
+            (row["left"], row["right"])
+            for row in scoped
+            if row["right"] != MERGED_SCOPE
+        }
+        assert len(pairs) == 6
+        assert all(left in CLEAR_DAYS and right in CLEAR_DAYS for left, right in pairs)
+        merged = {row["left"] for row in scoped if row["right"] == MERGED_SCOPE}
+        assert merged == set(days)
+        assert {
+            row["k"] for row in scoped if row["metric"] == "topk_jaccard"
+        } == set(PARAMETERS.cross_day_topk)
+    # Monday and Friday occur once in the window, so they are described and never
+    # tested: one row each, no matrix, and a sample count of one.
+    weekday = [row for row in records if row["metric"] == "weekday_samples"]
+    assert [row["left"] for row in weekday] == ["2020-12-21", "2020-12-25"]
+    assert [row["right"] for row in weekday] == ["周一", "周五"]
+    assert all(row["matrix"] is None and row["n"] == 1 for row in weekday)
+
+
+def test_cross_day_leaves_the_diagonal_out_of_the_comparison():
+    """The self-loop is not a flow between regions, so it is not a corridor either.
+
+    It carries about 29% of `flow_od`, so leaving it in would make Top-K a
+    ranking of which regions are large. The rain-day family reports it on a row
+    of its own instead.
+    """
+    assert off_diagonal(OD_COUNTS) == {
+        pair: count for pair, count in OD_COUNTS.items() if pair[0] != pair[1]
+    }
+    days = [day.isoformat() for day in PARAMETERS.dates]
+    with_loops = {OD_MATRIX: {day: dict(OD_COUNTS) for day in days}}
+    without = {OD_MATRIX: {day: off_diagonal(OD_COUNTS) for day in days}}
+
+    assert cross_day_records(with_loops, PARAMETERS) == cross_day_records(
+        without, PARAMETERS
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Rain-day comparison
+# --------------------------------------------------------------------------- #
+
+
+def test_exposure_normalised_ratio_divides_before_it_averages():
+    """Halving the data with the exposure halved reports no change at all.
+
+    Which is the whole point: 12-23 kept 71.5% of its points upstream, so a ratio
+    of raw totals would report the missing data as missing riders.
+    """
+    clear_totals = {day: 1_000.0 for day in CLEAR_DAYS}
+    clear_exposures = {day: 100.0 for day in CLEAR_DAYS}
+
+    assert exposure_normalised_ratio(
+        rain_total=500.0,
+        rain_exposure=50.0,
+        clear_totals=clear_totals,
+        clear_exposures=clear_exposures,
+    ) == pytest.approx(1.0)
+    # Same exposure, less flow: now it is a real drop.
+    assert exposure_normalised_ratio(
+        rain_total=500.0,
+        rain_exposure=100.0,
+        clear_totals=clear_totals,
+        clear_exposures=clear_exposures,
+    ) == pytest.approx(0.5)
+    assert (
+        exposure_normalised_ratio(
+            rain_total=500.0,
+            rain_exposure=0.0,
+            clear_totals=clear_totals,
+            clear_exposures=clear_exposures,
+        )
+        is None
+    )
+
+
+def test_share_vectors_are_zero_filled_over_the_union():
+    rain = {(1, 2): 3, (2, 3): 1}
+    clear = {(2, 3): 2, (3, 4): 2}
+
+    assert share_vector(rain) == {(1, 2): 0.75, (2, 3): 0.25}
+    # Cosine is taken over the union, so the pair missing on one side pulls the
+    # similarity down instead of being dropped from the comparison.
+    similarity = cosine_similarity(share_vector(rain), share_vector(clear))
+    assert similarity is not None
+    assert similarity < 1.0
+    assert cosine_similarity(share_vector(rain), share_vector(rain)) == pytest.approx(
+        1.0
+    )
+
+
+def test_band_ratio_summary_reports_the_spread_and_names_the_furthest_band():
+    bands = PARAMETERS.distance_bands
+    ratios = {bands[0]: 0.9, bands[1]: 1.0, bands[2]: 1.4}
+
+    spread, worst, deviation = band_ratio_summary(ratios)
+
+    mean = (0.9 + 1.0 + 1.4) / 3
+    assert spread == pytest.approx((1.4 - 0.9) / mean)
+    assert worst == bands[2]
+    assert deviation == pytest.approx(abs(1.4 - mean) / mean)
+    # Three ratios on one constant: proportional shrinkage, nothing to name.
+    flat = {band: 0.4 for band in bands}
+    assert band_ratio_summary(flat)[0] == pytest.approx(0.0)
+
+
+def test_rain_day_family_holds_four_things_including_the_upstream_deviations():
+    days = [day.isoformat() for day in PARAMETERS.dates]
+    counts = {
+        OD_MATRIX: {day: dict(OD_COUNTS) for day in days},
+        CHANNEL_MATRIX: {day: dict(CHANNEL_COUNTS) for day in days},
+    }
+    band_totals = {
+        day: {band: 10 * (index + 1) for index, band in enumerate(PARAMETERS.distance_bands)}
+        for day in days
+    }
+    exposures = {
+        day: {"valid_trips": 100, "tracks_with_visits": 50} for day in days
+    }
+    deviations = {
+        RAIN_DAY: {
+            "raw_points": 213_733.0,
+            "valid_points": 152_776.0,
+            "point_retention_rate": 152_776 / 213_733,
+            "unassigned_gap_cuts": 8.0,
+            "candidate_visits": 12_000.0,
+            "order_fallback_share": 0.0141,
+            "order_endpoints": 36_986.0,
+        }
+    }
+
+    records = rain_day_records(
+        counts, band_totals, exposures, deviations, PARAMETERS
+    )
+
+    assert {row["left"] for row in records} == {RAIN_DAY}
+    ratios = [
+        row for row in records if row["metric"] == "exposure_normalised_total_ratio"
+    ]
+    # Three bands plus `all` on the OD matrix; the channel matrix has no distance
+    # concept and gets `all` alone.
+    assert {
+        row["distance_band"] for row in ratios if row["matrix"] == OD_MATRIX
+    } == {*PARAMETERS.distance_bands, PARAMETERS.all_bands_label}
+    assert [
+        row["distance_band"] for row in ratios if row["matrix"] == CHANNEL_MATRIX
+    ] == [PARAMETERS.all_bands_label]
+    assert {row["metric"] for row in records} >= {
+        "off_diagonal_share_spearman",
+        "off_diagonal_share_cosine",
+        "self_loop_share_ratio",
+        "band_ratio_spread",
+        "band_ratio_max_deviation",
+    }
+    # The three upstream deviation numbers are rows of this family, not a footnote:
+    # they are the competing explanation for every ratio above them.
+    upstream = {
+        row["metric"]: row
+        for row in records
+        if row["metric"]
+        in {"point_retention_rate", "unassigned_gap_cuts", "order_fallback_share"}
+    }
+    assert len(upstream) == 3
+    assert upstream["point_retention_rate"]["value"] == pytest.approx(0.7148, abs=1e-4)
+    assert upstream["point_retention_rate"]["n"] == 213_733
+    assert upstream["unassigned_gap_cuts"]["value"] == 8.0
+    assert all(row["matrix"] is None for row in upstream.values())
+
+
+def test_rain_day_family_is_empty_when_the_run_skips_the_rain_day():
+    clear_only = replace(PARAMETERS, dates=PARAMETERS.clear_days)
+
+    assert rain_day_records({}, {}, {}, {}, clear_only) == []
+
+
+# --------------------------------------------------------------------------- #
+# Sequence overlap
+# --------------------------------------------------------------------------- #
+
+
+def test_pattern_set_jaccard_and_coverage_on_a_hand_worked_example():
+    left = {(1, 2): (30, 25), (2, 3): (20, 18), (1, 2, 3): (12, 10)}
+    right = {(1, 2): (40, 38), (2, 3): (35, 30), (4, 5): (11, 9)}
+
+    # Two shared out of four distinct.
+    assert jaccard(set(left), set(right)) == (0.5, 4)
+    # Coverage is not symmetric, and that is the point: "how much of this day is
+    # in the merged set" is a different question from "how much do they share".
+    assert coverage(set(left), set(right)) == (2 / 3, 3)
+    assert coverage(set(right), set(left)) == (2 / 3, 3)
+    assert coverage(set(), set(right)) == (None, 0)
+
+
+def test_top_contiguous_patterns_rank_on_contiguous_support():
+    patterns = {
+        (1, 2): (100, 5),
+        (2, 3): (40, 39),
+        (3, 4): (40, 38),
+        (4, 5): (10, 9),
+    }
+
+    # The heaviest pattern by plain support is held together by containment, not
+    # by adjacency, so it is not a corridor and does not lead the ranking.
+    assert top_contiguous_patterns(patterns, 2) == {(2, 3), (3, 4)}
+    assert top_contiguous_patterns(dict(reversed(list(patterns.items()))), 2) == {
+        (2, 3),
+        (3, 4),
+    }
+
+
+def test_relative_floor_is_ceiling_and_matches_the_five_recorded_days():
+    """`ceil(0.003 × 当日序列条数)` on the five days the run library recorded.
+
+    All five land above the frozen absolute floor of 10, so the uniform relative
+    bar only ever removes patterns from the mined table and never asks for one it
+    does not hold. That compatibility is what makes it usable as a post-hoc
+    filter rather than a reason to re-mine.
+    """
+    sequences = {
+        "2020-12-21": 9_921,
+        "2020-12-22": 10_729,
+        "2020-12-23": 3_583,
+        "2020-12-24": 16_779,
+        "2020-12-25": 10_374,
+    }
+    ratio = PARAMETERS.sequence_relative_floor
+
+    floors = [relative_support_floor(count, ratio) for count in sequences.values()]
+
+    assert floors == [30, 33, 11, 51, 32]
+    assert all(floor >= RegionSequencesStageParameters().mining_min_count_floor for floor in floors)
+    # A ceiling, not a rounding: 0.003 × 3,583 is 10.749 and the bar is 11.
+    assert relative_support_floor(3_583, ratio) == 11
+    assert relative_support_floor(0, ratio) == 0
+
+
+def test_sequence_family_reports_both_regimes_and_leaves_the_mined_table_alone():
+    days = [day.isoformat() for day in PARAMETERS.dates]
+    mined = {
+        MERGED_SCOPE: {(1, 2): (400, 380), (2, 3): (300, 280), (1, 2, 3): (120, 100)},
+        **{day: {(1, 2): (100, 90), (2, 3): (5, 4)} for day in days},
+    }
+    frozen = {scope: dict(patterns) for scope, patterns in mined.items()}
+    sequences = {day: 1_000 for day in days}
+
+    records = sequence_records(mined, sequences, PARAMETERS)
+
+    # The filter is applied to a copy of the read table and never to the table.
+    assert mined == frozen
+    floors = [row for row in records if row["metric"] == "relative_support_floor"]
+    assert {row["left"] for row in floors} == {*days, MERGED_SCOPE}
+    assert all(row["value"] == 3.0 for row in floors if row["left"] in days)
+    metrics = {str(row["metric"]) for row in records}
+    assert metrics == {
+        "relative_support_floor",
+        "pattern_jaccard",
+        "pattern_coverage",
+        "contiguous_topk_jaccard",
+        "contiguous_topk_coverage",
+        "pattern_jaccard_relative_floor",
+        "pattern_coverage_relative_floor",
+        "contiguous_topk_jaccard_relative_floor",
+        "contiguous_topk_coverage_relative_floor",
+    }
+    assert {
+        row["k"] for row in records if "contiguous_topk" in str(row["metric"])
+    } == {PARAMETERS.contiguous_topk}
+    # A floor of 3 removes nothing at 1,000 sequences, so the recomputed overlap
+    # equals the as-mined one; a floor above the weaker pattern's support removes
+    # it and the coverage moves.
+    as_mined = {
+        (row["left"], row["right"]): row["value"]
+        for row in records
+        if row["metric"] == "pattern_jaccard"
+    }
+    refiltered = {
+        (row["left"], row["right"]): row["value"]
+        for row in records
+        if row["metric"] == "pattern_jaccard_relative_floor"
+    }
+    assert as_mined == refiltered
+    assert filtered_patterns(mined[days[0]], 10) == {(1, 2): (100, 90)}
+
+
+def test_sequence_family_carries_no_null_model_and_says_so():
+    """The one metric family with no null model, deliberately (spec §序列).
+
+    Randomising the sequence library removes every long pattern, so the overlap
+    comes back at ≈ 0 whatever the data said. The answer is known before the run,
+    which makes it not evidence — and an exception to "every metric gets a null
+    model" that is written nowhere reads as an omission, so the reason travels
+    into the run products as a string.
+    """
+    assert "零模型" in SEQUENCE_NO_NULL_MODEL_NOTE
+    assert "不构成证据" in SEQUENCE_NO_NULL_MODEL_NOTE
+
+
+# --------------------------------------------------------------------------- #
+# The long table
+# --------------------------------------------------------------------------- #
+
+
+def synthetic_consistency_records() -> list[dict[str, object]]:
+    days = [day.isoformat() for day in PARAMETERS.dates]
+    counts = {
+        OD_MATRIX: {day: dict(OD_COUNTS) for day in days},
+        CHANNEL_MATRIX: {day: dict(CHANNEL_COUNTS) for day in days},
+    }
+    band_totals = {
+        day: {band: 10 * (index + 1) for index, band in enumerate(PARAMETERS.distance_bands)}
+        for day in days
+    }
+    exposures = {day: {"valid_trips": 100, "tracks_with_visits": 50} for day in days}
+    deviations = {
+        RAIN_DAY: {
+            "raw_points": 213_733.0,
+            "valid_points": 152_776.0,
+            "point_retention_rate": 152_776 / 213_733,
+            "unassigned_gap_cuts": 8.0,
+            "candidate_visits": 12_000.0,
+            "order_fallback_share": 0.0141,
+            "order_endpoints": 36_986.0,
+        }
+    }
+    patterns = {
+        MERGED_SCOPE: {(1, 2): (400, 380), (2, 3): (300, 280)},
+        **{day: {(1, 2): (100, 90)} for day in days},
+    }
+    sequences = {day: 1_000 for day in days}
+    return consistency_records(
+        counts,
+        band_totals,
+        exposures,
+        deviations,
+        patterns,
+        sequences,
+        PARAMETERS,
+    )
+
+
+def test_flow_consistency_has_exactly_three_families_in_its_own_sort_order():
+    records = synthetic_consistency_records()
+
+    assert {row["family"] for row in records} == set(FAMILIES)
+    assert records == sorted(records, key=consistency_sort_order)
+    assert all(set(row) == set(FLOW_CONSISTENCY_COLUMNS) for row in records)
+
+
+def test_locator_columns_are_empty_where_they_do_not_apply():
+    """A locator that does not apply is null, never a stand-in value.
+
+    `matrix` on a sequence row or `k` on a correlation row would otherwise read as
+    a real coordinate and a `groupBy` over the table would grow a phantom group.
+    """
+    records = synthetic_consistency_records()
+
+    for row in records:
+        if row["family"] == SEQUENCE_FAMILY:
+            assert row["matrix"] is None
+            assert row["distance_band"] is None
+        if row["metric"] in {"spearman", "pearson_log1p"}:
+            assert row["k"] is None
+            assert row["distance_band"] is None
+        if row["metric"] == "topk_jaccard":
+            assert row["k"] in PARAMETERS.cross_day_topk
+    # `distance_band` is only ever set where a band exists, and `all` is the sum
+    # rather than "not applicable", so it is spelled out instead of left null.
+    bands = {
+        row["distance_band"] for row in records if row["distance_band"] is not None
+    }
+    assert bands == {*PARAMETERS.distance_bands, PARAMETERS.all_bands_label}
+
+
+def test_consistency_records_are_the_same_on_a_second_pass():
+    assert synthetic_consistency_records() == synthetic_consistency_records()
+
+
+# --------------------------------------------------------------------------- #
 # CLI
 # --------------------------------------------------------------------------- #
 
@@ -548,17 +1064,31 @@ PARTITIONED_INPUTS = {
     "flow_od": "profiles",
     "flow_channel": "profiles",
     "track_regions": "assignment",
+    "order_trip_regions": "assignment",
+    "stage_counts_assign_regions": "assignment",
     "order_trips": "orders",
+    "tracks": "trajectory",
+    "track_sequences": "sequences",
 }
+UNPARTITIONED_INPUTS = {"sequence_patterns": "sequences"}
+INPUT_ROOTS = (
+    "profiles",
+    "assignment",
+    "orders",
+    "regions",
+    "trajectory",
+    "sequences",
+)
 
 
 def validate_input_dirs(tmp_path: Path) -> dict[str, Path]:
-    roots = {
-        name: tmp_path / name
-        for name in ("profiles", "assignment", "orders", "regions")
-    }
+    roots = {name: tmp_path / name for name in INPUT_ROOTS}
     for table, root_name in PARTITIONED_INPUTS.items():
         (roots[root_name] / table / f"source_date={FIXTURE_DATE}").mkdir(parents=True)
+    for table, root_name in UNPARTITIONED_INPUTS.items():
+        path = roots[root_name] / table
+        path.mkdir(parents=True)
+        (path / "dummy").write_text("x", encoding="utf-8")
     for table in ("region_cells", "regions"):
         path = roots["regions"] / table
         path.mkdir(parents=True)
@@ -572,6 +1102,8 @@ def validate_args(roots: dict[str, Path], output: Path) -> tuple[str, ...]:
         "--assignment", str(roots["assignment"]),
         "--orders", str(roots["orders"]),
         "--regions", str(roots["regions"]),
+        "--trajectory", str(roots["trajectory"]),
+        "--sequences", str(roots["sequences"]),
         "--dates", FIXTURE_DATE,
         "--output", str(output),
         "--skip-data-contract",
@@ -584,7 +1116,11 @@ def validate_args(roots: dict[str, Path], output: Path) -> tuple[str, ...]:
         ("flow_od", "region-profiles"),
         ("flow_channel", "region-profiles"),
         ("track_regions", "assign-regions"),
+        ("order_trip_regions", "assign-regions"),
+        ("stage_counts_assign_regions", "assign-regions"),
         ("order_trips", "order-trips"),
+        ("tracks", "split-tracks"),
+        ("track_sequences", "region-sequences"),
     ],
 )
 def test_missing_daily_inputs_fail_before_spark_and_name_the_stage(
@@ -603,6 +1139,28 @@ def test_missing_daily_inputs_fail_before_spark_and_name_the_stage(
     assert FIXTURE_DATE in completed.stderr
     assert str(missing.parent) in completed.stderr
     assert stage in completed.stderr
+    assert "Java" not in completed.stderr
+
+
+def test_missing_pattern_table_fails_before_spark_and_names_region_sequences(tmp_path):
+    """`sequence_patterns` has a `scope` column instead of a date partition.
+
+    So it is checked for existence rather than per day, and the failure still has
+    to name the stage that produces it — the sequence overlap is a third of this
+    stage's table and cannot be computed without it.
+    """
+    roots = validate_input_dirs(tmp_path)
+    missing = roots["sequences"] / "sequence_patterns"
+    shutil.rmtree(missing)
+
+    completed = run_validate_flows_cli(
+        *validate_args(roots, tmp_path / "output"),
+        env={"JAVA_HOME": "/definitely/missing"},
+    )
+
+    assert completed.returncode == 1
+    assert str(missing) in completed.stderr
+    assert "region-sequences" in completed.stderr
     assert "Java" not in completed.stderr
 
 
@@ -792,7 +1350,136 @@ def test_fixture_params_and_digest_follow_the_contract(validate_flows_run):
 
 
 @pytest.mark.spark
+def test_fixture_writes_flow_consistency_with_its_schema_and_sort_key(
+    validate_flows_run,
+):
+    """One long table, three declared families, and the sort key as written.
+
+    The fixture is one day, so the clear-day pairs cannot be formed and the
+    merged sequence scope does not exist; the rain-day family only exists at all
+    because `--rain-date` points at that same day. Nothing here is an assertion
+    about a value — it is the schema, the vocabulary of `family` and `metric`,
+    the sort key and the null-locator rule.
+    """
+    table = read_flow_consistency(validate_flows_run.flow_consistency)
+
+    assert list(table.columns) == list(FLOW_CONSISTENCY_COLUMNS)
+    assert not table.empty
+    assert set(table["family"]) <= set(FAMILIES)
+    # Every family that could be formed on one day of fixture was formed.
+    assert set(table["family"]) == {CROSS_DAY_FAMILY, RAIN_DAY_FAMILY, SEQUENCE_FAMILY}
+    assert set(table["matrix"].dropna()) <= {OD_MATRIX, CHANNEL_MATRIX}
+    assert set(table["k"].dropna()) <= {
+        *PARAMETERS.cross_day_topk,
+        PARAMETERS.contiguous_topk,
+    }
+    assert set(table["distance_band"].dropna()) <= {
+        *PARAMETERS.distance_bands,
+        PARAMETERS.all_bands_label,
+    }
+    # (family, metric, matrix, left, right, distance_band, k), missing locators
+    # first — the same order `consistency_sort_order` puts the records in.
+    key = table.assign(
+        **{
+            column: table[column].fillna("")
+            for column in ("matrix", "left", "right", "distance_band")
+        },
+        rank=table["k"].fillna(-1),
+    )
+    assert key.equals(
+        key.sort_values(
+            [
+                "family",
+                "metric",
+                "matrix",
+                "left",
+                "right",
+                "distance_band",
+                "rank",
+            ],
+            kind="mergesort",
+        )
+    )
+    # Sequence rows are not about a matrix and correlation rows are not about a K,
+    # so those locators stay empty instead of carrying a stand-in.
+    sequence = table.loc[table["family"] == SEQUENCE_FAMILY]
+    assert sequence["matrix"].isna().all()
+    assert sequence["distance_band"].isna().all()
+    assert table.loc[table["metric"] == "spearman", "k"].isna().all()
+
+
+@pytest.mark.spark
+def test_fixture_consistency_records_the_sequence_null_model_exception(
+    validate_flows_run,
+):
+    """The exception to "every metric gets a null model" is in the run products.
+
+    Both halves of it: the parameters that define the post-hoc floor, and the
+    sentence saying why the sequence family has no null model. Without the second
+    one the gap reads as something this stage forgot to do.
+    """
+    params = json.loads(
+        (validate_flows_run.artifacts / "params.json").read_text(encoding="utf-8")
+    )
+    digest = json.loads(
+        (validate_flows_run.artifacts / "digest.json").read_text(encoding="utf-8")
+    )
+
+    assert params["parameters"]["sequence_relative_floor"] == 0.003
+    assert params["parameters"]["cross_day_topk"] == [50, 200]
+    assert params["parameters"]["contiguous_topk"] == 50
+    assert any(SEQUENCE_NO_NULL_MODEL_NOTE == note for note in params["notes"])
+    # The fixture points the rain day at the only day it has, which changes the
+    # 口径, so the run says so in capitals rather than quietly.
+    assert any("RAIN_DATE_OVERRIDDEN" in note for note in params["notes"])
+    observations = digest["observations"]["validate_flows"]["consistency"]
+    assert set(observations) >= {
+        *FAMILIES,
+        "rain_day_upstream",
+        "sequence_null_model",
+    }
+    assert observations["sequence_null_model"] == SEQUENCE_NO_NULL_MODEL_NOTE
+    # The pooled fallback share is the table's row; the two endpoints it pools are
+    # two different numbers, so they survive beside it.
+    upstream = observations["rain_day_upstream"]
+    assert set(upstream) >= {
+        "point_retention_rate",
+        "unassigned_gap_cuts",
+        "unlock_fallback_share",
+        "lock_fallback_share",
+        "raw_points",
+    }
+    assert digest["tables"]["flow_consistency"]["rows"] == len(
+        read_flow_consistency(validate_flows_run.flow_consistency)
+    )
+
+
+@pytest.mark.spark
+def test_fixture_point_retention_matches_the_split_tables(validate_flows_run):
+    """The rain-day point retention is re-measured, not quoted from elsewhere.
+
+    So the number in the table has to equal what the split stage's own `tracks`
+    table says, which is the only independent check available on a fixture whose
+    content is otherwise not asserted.
+    """
+    table = read_flow_consistency(validate_flows_run.flow_consistency)
+    tracks = pd.read_parquet(validate_flows_run.trajectory / "tracks")
+    row = table.loc[table["metric"] == "point_retention_rate"].iloc[0]
+
+    expected = tracks.loc[tracks["is_valid"], "points"].sum() / tracks["points"].sum()
+    assert row["value"] == pytest.approx(round(float(expected), 6))
+    assert row["n"] == int(tracks["points"].sum())
+
+
+@pytest.mark.spark
 def test_repeat_run_has_the_same_content_and_skip_marker(validate_flows_run, tmp_path):
+    """Two runs over the same fixture agree on all three tables' content digests.
+
+    `digest.json` carries a sha256 per table, so one equality here covers
+    `flow_significance`, `null_audit` and `flow_consistency` at once — including
+    the 100 null-model replicates and every driver-side ordering the consistency
+    table depends on.
+    """
     run_id = "test-validate-flows-repeat"
     artifacts = ARTIFACTS_ROOT / run_id
     shutil.rmtree(artifacts, ignore_errors=True)
@@ -801,7 +1488,10 @@ def test_repeat_run_has_the_same_content_and_skip_marker(validate_flows_run, tmp
         "--assignment", str(validate_flows_run.assignment),
         "--orders", str(validate_flows_run.orders),
         "--regions", str(validate_flows_run.regions),
+        "--trajectory", str(validate_flows_run.trajectory),
+        "--sequences", str(validate_flows_run.sequences),
         "--dates", FIXTURE_DATE,
+        "--rain-date", FIXTURE_DATE,
         "--output", str(tmp_path / "output"),
         "--run-id", run_id,
         "--skip-data-contract",

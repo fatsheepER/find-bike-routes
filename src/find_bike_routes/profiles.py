@@ -1003,6 +1003,16 @@ def spearman(left: pd.Series, right: pd.Series) -> float | None:
     return _correlation(left.rank(method="average"), right.rank(method="average"))
 
 
+def pearson(left: pd.Series, right: pd.Series) -> float | None:
+    """Linear correlation, rounded, or None when either side has nothing to correlate.
+
+    Public for the same reason `spearman` is: the cross-day comparison reports it
+    on `log1p` of the two matrices as the secondary coefficient, and one rounding
+    rule and one degenerate-input rule for both is the point.
+    """
+    return _correlation(left, right)
+
+
 def write_region_profile_tables(
     metrics: DataFrame,
     core: DataFrame,

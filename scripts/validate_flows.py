@@ -28,10 +28,38 @@ them, so a bigger `z` in `flow_channel` than in `flow_od` says nothing at all.
 `null_model` carries which construction judged each row.
 
 `clear-days-stable` runs no null model of its own: it is the AND of the four clear
-days' verdicts, so 12-23 has per-day rows only and never enters it. Every 口径
-parameter is fixed in code (ADR-0002); the flags here only choose which days to
-read, where to read and write them, how to name the run, and whether to replace
-what is already on disk.
+days' verdicts, so 12-23 has per-day rows only and never enters it.
+
+The same run also writes `flow_consistency`, one long table with three families
+of report metric. `cross-day` correlates the clear days with each other and each
+day with the clear-day merge, over the **union** of their region pairs with zeros
+filled in, and reports Top-K pair overlap at K = 50 and 200; Spearman leads and
+Pearson on `log1p` follows, and neither is exposure-normalised because scaling a
+whole day is what a difference in exposure looks like and a rank correlation
+cannot see it. The **pairwise** rows are the cross-day evidence: a clear day
+against the clear-day merge is compared against a total it is a quarter of, so
+those rows are autocorrelated by construction and only 12-23's is out of sample.
+Monday and Friday get one row each recording that the window holds a single
+instance of them, which is why no weekday effect is tested.
+`rain-day` compares 12-23 with the clear-day mean **after dividing by exposure** —
+valid trips for `flow_od`, tracks that entered a region for `flow_channel` — one
+row per distance band and one over all of them, plus the off-diagonal share
+agreement, the self-loop share, and the three upstream deviation numbers that are
+the competing explanation for all of it: 12-23 kept 71.5% of its points, cut
+sequences on unassigned gaps where the clear days cut none, and fell back on more
+order endpoints.
+
+**`sequence` carries no null model, and that is a decision rather than a gap.**
+Randomising the sequence library destroys every long pattern, so the overlap would
+come back at ≈ 0 whatever the data said — the answer is known before the run and
+is therefore not evidence. The uniform relative floor `ceil(0.003 × 当日序列条数)`
+is a *post-hoc filter* over the already-mined table and never a mining threshold:
+re-mining would void the six scopes `region-sequences` already recorded.
+
+Every 口径 parameter is fixed in code (ADR-0002); the flags here only choose which
+days to read, where to read and write them, how to name the run, and whether to
+replace what is already on disk. The one exception is `--rain-date`, an escape
+hatch for fixtures: a non-default value is recorded loudly in the run products.
 """
 
 from __future__ import annotations
@@ -57,11 +85,17 @@ from find_bike_routes.runs import (
 )
 from find_bike_routes.spark import build_session, ensure_java_runtime
 from find_bike_routes.validation import (
+    SEQUENCE_NO_NULL_MODEL_NOTE,
     STAGE,
+    consistency_records,
     enumerate_scopes,
     funnel_frame,
     pair_funnel_records,
+    read_band_totals,
+    read_exposures,
     read_flow_counts,
+    read_sequence_tables,
+    read_upstream_deviations,
     refuse_to_clobber,
     resolve_upstream,
     significance_records,
@@ -74,6 +108,8 @@ PROFILES_DIR = PROJECT_ROOT / "data/processed/region_profiles"
 ASSIGNMENT_DIR = PROJECT_ROOT / "data/processed/region_assignment"
 ORDERS_DIR = PROJECT_ROOT / "data/processed/orders"
 REGIONS_DIR = PROJECT_ROOT / "data/processed/regions"
+TRAJECTORY_DIR = PROJECT_ROOT / "data/processed/trajectory"
+SEQUENCES_DIR = PROJECT_ROOT / "data/processed/region_sequences"
 OUTPUT_DIR = PROJECT_ROOT / "data/processed/validation"
 ARTIFACTS_ROOT = PROJECT_ROOT / "artifacts" / "runs"
 PARAMETERS = ValidateFlowsStageParameters()
@@ -120,11 +156,15 @@ def run(args: argparse.Namespace) -> None:
                 if path.is_file()
             }
         )
-    parameters = replace(PARAMETERS, dates=tuple(args.dates))
+    parameters = replace(
+        PARAMETERS, dates=tuple(args.dates), rain_date=args.rain_date
+    )
     resolve_upstream(
         profiles=args.profiles,
         assignment=args.assignment,
         orders=args.orders,
+        trajectory=args.trajectory,
+        sequences=args.sequences,
         dates=parameters.dates,
     )
     refuse_to_clobber(args.output, args.overwrite)
@@ -136,6 +176,19 @@ def run(args: argparse.Namespace) -> None:
     )
     scopes, skipped = enumerate_scopes(parameters)
     notes = [skipped] if skipped else []
+    # The exception to "every metric gets a null model" has to be findable in the
+    # run products, or the next reader records it as a thing this stage forgot.
+    notes.append(SEQUENCE_NO_NULL_MODEL_NOTE)
+    if parameters.rain_date != PARAMETERS.rain_date:
+        notes.append(
+            f"RAIN_DATE_OVERRIDDEN: 雨天对照按 {parameters.rain_date.isoformat()} 做，"
+            f"默认是 {PARAMETERS.rain_date.isoformat()}；口径已改变（ADR-0002）"
+        )
+    if parameters.rain_date in parameters.clear_days:
+        notes.append(
+            f"雨天 {parameters.rain_date.isoformat()} 同时在晴天集里，"
+            f"rain-day 族因此是自比，比值恒为 1，不构成对照"
+        )
     ensure_java_runtime()
     run_dir = ARTIFACTS_ROOT / args.run_id
     spark_logs = run_dir / "spark-logs"
@@ -162,24 +215,55 @@ def run(args: argparse.Namespace) -> None:
             session, profiles=args.profiles, parameters=parameters
         )
         rows, audits = significance_records(counts, parameters)
-        significance, audit, significance_path, audit_path = write_flow_tables(
-            session, rows, audits, args.output, args.overwrite
+        band_totals = read_band_totals(
+            session, profiles=args.profiles, parameters=parameters
+        )
+        exposures = read_exposures(
+            session,
+            assignment=args.assignment,
+            orders=args.orders,
+            parameters=parameters,
+        )
+        deviations = read_upstream_deviations(
+            session,
+            trajectory=args.trajectory,
+            assignment=args.assignment,
+            parameters=parameters,
+        )
+        patterns, sequence_counts = read_sequence_tables(
+            session, sequences=args.sequences, parameters=parameters
+        )
+        consistency = consistency_records(
+            counts,
+            band_totals,
+            exposures,
+            deviations,
+            patterns,
+            sequence_counts,
+            parameters,
+        )
+        tables = write_flow_tables(
+            session, rows, audits, consistency, args.output, args.overwrite
         )
         funnel = funnel_frame(session, pair_funnel_records(rows, parameters))
         counts_path = write_funnel(funnel, args.output, STAGE, args.overwrite)
         write_validate_flows_digest(
             run_dir,
-            significance,
-            audit,
+            tables.significance,
+            tables.audit,
+            tables.consistency,
             funnel,
-            validate_flows_observations(rows, audits, parameters),
+            validate_flows_observations(
+                rows, audits, consistency, deviations, parameters
+            ),
             notes,
         )
     finally:
         session.stop()
 
     print(
-        f"wrote {significance_path}, {audit_path} and {counts_path} "
+        f"wrote {tables.significance_path}, {tables.audit_path}, "
+        f"{tables.consistency_path} and {counts_path} "
         f"({len(parameters.dates)} date partition(s), {len(scopes)} scope(s), "
         f"run-id {args.run_id})"
     )
@@ -204,7 +288,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--assignment",
         type=Path,
         default=ASSIGNMENT_DIR,
-        help="assign-regions output root holding track_regions",
+        help=(
+            "assign-regions output root holding track_regions, "
+            "order_trip_regions and its funnel"
+        ),
     )
     parser.add_argument(
         "--orders",
@@ -218,6 +305,31 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=REGIONS_DIR,
         help="regions output root holding region_cells and regions",
     )
+    parser.add_argument(
+        "--trajectory",
+        type=Path,
+        default=TRAJECTORY_DIR,
+        help="split-tracks output root holding tracks, read for point retention",
+    )
+    parser.add_argument(
+        "--sequences",
+        type=Path,
+        default=SEQUENCES_DIR,
+        help=(
+            "region-sequences output root holding sequence_patterns and "
+            "track_sequences"
+        ),
+    )
+    parser.add_argument(
+        "--rain-date",
+        type=parse_date,
+        default=PARAMETERS.rain_date,
+        help=(
+            "the day the rain-day family is taken on; for fixtures only, since it "
+            "changes the 口径 (ADR-0002). A non-default value is written into "
+            "params.json and the digest as a note"
+        ),
+    )
     parser.add_argument("--output", type=Path, default=OUTPUT_DIR)
     parser.add_argument(
         "--run-id",
@@ -228,7 +340,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--overwrite",
         action="store_true",
         help=(
-            "replace the two tables and the funnel this run produces; both tables "
+            "replace the three tables and the funnel this run produces; all three "
             "are written whole and hold only the scopes this run judged"
         ),
     )

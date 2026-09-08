@@ -479,24 +479,35 @@ class ValidateFlowsRun:
     output: Path
     flow_significance: Path
     null_audit: Path
+    flow_consistency: Path
     stage_counts: Path
     artifacts: Path
     profiles: Path
     assignment: Path
     orders: Path
     regions: Path
+    trajectory: Path
+    sequences: Path
 
 
 @pytest.fixture(scope="session")
 def validate_flows_run(
     region_profiles_run: RegionProfilesRun,
+    region_sequences_run: RegionSequencesRun,
     tmp_path_factory: pytest.TempPathFactory,
 ) -> Iterator[ValidateFlowsRun]:
-    """Judge the fixture's two flow matrices against their null models.
+    """Judge the fixture's two flow matrices and write all three tables.
 
     The fixture is one day of 20 bike ids, so the clear-day set cannot be formed
     and the run narrows itself to the single per-day scope; the assertions on it
     are schema, sort key, funnel, determinism and fail-fast, never content.
+
+    `--rain-date` points the rain-day family at the one day the fixture has. The
+    comparison it produces is a self-comparison and every ratio in it is 1 by
+    construction, which is exactly why nothing about its content is asserted —
+    but it does exercise the exposure and upstream-deviation reads, and without
+    the override the whole family would be absent from the fixture's table and
+    those reads would never run outside the real five-day acceptance.
     """
     output = tmp_path_factory.mktemp("validation") / "validation"
     artifacts = ARTIFACTS_ROOT / "test-validate-flows"
@@ -506,7 +517,10 @@ def validate_flows_run(
         "--assignment", str(region_profiles_run.assignment),
         "--orders", str(region_profiles_run.orders),
         "--regions", str(region_profiles_run.regions),
+        "--trajectory", str(region_profiles_run.trajectory),
+        "--sequences", str(region_sequences_run.output),
         "--dates", FIXTURE_DATE,
+        "--rain-date", FIXTURE_DATE,
         "--output", str(output),
         "--run-id", "test-validate-flows",
     )
@@ -516,12 +530,15 @@ def validate_flows_run(
             output=output,
             flow_significance=output / "flow_significance",
             null_audit=output / "null_audit",
+            flow_consistency=output / "flow_consistency",
             stage_counts=output / "stage_counts_validate_flows",
             artifacts=artifacts,
             profiles=region_profiles_run.output,
             assignment=region_profiles_run.assignment,
             orders=region_profiles_run.orders,
             regions=region_profiles_run.regions,
+            trajectory=region_profiles_run.trajectory,
+            sequences=region_sequences_run.output,
         )
     finally:
         shutil.rmtree(artifacts, ignore_errors=True)
