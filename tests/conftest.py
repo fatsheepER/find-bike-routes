@@ -4,7 +4,8 @@ A JVM start costs seconds, so each stage runs once per session over the committe
 fixture and the assertions read that run's products. Cases that need their own run —
 overwrite behaviour, refused arguments — pay for it themselves. The chain is
 split → match → order-trips → grid-flow → regions → assign-regions →
-region-context → region-profiles → region-sequences → validate-flows.
+region-context → region-profiles → region-sequences → validate-flows →
+validate-partitions.
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ from support import (
     run_region_profiles_cli,
     run_region_sequences_cli,
     run_validate_flows_cli,
+    run_validate_partitions_cli,
     write_fixture_district_labels,
 )
 
@@ -539,6 +541,77 @@ def validate_flows_run(
             regions=region_profiles_run.regions,
             trajectory=region_profiles_run.trajectory,
             sequences=region_sequences_run.output,
+        )
+    finally:
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+@dataclass(frozen=True)
+class ValidatePartitionsRun:
+    output: Path
+    partitions: Path
+    partition_similarity: Path
+    stage_counts: Path
+    artifacts: Path
+    grid_flow: Path
+    matching: Path
+    trajectory: Path
+    orders: Path
+    regions: Path
+
+
+@pytest.fixture(scope="session")
+def validate_partitions_run(
+    split_run: SplitRun,
+    regions_run: RegionsRun,
+    assign_regions_run: AssignRegionsRun,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[ValidatePartitionsRun]:
+    """Build the fixture's alternative partitions and score them against its freeze.
+
+    The fixture is one day of 20 bike ids, so no leave-one-day fold exists and
+    neither exposure-symmetric control can be cut: four of the five arms have
+    nothing to enumerate. `--arms rain-included` narrows the run to the one arm
+    that does — on a single day it merges that day and compares it with the
+    freeze cut from the same day, which is a self-comparison whose scores are ~1
+    by construction. That is exactly why the assertions on this run are schema,
+    partitioning, sort key, funnel, determinism and fail-fast, and never content;
+    what it does buy is the whole path — the element read, the community
+    detection, both tables and the run products — exercised outside the full
+    four-day acceptance.
+
+    It takes `assign_regions_run` to keep the chain in pipeline order; the stage
+    itself reads the freeze, the day links and the match points, not the
+    assignment.
+    """
+    del assign_regions_run
+    output = tmp_path_factory.mktemp("validation-partitions") / "validation"
+    artifacts = ARTIFACTS_ROOT / "test-validate-partitions"
+    shutil.rmtree(artifacts, ignore_errors=True)
+    completed = run_validate_partitions_cli(
+        "--grid-flow", str(regions_run.grid_flow),
+        "--matching", str(regions_run.matching),
+        "--trajectory", str(split_run.output),
+        "--orders", str(regions_run.orders),
+        "--regions", str(regions_run.output),
+        "--dates", FIXTURE_DATE,
+        "--arms", "rain-included",
+        "--output", str(output),
+        "--run-id", "test-validate-partitions",
+    )
+    assert completed.returncode == 0, completed.stderr
+    try:
+        yield ValidatePartitionsRun(
+            output=output,
+            partitions=output / "partitions",
+            partition_similarity=output / "partition_similarity",
+            stage_counts=output / "stage_counts_validate_partitions",
+            artifacts=artifacts,
+            grid_flow=regions_run.grid_flow,
+            matching=regions_run.matching,
+            trajectory=split_run.output,
+            orders=regions_run.orders,
+            regions=regions_run.output,
         )
     finally:
         shutil.rmtree(artifacts, ignore_errors=True)

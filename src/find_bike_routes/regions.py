@@ -348,9 +348,13 @@ def read_dated_table(
 
 def shuffle_link_weights(
     links: Sequence[tuple[object, object, float]],
-    seed: int,
+    seed: int | Sequence[int],
 ) -> list[tuple[object, object, float]]:
-    """Keep the directed link set, permute weights with a fresh Generator(seed)."""
+    """Keep the directed link set, permute weights with a fresh Generator(seed).
+
+    The seed may be a sequence so a caller that needs several independent
+    permutations can key each stream by name instead of by draw order.
+    """
     return _permute_weights(links, np.random.default_rng(seed))
 
 
@@ -367,6 +371,21 @@ def assignment_ami(
             [right[cell] for cell in shared],
         )
     )
+
+
+def median_region_width_m(
+    assignment: Mapping[Cell, int], cell_size_m: float
+) -> float:
+    """Side of the square with the median region's cell count. 0 for no regions.
+
+    The width, not the region count, is what a granularity comparison reads:
+    two partitions aligned to the same number of regions can still cut them at
+    very different sizes.
+    """
+    sizes = list(_cell_counts(assignment).values())
+    if not sizes:
+        return 0.0
+    return float(np.sqrt(np.median(sizes))) * cell_size_m
 
 
 def mean_pairwise_ami(
@@ -569,9 +588,10 @@ def _permute_weights(
     ]
 
 
-def _links_by_day(
+def links_by_day(
     cell_links: pd.DataFrame,
 ) -> dict[str, list[tuple[Cell, Cell, float]]]:
+    """One sorted link list per day, weights summed within the day."""
     if cell_links.empty:
         return {}
     grouped: dict[str, dict[tuple[Cell, Cell], float]] = defaultdict(
@@ -624,7 +644,7 @@ def _granularity_audit(
     parameters: RegionsStageParameters,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     audit = parameters.audit
-    day_links = _links_by_day(cell_links)
+    day_links = links_by_day(cell_links)
     days = sorted(day_links)
     rng = np.random.default_rng(audit.lattice_null_seed)
     null_links = {day: _permute_weights(day_links[day], rng) for day in days}
@@ -866,9 +886,6 @@ def _partition_stats(
 ) -> dict[str, object]:
     channel = _channel_stats(track_cells, match_points, assignment, parameters)
     sizes = list(_cell_counts(assignment).values())
-    median_width = (
-        float(np.sqrt(np.median(sizes))) * parameters.cell_size_m if sizes else 0.0
-    )
     crossing_share = (
         float(channel.tracks_crossing / channel.tracks_total)
         if channel.tracks_total
@@ -876,7 +893,7 @@ def _partition_stats(
     )
     return {
         "regions": len(sizes),
-        "median_width_m": median_width,
+        "median_width_m": median_region_width_m(assignment, parameters.cell_size_m),
         "od_self_loop_share": _od_self_loop_share(
             order_trips, assignment, parameters.cell_size_m
         ),

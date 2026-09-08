@@ -9,7 +9,7 @@ whether to skip the data-contract check.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 
 # The study window: five working days, 06:00-10:00 local time (project plan, section 3.1).
@@ -628,3 +628,65 @@ class ValidateFlowsStageParameters:
         "参与 FDR",
         "显著",
     )
+
+
+# The five arms of the partition-validation stage, in the order the tables sort
+# them and a run requests them. Named here rather than in the stage module because
+# the parameter object's default arm set is the definition of "a full run", and a
+# second spelling of these strings would let the table and the CLI disagree about
+# which arms exist.
+FOLD_ARM = "fold"
+FOLD_NULL_ARM = "fold-null"
+FOLD_2V2_ARM = "fold-2v2"
+FOLD_3V3_ARM = "fold-3v3"
+RAIN_INCLUDED_ARM = "rain-included"
+PARTITION_ARMS: tuple[str, ...] = (
+    FOLD_ARM,
+    FOLD_NULL_ARM,
+    FOLD_2V2_ARM,
+    FOLD_3V3_ARM,
+    RAIN_INCLUDED_ARM,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ValidatePartitionsStageParameters:
+    """Everything the partition-validation stage runs on (ADR-0002).
+
+    `dates` is the whole study window because the `rain-included` arm merges all
+    five days, while `clear_days` is what the folds are cut out of and what the
+    similarity elements are taken from (ADR-0016). The Infomap object is the
+    adopted one with the audit's trial count substituted, so the markov time and
+    the seed have exactly one spelling in this file: an arm that re-partitioned at
+    a different markov time would be measuring granularity, which is a different
+    question and a different arm.
+
+    `min_component_cells` is the area floor of 区域 at this cell size and is
+    deliberately **not** scaled by how many days a fold merged: the floor is the
+    definition of a region's minimum area (§4), and rescaling it per fold would
+    let the definition move with the fold.
+    """
+
+    dates: tuple[date, ...] = STUDY_DATES
+    spark: SparkParameters = SparkParameters()
+    clear_days: tuple[date, ...] = CLEAR_DAY_DATES
+    cell_size_m: int = CellParameters().size_m
+    min_component_cells: int = CellParameters().min_component_cells
+    region_infomap: InfomapParameters = replace(
+        RegionsStageParameters().region_infomap,
+        num_trials=GranularityAuditParameters().num_trials,
+    )
+    # The link-weight null model's stream key. The same seed the granularity audit
+    # permutes its daily weights with, because it is the same null model.
+    lattice_null_seed: int = GranularityAuditParameters().lattice_null_seed
+    ecs_alpha: float = 0.9
+    arms: tuple[str, ...] = PARTITION_ARMS
+    element_funnel_unit: str = "匹配点"
+    # One gate, so one row per arm: the population is the valid tracks' match
+    # points and the gate is whether both partitions cover the point's cell.
+    funnel_stage_names: tuple[str, ...] = ("两侧都有区域覆盖",)
+
+    @property
+    def infomap_seed(self) -> int:
+        """The Infomap seed, named so the run products can list every seed by name."""
+        return self.region_infomap.seed

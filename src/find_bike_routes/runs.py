@@ -22,6 +22,7 @@ from .config import (
     CLEAR_DAY_DATES,
     ISLAND_RULE,
     RAIN_DATE,
+    STUDY_DATES,
     AssignRegionsStageParameters,
     GridFlowStageParameters,
     MatchStageParameters,
@@ -34,6 +35,7 @@ from .config import (
     RegionsStageParameters,
     SplitStageParameters,
     ValidateFlowsStageParameters,
+    ValidatePartitionsStageParameters,
 )
 from .datasets import POINT_COLUMNS, STAGE_COUNT_COLUMNS, TRACK_COLUMNS
 from .matching import (
@@ -230,6 +232,21 @@ VALIDATE_FLOWS_DEFINITION_FIELDS = (
     "pair_funnel_unit",
     "funnel_stage_names",
 )
+VALIDATE_PARTITIONS_DEFINITION_FIELDS = (
+    "clear_days",
+    "cell_size_m",
+    "min_component_cells",
+    "region_infomap",
+    # Both seeds by name: the Infomap seed every partition was solved with, and
+    # the seed the `fold-null` arm permutes link weights from. A run that cannot
+    # name its seeds cannot be re-run.
+    "infomap_seed",
+    "lattice_null_seed",
+    "ecs_alpha",
+    "arms",
+    "element_funnel_unit",
+    "funnel_stage_names",
+)
 OSM_CONTEXT_DEFINITION_FIELDS = (
     "island_tolerance_m",
     "crs",
@@ -330,6 +347,7 @@ def write_params(
         | RegionProfilesStageParameters
         | RegionSequencesStageParameters
         | ValidateFlowsStageParameters
+        | ValidatePartitionsStageParameters
     ),
     contract_check_skipped: bool,
     spark_conf: Mapping[str, str] | None = None,
@@ -337,6 +355,7 @@ def write_params(
     region_cells_digest: str | None = None,
     district_labels_digest: str | None = None,
     scopes: Sequence[Mapping[str, object]] | None = None,
+    partitions: Sequence[Mapping[str, object]] | None = None,
     notes: Sequence[str] | None = None,
 ) -> Path:
     """Serialize the effective run parameters. A skipped check is marked in all caps."""
@@ -452,6 +471,27 @@ def write_params(
                 name: _jsonable(getattr(parameters, name))
                 for name in VALIDATE_FLOWS_DEFINITION_FIELDS
             },
+            "data_contract_lock_sha256": sha256(lock_path),
+        }
+        if notes:
+            payload["notes"] = list(notes)
+    elif isinstance(parameters, ValidatePartitionsStageParameters):
+        # The digest of every alternative partition goes in here rather than in
+        # the digest file: it answers "which two partitions produced this AMI",
+        # which is a question about how the run was set up, and it is why this
+        # stage writes its params once the partitions exist rather than before
+        # the session starts.
+        payload = {
+            "timezone": parameters.spark.session_time_zone,
+            "spark": dict(spark_conf or {}),
+            "dates": [day.isoformat() for day in parameters.dates],
+            "dates_are_default": tuple(parameters.dates) == STUDY_DATES,
+            "region_cells_digest": region_cells_digest,
+            "parameters": {
+                name: _jsonable(getattr(parameters, name))
+                for name in VALIDATE_PARTITIONS_DEFINITION_FIELDS
+            },
+            "partitions": [dict(partition) for partition in partitions or ()],
             "data_contract_lock_sha256": sha256(lock_path),
         }
         if notes:
@@ -1693,6 +1733,58 @@ def write_validate_flows_digest(
             FLOW_CONSISTENCY_TABLE: {
                 "sha256": consistency_sha,
                 "rows": consistency_rows,
+            },
+            f"stage_counts_{STAGE}": {"sha256": count_sha, "rows": count_rows},
+        },
+        "stage_counts": stages,
+        "observations": {**funnel_observations(stages), STAGE: scoped},
+    }
+    return _write_json(run_dir / "digest.json", payload)
+
+
+def write_validate_partitions_digest(
+    run_dir: Path,
+    partitions: DataFrame,
+    similarity: DataFrame,
+    counts: DataFrame,
+    observations: Mapping[str, object],
+    notes: Sequence[str] = (),
+) -> Path:
+    """Content digest of the two partition-validation tables and the funnel.
+
+    One sha256 per table covers every alternative partition and every score in
+    one equality, which is what "two runs over the same input agree" is checked
+    with — including the community detections, the four post-processing steps and
+    the link-weight permutations behind them.
+    """
+    from .funnel import digest_funnel, funnel_observations, funnel_records
+    from .partition_validation import (
+        PARTITION_COLUMNS,
+        PARTITION_TABLE,
+        SIMILARITY_COLUMNS,
+        SIMILARITY_TABLE,
+        STAGE,
+        partition_sort_key,
+        similarity_sort_key,
+    )
+
+    partition_sha, partition_rows = digest_frame(
+        partitions, PARTITION_COLUMNS, partition_sort_key()
+    )
+    similarity_sha, similarity_rows = digest_frame(
+        similarity, SIMILARITY_COLUMNS, similarity_sort_key()
+    )
+    count_sha, count_rows = digest_funnel(counts)
+    stages = funnel_records(counts)
+    scoped: dict[str, object] = dict(observations)
+    if notes:
+        scoped["notes"] = list(notes)
+    payload = {
+        "tables": {
+            PARTITION_TABLE: {"sha256": partition_sha, "rows": partition_rows},
+            SIMILARITY_TABLE: {
+                "sha256": similarity_sha,
+                "rows": similarity_rows,
             },
             f"stage_counts_{STAGE}": {"sha256": count_sha, "rows": count_rows},
         },
