@@ -172,6 +172,22 @@ def read_region_transit_core(core: Path) -> pd.DataFrame:
     ).reset_index(drop=True)
 
 
+def read_flow_od(flow: Path) -> pd.DataFrame:
+    return pd.read_parquet(flow).sort_values(
+        ["source_date", "hour", "from_region", "to_region", "distance_band"]
+    ).reset_index(drop=True)
+
+
+def read_flow_channel(flow: Path) -> pd.DataFrame:
+    return pd.read_parquet(flow).sort_values(
+        ["source_date", "hour", "from_region", "to_region"]
+    ).reset_index(drop=True)
+
+
+def read_flow_track_od(flow: Path) -> pd.DataFrame:
+    return read_flow_channel(flow)
+
+
 def read_points(points: Path) -> pd.DataFrame:
     return pd.read_parquet(points).sort_values("source_row").reset_index(drop=True)
 

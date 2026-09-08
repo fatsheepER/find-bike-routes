@@ -26,6 +26,9 @@ from support import (
     ARTIFACTS_ROOT,
     FIXTURE_DATE,
     ORDER_FIXTURE,
+    read_flow_channel,
+    read_flow_od,
+    read_flow_track_od,
     read_order_trip_regions,
     read_region_cells,
     read_region_metrics,
@@ -394,6 +397,112 @@ def test_unlock_totals_match_an_independent_assignment_count(region_profiles_run
     assert {region: count for region, count in actual.items() if count} == expected
 
 
+@pytest.mark.spark
+def test_fixture_writes_sparse_flow_tables_from_their_source_units(
+    region_profiles_run,
+):
+    flow_od = read_flow_od(region_profiles_run.flow_od)
+    flow_channel = read_flow_channel(region_profiles_run.flow_channel)
+    flow_track_od = read_flow_track_od(region_profiles_run.flow_track_od)
+
+    assert list(flow_od.columns) == [
+        "hour",
+        "from_region",
+        "to_region",
+        "distance_band",
+        "trips",
+        "source_date",
+    ]
+    assert list(flow_channel.columns) == [
+        "hour",
+        "from_region",
+        "to_region",
+        "tracks",
+        "source_date",
+    ]
+    assert list(flow_track_od.columns) == list(flow_channel.columns)
+    assert (flow_od["trips"] > 0).all()
+    assert (flow_channel["tracks"] > 0).all()
+    assert (flow_track_od["tracks"] > 0).all()
+
+    assigned = read_order_trip_regions(
+        region_profiles_run.assignment / "order_trip_regions"
+    )
+    trips = pd.read_parquet(region_profiles_run.orders / "order_trips")
+    expected_bands = assigned.merge(
+        trips.loc[trips["is_valid"], ["BICYCLE_ID", "trip_index", "distance_band"]],
+        on=["BICYCLE_ID", "trip_index"],
+    ).groupby(
+        ["unlock_region", "lock_region", "distance_band"], as_index=False
+    ).size()
+    actual_bands = flow_od.groupby(
+        ["from_region", "to_region", "distance_band"], as_index=False
+    )["trips"].sum()
+    pd.testing.assert_frame_equal(
+        actual_bands,
+        expected_bands.rename(
+            columns={
+                "unlock_region": "from_region",
+                "lock_region": "to_region",
+                "size": "trips",
+            }
+        ),
+        check_dtype=False,
+    )
+    assert int(flow_od["trips"].sum()) == len(assigned)
+
+    visits = pd.read_parquet(
+        region_profiles_run.assignment / "track_regions"
+    ).sort_values(["TRACK_ID", "piece_index", "run_index"])
+    channel_votes: set[tuple[str, int, int]] = set()
+    track_od_votes: list[tuple[int, int]] = []
+    for track_id, track_visits in visits.groupby("TRACK_ID", sort=False):
+        track_od_votes.append(
+            (
+                int(track_visits.iloc[0]["region_id"]),
+                int(track_visits.iloc[-1]["region_id"]),
+            )
+        )
+        for _piece, piece_visits in track_visits.groupby("piece_index", sort=False):
+            previous = None
+            for visit in piece_visits.itertuples(index=False):
+                if previous is not None and not visit.gap_before:
+                    channel_votes.add(
+                        (track_id, int(previous.region_id), int(visit.region_id))
+                    )
+                previous = visit
+
+    expected_channel = (
+        pd.DataFrame(
+            [(source, target) for _track, source, target in channel_votes],
+            columns=["from_region", "to_region"],
+        )
+        .groupby(["from_region", "to_region"], as_index=False)
+        .size()
+        .rename(columns={"size": "tracks"})
+    )
+    actual_channel = flow_channel.groupby(
+        ["from_region", "to_region"], as_index=False
+    )["tracks"].sum()
+    pd.testing.assert_frame_equal(
+        actual_channel, expected_channel, check_dtype=False
+    )
+
+    expected_track_od = (
+        pd.DataFrame(track_od_votes, columns=["from_region", "to_region"])
+        .groupby(["from_region", "to_region"], as_index=False)
+        .size()
+        .rename(columns={"size": "tracks"})
+    )
+    actual_track_od = flow_track_od.groupby(
+        ["from_region", "to_region"], as_index=False
+    )["tracks"].sum()
+    pd.testing.assert_frame_equal(
+        actual_track_od, expected_track_od, check_dtype=False
+    )
+    assert int(flow_track_od["tracks"].sum()) == visits["TRACK_ID"].nunique()
+
+
 def rewrite_partitioned_table(root: Path, table: str, frame: pd.DataFrame) -> None:
     shutil.rmtree(root / table)
     frame.to_parquet(
@@ -509,9 +618,9 @@ def test_funnel_params_digest_and_observations_follow_the_contract(
     )
 
     assert list(counts["unit"]) == ["轨迹"] * 5 + ["行程"] * 3
-    assert list(counts["stage_name"]) == list(PARAMETERS.track_funnel_stage_names) + list(
-        PARAMETERS.trip_funnel_stage_names
-    )
+    assert list(counts["stage_name"]) == list(
+        PARAMETERS.track_funnel_stage_names
+    ) + list(PARAMETERS.trip_funnel_stage_names)
     assert (counts["entered"] == counts["kept"] + counts["rejected"]).all()
     assert params["dates"] == [FIXTURE_DATE]
     assert params["region_cells_digest"] == expected_digest
@@ -523,11 +632,23 @@ def test_funnel_params_digest_and_observations_follow_the_contract(
     assert "DATA_CONTRACT_CHECK_SKIPPED" not in params
     assert digest["tables"]["region_metrics"]["rows"] > 0
     assert digest["tables"]["region_transit_core"]["rows"] > 0
+    assert digest["tables"]["flow_od"]["rows"] > 0
+    assert digest["tables"]["flow_channel"]["rows"] > 0
+    assert digest["tables"]["flow_track_od"]["rows"] > 0
     observed = digest["observations"]["region_profiles"][FIXTURE_DATE]
     assert digest["observations"]["bearing_note"] == BEARING_NOTE
     assert len(observed["hourly_order_events"]) == 4
     assert "tracks_with_visits" in observed
     assert "tracks_with_transit_regions" in observed
+    assert set(observed["flows"]) == {
+        "channel_pairs",
+        "channel_total",
+        "od_total",
+        "od_self_loop_share",
+        "track_od_pairs",
+        "track_od_flow_od_spearman",
+        "shared_pairs",
+    }
     assert set(observed["core_full_pi_r"]) == {"spearman", "regions"}
     assert set(observed["net_inflow_context_correlations"]) == {
         "pearson_area",

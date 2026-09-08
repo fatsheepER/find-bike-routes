@@ -1431,13 +1431,19 @@ def write_region_profiles_digest(
     run_dir: Path,
     metrics: DataFrame,
     core: DataFrame,
+    flow_od: DataFrame,
+    flow_channel: DataFrame,
+    flow_track_od: DataFrame,
     counts: DataFrame,
     observations: Mapping[str, Mapping[str, object]],
+    flow_checks: Mapping[str, object] | None,
 ) -> Path:
-    """Content digest of dense hourly metrics, core transit, and the funnel."""
+    """Content digest of region profiles, flows, and the funnel."""
     from .funnel import digest_funnel, funnel_observations, funnel_records
     from .profiles import (
         BEARING_NOTE,
+        FLOW_OD_COLUMNS,
+        FLOW_TRACK_COLUMNS,
         REGION_METRIC_COLUMNS,
         REGION_TRANSIT_CORE_COLUMNS,
     )
@@ -1452,12 +1458,36 @@ def write_region_profiles_digest(
         REGION_TRANSIT_CORE_COLUMNS,
         ("source_date", "region_id"),
     )
+    flow_od_sha, flow_od_rows = digest_frame(
+        flow_od,
+        FLOW_OD_COLUMNS,
+        ("source_date", "hour", "from_region", "to_region", "distance_band"),
+    )
+    flow_channel_sha, flow_channel_rows = digest_frame(
+        flow_channel,
+        FLOW_TRACK_COLUMNS,
+        ("source_date", "hour", "from_region", "to_region"),
+    )
+    flow_track_od_sha, flow_track_od_rows = digest_frame(
+        flow_track_od,
+        FLOW_TRACK_COLUMNS,
+        ("source_date", "hour", "from_region", "to_region"),
+    )
     count_sha, count_rows = digest_funnel(counts)
     stages = funnel_records(counts)
     payload = {
         "tables": {
             "region_metrics": {"sha256": metric_sha, "rows": metric_rows},
             "region_transit_core": {"sha256": core_sha, "rows": core_rows},
+            "flow_od": {"sha256": flow_od_sha, "rows": flow_od_rows},
+            "flow_channel": {
+                "sha256": flow_channel_sha,
+                "rows": flow_channel_rows,
+            },
+            "flow_track_od": {
+                "sha256": flow_track_od_sha,
+                "rows": flow_track_od_rows,
+            },
             "stage_counts_region_profiles": {
                 "sha256": count_sha,
                 "rows": count_rows,
@@ -1468,6 +1498,11 @@ def write_region_profiles_digest(
             **funnel_observations(stages),
             "bearing_note": BEARING_NOTE,
             "region_profiles": dict(observations),
+            **(
+                {"clear_day_flow_checks": dict(flow_checks)}
+                if flow_checks is not None
+                else {}
+            ),
         },
     }
     return _write_json(run_dir / "digest.json", payload)

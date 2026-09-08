@@ -347,6 +347,9 @@ class RegionProfilesRun:
     output: Path
     region_metrics: Path
     region_transit_core: Path
+    flow_od: Path
+    flow_channel: Path
+    flow_track_od: Path
     stage_counts: Path
     artifacts: Path
     trajectory: Path
@@ -385,6 +388,9 @@ def region_profiles_run(
             output=output,
             region_metrics=output / "region_metrics",
             region_transit_core=output / "region_transit_core",
+            flow_od=output / "flow_od",
+            flow_channel=output / "flow_channel",
+            flow_track_od=output / "flow_track_od",
             stage_counts=output / "stage_counts_region_profiles",
             artifacts=artifacts,
             trajectory=split_run.output,

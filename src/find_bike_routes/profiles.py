@@ -14,7 +14,7 @@ from datetime import date
 from pathlib import Path
 
 import pandas as pd
-from pyspark.sql import DataFrame, SparkSession, functions as F
+from pyspark.sql import DataFrame, SparkSession, Window, functions as F
 from pyspark.sql.types import (
     ArrayType,
     BooleanType,
@@ -26,7 +26,7 @@ from pyspark.sql.types import (
 
 from . import PipelineError
 from .assignment import ORDER_TRIP_REGION_TABLE, TRACK_REGION_TABLE
-from .config import RegionProfilesStageParameters
+from .config import CLEAR_DAY_DATES, STUDY_DATES, RegionProfilesStageParameters
 from .datasets import PARTITION_COLUMN, TRACK_TABLE
 from .funnel import funnel_table_name
 from .matching import TRACK_MATCH_TABLE
@@ -40,6 +40,9 @@ BEARING_NOTE = (
 )
 REGION_METRIC_TABLE = "region_metrics"
 REGION_TRANSIT_CORE_TABLE = "region_transit_core"
+FLOW_OD_TABLE = "flow_od"
+FLOW_CHANNEL_TABLE = "flow_channel"
+FLOW_TRACK_OD_TABLE = "flow_track_od"
 STAGE = "region_profiles"
 FUNNEL_TRACK_UNIT = "轨迹"
 FUNNEL_TRIP_UNIT = "行程"
@@ -75,6 +78,21 @@ REGION_TRANSIT_CORE_COLUMNS = (
     "tracks_visiting",
     "tracks_transit",
     "pi_r",
+    PARTITION_COLUMN,
+)
+FLOW_OD_COLUMNS = (
+    "hour",
+    "from_region",
+    "to_region",
+    "distance_band",
+    "trips",
+    PARTITION_COLUMN,
+)
+FLOW_TRACK_COLUMNS = (
+    "hour",
+    "from_region",
+    "to_region",
+    "tracks",
     PARTITION_COLUMN,
 )
 
@@ -271,6 +289,18 @@ def region_transit_core_table_path(output_root: Path) -> Path:
     return output_root / REGION_TRANSIT_CORE_TABLE
 
 
+def flow_od_table_path(output_root: Path) -> Path:
+    return output_root / FLOW_OD_TABLE
+
+
+def flow_channel_table_path(output_root: Path) -> Path:
+    return output_root / FLOW_CHANNEL_TABLE
+
+
+def flow_track_od_table_path(output_root: Path) -> Path:
+    return output_root / FLOW_TRACK_OD_TABLE
+
+
 def funnel_path(output_root: Path) -> Path:
     return output_root / funnel_table_name(STAGE)
 
@@ -362,6 +392,7 @@ def read_profile_inputs(
         "trip_index",
         "unlock_time",
         "lock_time",
+        "distance_band",
         PARTITION_COLUMN,
     )
     assigned = _read_dated(session, assignment, ORDER_TRIP_REGION_TABLE, dates).select(
@@ -650,6 +681,70 @@ def build_region_transit_core(
     )
 
 
+def build_flow_tables(
+    visits: DataFrame,
+    track_summaries: DataFrame,
+    trip_summaries: DataFrame,
+) -> tuple[DataFrame, DataFrame, DataFrame]:
+    """Sparse order, adjacent-region, and whole-track endpoint flows."""
+    flow_od = (
+        trip_summaries.where("endpoints_known and in_hours")
+        .groupBy(
+            PARTITION_COLUMN,
+            F.col("unlock_hour").alias("hour"),
+            F.col("unlock_region").alias("from_region"),
+            F.col("lock_region").alias("to_region"),
+            "distance_band",
+        )
+        .agg(F.count(F.lit(1)).alias("trips"))
+        .select(*FLOW_OD_COLUMNS)
+    )
+
+    track_hours = track_summaries.select(
+        PARTITION_COLUMN, "TRACK_ID", "hour", "in_hours"
+    )
+    ordered_piece = Window.partitionBy(
+        PARTITION_COLUMN, "TRACK_ID", "piece_index"
+    ).orderBy("run_index")
+    transitions = (
+        visits.join(track_hours, [PARTITION_COLUMN, "TRACK_ID"])
+        .where("in_hours")
+        .withColumn("from_region", F.lag("region_id").over(ordered_piece))
+        .where(F.col("from_region").isNotNull() & ~F.col("gap_before"))
+        .select(
+            PARTITION_COLUMN,
+            "TRACK_ID",
+            "hour",
+            "from_region",
+            F.col("region_id").alias("to_region"),
+        )
+        .dropDuplicates(
+            [PARTITION_COLUMN, "TRACK_ID", "from_region", "to_region"]
+        )
+    )
+    flow_channel = (
+        transitions.groupBy(
+            PARTITION_COLUMN, "hour", "from_region", "to_region"
+        )
+        .agg(F.count(F.lit(1)).alias("tracks"))
+        .select(*FLOW_TRACK_COLUMNS)
+    )
+
+    flow_track_od = (
+        track_summaries.where("in_hours and visit_count > 0")
+        .select(
+            PARTITION_COLUMN,
+            "hour",
+            F.element_at("visits", 1).getField("region_id").alias("from_region"),
+            F.element_at("visits", -1).getField("region_id").alias("to_region"),
+        )
+        .groupBy(PARTITION_COLUMN, "hour", "from_region", "to_region")
+        .agg(F.count(F.lit(1)).alias("tracks"))
+        .select(*FLOW_TRACK_COLUMNS)
+    )
+    return flow_od, flow_channel, flow_track_od
+
+
 def build_region_profiles_funnel(
     session: SparkSession,
     track_summaries: DataFrame,
@@ -710,6 +805,9 @@ def region_profile_observations(
     core: DataFrame,
     track_summaries: DataFrame,
     context: DataFrame,
+    flow_od: DataFrame,
+    flow_channel: DataFrame,
+    flow_track_od: DataFrame,
 ) -> dict[str, dict[str, object]]:
     metric_rows = metrics.toPandas()
     core_rows = core.toPandas()
@@ -724,11 +822,21 @@ def region_profile_observations(
         "poi_education",
         "poi_total",
     ).toPandas()
+    flow_od_rows = flow_od.toPandas()
+    flow_channel_rows = flow_channel.toPandas()
+    flow_track_od_rows = flow_track_od.toPandas()
     observations: dict[str, dict[str, object]] = {}
     for day in sorted(metric_rows[PARTITION_COLUMN].unique()):
         metrics_day = metric_rows.loc[metric_rows[PARTITION_COLUMN] == day]
         core_day = core_rows.loc[core_rows[PARTITION_COLUMN] == day]
         tracks_day = track_rows.loc[track_rows[PARTITION_COLUMN] == day]
+        od_day = flow_od_rows.loc[flow_od_rows[PARTITION_COLUMN] == day]
+        channel_day = flow_channel_rows.loc[
+            flow_channel_rows[PARTITION_COLUMN] == day
+        ]
+        track_od_day = flow_track_od_rows.loc[
+            flow_track_od_rows[PARTITION_COLUMN] == day
+        ]
         full = metrics_day.groupby("region_id", as_index=False).agg(
             tracks_visiting=("tracks_visiting", "sum"),
             tracks_transit=("tracks_transit", "sum"),
@@ -774,6 +882,20 @@ def region_profile_observations(
         hourly = metrics_day.groupby("hour", as_index=False)[
             ["unlocks", "locks", "net_inflow"]
         ].sum()
+        od_pairs = od_day.groupby(
+            ["from_region", "to_region"], as_index=False
+        )["trips"].sum()
+        channel_pairs = channel_day.groupby(
+            ["from_region", "to_region"], as_index=False
+        )["tracks"].sum()
+        track_od_pairs = track_od_day.groupby(
+            ["from_region", "to_region"], as_index=False
+        )["tracks"].sum()
+        shared = track_od_pairs.merge(
+            od_pairs,
+            on=["from_region", "to_region"],
+        )
+        od_total = int(od_pairs["trips"].sum())
         observations[day.isoformat()] = {
             "hourly_order_events": [
                 {
@@ -790,6 +912,30 @@ def region_profile_observations(
             "tracks_with_transit_regions": int(
                 (tracks_day["has_transit"] & tracks_day["in_hours"]).sum()
             ),
+            "flows": {
+                "channel_pairs": len(channel_pairs),
+                "channel_total": int(channel_pairs["tracks"].sum()),
+                "od_total": od_total,
+                "od_self_loop_share": (
+                    round(
+                        float(
+                            od_pairs.loc[
+                                od_pairs["from_region"] == od_pairs["to_region"],
+                                "trips",
+                            ].sum()
+                            / od_total
+                        ),
+                        4,
+                    )
+                    if od_total
+                    else None
+                ),
+                "track_od_pairs": len(track_od_pairs),
+                "track_od_flow_od_spearman": _spearman(
+                    shared["tracks"], shared["trips"]
+                ),
+                "shared_pairs": len(shared),
+            },
             "core_full_pi_r": {
                 "spearman": _spearman(paired["pi_r_full"], paired["pi_r_core"]),
                 "regions": len(paired),
@@ -797,6 +943,44 @@ def region_profile_observations(
             "net_inflow_context_correlations": correlations,
         }
     return observations
+
+
+def clear_day_flow_checks(
+    flow_od: DataFrame,
+    flow_channel: DataFrame,
+    region_links: DataFrame,
+    markov_scan: DataFrame,
+    dates: Sequence[date],
+) -> dict[str, float | int] | None:
+    """Recorded-only comparisons to the frozen clear-day region scan."""
+    if tuple(dates) != STUDY_DATES:
+        return None
+    clear_days = [day.isoformat() for day in CLEAR_DAY_DATES]
+    channel_total = flow_channel.where(
+        F.col(PARTITION_COLUMN).cast("string").isin(clear_days)
+    ).agg(F.sum("tracks")).first()[0]
+    region_link_total = region_links.agg(F.sum("tracks")).first()[0]
+    clear_od = flow_od.where(
+        F.col(PARTITION_COLUMN).cast("string").isin(clear_days)
+    )
+    od_totals = clear_od.agg(
+        F.sum("trips").alias("total"),
+        F.sum(
+            F.when(
+                F.col("from_region") == F.col("to_region"), F.col("trips")
+            ).otherwise(0)
+        ).alias("self_loops"),
+    ).first()
+    scan_share = markov_scan.where(F.col("markov_time") == 1.25).select(
+        "od_self_loop_share"
+    ).first()[0]
+    od_share = float(od_totals["self_loops"] / od_totals["total"])
+    return {
+        "channel_total_minus_region_links": int(channel_total - region_link_total),
+        "od_self_loop_share_minus_markov_scan_1_25": round(
+            od_share - float(scan_share), 10
+        ),
+    }
 
 
 def _correlation(left: pd.Series, right: pd.Series) -> float | None:
@@ -813,12 +997,18 @@ def _spearman(left: pd.Series, right: pd.Series) -> float | None:
 def write_region_profile_tables(
     metrics: DataFrame,
     core: DataFrame,
+    flow_od: DataFrame,
+    flow_channel: DataFrame,
+    flow_track_od: DataFrame,
     output_root: Path,
     overwrite: bool,
-) -> tuple[Path, Path]:
+) -> tuple[Path, Path, Path, Path, Path]:
     paths = (
         region_metric_table_path(output_root),
         region_transit_core_table_path(output_root),
+        flow_od_table_path(output_root),
+        flow_channel_table_path(output_root),
+        flow_track_od_table_path(output_root),
     )
     for frame, path, columns, order in (
         (
@@ -832,6 +1022,30 @@ def write_region_profile_tables(
             paths[1],
             REGION_TRANSIT_CORE_COLUMNS,
             (PARTITION_COLUMN, "region_id"),
+        ),
+        (
+            flow_od,
+            paths[2],
+            FLOW_OD_COLUMNS,
+            (
+                PARTITION_COLUMN,
+                "hour",
+                "from_region",
+                "to_region",
+                "distance_band",
+            ),
+        ),
+        (
+            flow_channel,
+            paths[3],
+            FLOW_TRACK_COLUMNS,
+            (PARTITION_COLUMN, "hour", "from_region", "to_region"),
+        ),
+        (
+            flow_track_od,
+            paths[4],
+            FLOW_TRACK_COLUMNS,
+            (PARTITION_COLUMN, "hour", "from_region", "to_region"),
         ),
     ):
         (

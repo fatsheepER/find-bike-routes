@@ -14,11 +14,13 @@ from find_bike_routes.config import RegionProfilesStageParameters
 from find_bike_routes.funnel import write_funnel
 from find_bike_routes.profiles import (
     STAGE,
+    build_flow_tables,
     build_region_metrics,
     build_region_profiles_funnel,
     build_region_transit_core,
     build_track_summaries,
     build_trip_summaries,
+    clear_day_flow_checks,
     read_profile_inputs,
     refuse_to_clobber,
     region_profile_observations,
@@ -26,7 +28,11 @@ from find_bike_routes.profiles import (
     write_region_profile_tables,
 )
 from find_bike_routes.region_context import read_frozen_partition
-from find_bike_routes.regions import REGION_CELL_COLUMNS
+from find_bike_routes.regions import (
+    MARKOV_SCAN_TABLE,
+    REGION_CELL_COLUMNS,
+    REGION_LINK_TABLE,
+)
 from find_bike_routes.runs import (
     digest_table,
     ensure_data_contract,
@@ -147,26 +153,67 @@ def run(args: argparse.Namespace) -> None:
         core = build_region_transit_core(
             session, track_summaries, regions, parameters
         )
+        flow_od, flow_channel, flow_track_od = build_flow_tables(
+            visits, track_summaries, trip_summaries
+        )
         counts = build_region_profiles_funnel(
             session, track_summaries, trip_summaries, parameters
         )
-        for frame in (track_summaries, trip_summaries, metrics, core, counts):
+        for frame in (
+            track_summaries,
+            trip_summaries,
+            metrics,
+            core,
+            flow_od,
+            flow_channel,
+            flow_track_od,
+            counts,
+        ):
             frame.persist()
-        metric_path, core_path = write_region_profile_tables(
-            metrics, core, args.output, args.overwrite
+        table_paths = write_region_profile_tables(
+            metrics,
+            core,
+            flow_od,
+            flow_channel,
+            flow_track_od,
+            args.output,
+            args.overwrite,
         )
         counts_path = write_funnel(counts, args.output, STAGE, args.overwrite)
         observations = region_profile_observations(
-            metrics, core, track_summaries, context
+            metrics,
+            core,
+            track_summaries,
+            context,
+            flow_od,
+            flow_channel,
+            flow_track_od,
         )
+        flow_checks = None
+        if parameters.dates == PARAMETERS.dates:
+            flow_checks = clear_day_flow_checks(
+                flow_od,
+                flow_channel,
+                session.read.parquet(str(args.regions / REGION_LINK_TABLE)),
+                session.read.parquet(str(args.regions / MARKOV_SCAN_TABLE)),
+                parameters.dates,
+            )
         write_region_profiles_digest(
-            run_dir, metrics, core, counts, observations
+            run_dir,
+            metrics,
+            core,
+            flow_od,
+            flow_channel,
+            flow_track_od,
+            counts,
+            observations,
+            flow_checks,
         )
     finally:
         session.stop()
 
     print(
-        f"wrote {metric_path}, {core_path} and {counts_path} "
+        f"wrote {', '.join(str(path) for path in table_paths)} and {counts_path} "
         f"({len(parameters.dates)} date partition(s), run-id {args.run_id})"
     )
 
