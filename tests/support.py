@@ -166,6 +166,37 @@ def run_region_sequences_cli(
     )
 
 
+def write_fixture_district_labels(regions_root: Path, path: Path) -> Path:
+    """District labels for the fixture's own freeze, so the region codes resolve.
+
+    The committed `config/district-labels.json` names the real 37 districts and
+    is pinned to the real freeze; the fixture partitions one day of 20 bike ids
+    into its own districts, so it needs labels of its own rather than a relaxed
+    digest check.
+    """
+    from find_bike_routes.regions import REGION_CELL_COLUMNS
+    from find_bike_routes.runs import digest_table
+
+    cells = read_region_cells(regions_root / "region_cells")
+    digest, _rows = digest_table(cells, REGION_CELL_COLUMNS, ("cell_x", "cell_y"))
+    districts = read_districts(regions_root / "districts")["district_id"]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "region_cells_digest": digest,
+                "labels": {
+                    str(int(district_id)): f"片区{int(district_id)}"
+                    for district_id in districts
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
 def read_osm_features(features: Path) -> pd.DataFrame:
     return pd.read_parquet(features).sort_values(["osm_type", "osm_id"]).reset_index(
         drop=True
@@ -368,3 +399,8 @@ def write_pbf(
         )
     writer.close()
     return path
+
+
+def read_sequence_support_scan(scan: Path) -> pd.DataFrame:
+    """Read `sequence_support_scan` as written. Row order is the assertion."""
+    return pd.read_parquet(scan)

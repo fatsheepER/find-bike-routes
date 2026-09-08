@@ -34,6 +34,7 @@ from support import (
     run_region_context_cli,
     run_region_profiles_cli,
     run_region_sequences_cli,
+    write_fixture_district_labels,
 )
 
 
@@ -411,12 +412,14 @@ class RegionSequencesRun:
     output: Path
     track_sequences: Path
     sequence_patterns: Path
+    sequence_support_scan: Path
     stage_counts: Path
     artifacts: Path
     trajectory: Path
     matching: Path
     assignment: Path
     regions: Path
+    district_labels: Path
 
 
 @pytest.fixture(scope="session")
@@ -429,9 +432,15 @@ def region_sequences_run(
 
     Declared last because it is the last pipeline step; the stage itself needs
     only the split tracks and the assignment, not the profiles. The support floor
-    is overridden here, in the test, because 20 bike ids cannot reach the real one.
+    is overridden here, in the test, because 20 bike ids cannot reach the real one,
+    and the district labels are written for the fixture's own freeze, because the
+    committed ones name the real partition's districts.
     """
-    output = tmp_path_factory.mktemp("region_sequences") / "region_sequences"
+    root = tmp_path_factory.mktemp("region_sequences")
+    output = root / "region_sequences"
+    labels = write_fixture_district_labels(
+        assign_regions_run.regions, root / "district-labels.json"
+    )
     artifacts = ARTIFACTS_ROOT / "test-region-sequences"
     shutil.rmtree(artifacts, ignore_errors=True)
     completed = run_region_sequences_cli(
@@ -439,6 +448,7 @@ def region_sequences_run(
         "--matching", str(assign_regions_run.matching),
         "--assignment", str(assign_regions_run.output),
         "--regions", str(assign_regions_run.regions),
+        "--district-labels", str(labels),
         "--dates", FIXTURE_DATE,
         "--output", str(output),
         "--run-id", "test-region-sequences",
@@ -450,12 +460,14 @@ def region_sequences_run(
             output=output,
             track_sequences=output / "track_sequences",
             sequence_patterns=output / "sequence_patterns",
+            sequence_support_scan=output / "sequence_support_scan",
             stage_counts=output / "stage_counts_region_sequences",
             artifacts=artifacts,
             trajectory=split_run.output,
             matching=assign_regions_run.matching,
             assignment=assign_regions_run.output,
             regions=assign_regions_run.regions,
+            district_labels=labels,
         )
     finally:
         shutil.rmtree(artifacts, ignore_errors=True)

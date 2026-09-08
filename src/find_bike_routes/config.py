@@ -552,6 +552,10 @@ class RegionSequencesStageParameters:
     support_scan: tuple[float, ...] = (0.0002, 0.0005, 0.001, 0.002, 0.005, 0.01)
     hours: tuple[int, ...] = (6, 7, 8, 9)
     max_local_proj_db_size: int = 32_000_000
+    # How many of the merged scope's contiguous chains the run products quote for
+    # the report. A display cut, but recorded like everything else so the list in
+    # a given digest names the length it was cut to.
+    top_pattern_count: int = 10
     track_funnel_stage_names: tuple[str, ...] = (
         "有效轨迹",
         "有 ≥ 1 次进入",

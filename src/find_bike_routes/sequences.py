@@ -11,12 +11,20 @@ stage where a wrong number still looks right: the absolute count is the truth,
 and what MLlib is handed is derived from it half a step below, since MLlib's own
 threshold is `ceil(rows × minSupport)` (ADR-0013). Both are Spark-free, so the
 property tests and the Spark side run the same code.
+
+The attribution scan is the other half of the module: the mined patterns go back
+over the library once as a broadcast prefix trie (ADR-0005 in shape), and one
+pass yields the contiguous support, the four departure-hour columns (ADR-0012)
+and the recount that cross-checks MLlib's own support. `all_steps_adjacent`,
+the region codes and the six-rung support scan are all derived rather than
+counted again, so none of them can disagree with the pattern table.
 """
 
 from __future__ import annotations
 
+from bisect import bisect_left
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dataclass_replace
 from datetime import date
 from math import floor
 from pathlib import Path
@@ -27,6 +35,8 @@ from pyspark.ml.fpm import PrefixSpan
 from pyspark.sql import Column, DataFrame, SparkSession, functions as F
 from pyspark.sql.types import (
     ArrayType,
+    BooleanType,
+    DoubleType,
     IntegerType,
     LongType,
     StringType,
@@ -36,13 +46,16 @@ from pyspark.sql.types import (
 
 from . import PipelineError
 from .assignment import TRACK_REGION_TABLE
-from .config import CLEAR_DAY_DATES, RegionSequencesStageParameters
+from .config import CLEAR_DAY_DATES, STUDY_DATES, RegionSequencesStageParameters
 from .datasets import PARTITION_COLUMN, TRACK_TABLE
 from .funnel import funnel_table_name
 from .matching import TRACK_MATCH_TABLE
+from .partition import rook_neighbours
+from .profiles import FLOW_CHANNEL_TABLE, spearman
 
 TRACK_SEQUENCE_TABLE = "track_sequences"
 SEQUENCE_PATTERN_TABLE = "sequence_patterns"
+SEQUENCE_SUPPORT_SCAN_TABLE = "sequence_support_scan"
 STAGE = "region_sequences"
 # The merged scope. `source_date` cannot name it, which is why `scope` is a plain
 # string column on the mined tables rather than a partition.
@@ -52,11 +65,54 @@ FLOOR_BOUND = "floor"
 FUNNEL_TRACK_UNIT = "轨迹"
 FUNNEL_SEQUENCE_UNIT = "序列"
 
-SEQUENCE_PATTERN_COLUMNS = (
+HOUR_SUPPORT_COLUMNS = tuple(
+    f"support_h{hour:02d}" for hour in RegionSequencesStageParameters().hours
+)
+
+# What PrefixSpan itself produces, before the attribution scan adds to it.
+MINED_PATTERN_COLUMNS = (
     "scope",
     "pattern",
     "length",
     "support",
+)
+
+SEQUENCE_PATTERN_COLUMNS = (
+    *MINED_PATTERN_COLUMNS,
+    "contiguous_support",
+    *HOUR_SUPPORT_COLUMNS,
+    "all_steps_adjacent",
+    "region_codes",
+    "districts",
+)
+
+SUPPORT_SCAN_COLUMNS = (
+    "scope",
+    "min_support",
+    "min_support_count",
+    "spark_min_support",
+    "sequences",
+    "valid_tracks",
+    "patterns_ge2",
+    "len2",
+    "len3",
+    "len4",
+    "len_ge5",
+    "contiguous_ge2",
+)
+
+# The columns the driver reads back off the enriched pattern table. Everything
+# derived from it — the support scan, the observations, the Top-10 — comes from
+# this one collection, so no two of them can be computed off different reads.
+PATTERN_OBSERVATION_COLUMNS = (
+    "scope",
+    "pattern",
+    "length",
+    "support",
+    "contiguous_support",
+    *HOUR_SUPPORT_COLUMNS,
+    "contained_support",
+    "region_codes",
 )
 
 TRACK_SEQUENCE_COLUMNS = (
@@ -106,6 +162,41 @@ _PATTERN = StructType(
         StructField("support", LongType(), True),
     ]
 )
+_CATALOGUE = StructType(
+    [
+        StructField("pattern", ArrayType(IntegerType(), False), False),
+        StructField("pattern_uid", IntegerType(), False),
+        StructField("all_steps_adjacent", BooleanType(), False),
+        StructField("region_codes", ArrayType(StringType(), False), False),
+        StructField("districts", ArrayType(IntegerType(), False), False),
+    ]
+)
+_HIT = StructType(
+    [
+        StructField("contained", ArrayType(IntegerType(), False), False),
+        StructField("contiguous", ArrayType(IntegerType(), False), False),
+    ]
+)
+_SUPPORT_SCAN = StructType(
+    [
+        StructField("scope", StringType(), False),
+        StructField("min_support", DoubleType(), False),
+        StructField("min_support_count", IntegerType(), False),
+        StructField("spark_min_support", DoubleType(), True),
+        StructField("sequences", IntegerType(), False),
+        StructField("valid_tracks", IntegerType(), False),
+        StructField("patterns_ge2", IntegerType(), False),
+        StructField("len2", IntegerType(), False),
+        StructField("len3", IntegerType(), False),
+        StructField("len4", IntegerType(), False),
+        StructField("len_ge5", IntegerType(), False),
+        StructField("contiguous_ge2", IntegerType(), False),
+    ]
+)
+# A trie node maps a region to its child node; `None` is not a region, so it is
+# where the node parks the uid of the pattern that ends on it.
+_UID: object = None
+_PREPARED: tuple[object, dict] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -306,6 +397,10 @@ def pattern_table_path(output_root: Path) -> Path:
     return output_root / SEQUENCE_PATTERN_TABLE
 
 
+def support_scan_table_path(output_root: Path) -> Path:
+    return output_root / SEQUENCE_SUPPORT_SCAN_TABLE
+
+
 def funnel_path(output_root: Path) -> Path:
     return output_root / funnel_table_name(STAGE)
 
@@ -344,6 +439,7 @@ def refuse_to_clobber(output_root: Path, overwrite: bool) -> None:
         for path in (
             track_sequence_table_path(output_root),
             pattern_table_path(output_root),
+            support_scan_table_path(output_root),
             funnel_path(output_root),
         )
         if path.is_dir() and any(path.iterdir())
@@ -562,16 +658,19 @@ def sequence_observations(
     day_totals: Mapping[str, Mapping[str, int]],
     thresholds: Mapping[str, SupportThreshold],
     patterns: Mapping[str, Mapping[str, object]],
+    parameters: RegionSequencesStageParameters,
+    scope_extras: Mapping[str, Mapping[str, object]] | None = None,
 ) -> dict[str, object]:
     """One group per scope: how many sequences, from how many tracks, how long.
 
     The mined side joins the same group rather than getting one of its own: the
     ruler, the library it measured and the patterns it produced are read together
-    or not at all.
+    or not at all. `scope_extras` is for the things only the merged scope has —
+    the support scan and the Top-10 chains the report quotes.
     """
-    lengths = sequences.select(PARTITION_COLUMN, "length").toPandas()
-    if not lengths.empty:
-        lengths[PARTITION_COLUMN] = lengths[PARTITION_COLUMN].map(
+    library = sequences.select(PARTITION_COLUMN, "length", "start_hour").toPandas()
+    if not library.empty:
+        library[PARTITION_COLUMN] = library[PARTITION_COLUMN].map(
             lambda value: value.isoformat() if hasattr(value, "isoformat") else str(value)
         )
     payload: dict[str, object] = {}
@@ -581,9 +680,9 @@ def sequence_observations(
         tracks = sum(int(row.get("tracks_with_sequences", 0)) for row in rows)
         threshold = thresholds[scope.name]
         scoped = (
-            lengths.loc[lengths[PARTITION_COLUMN].isin(wanted), "length"]
-            if not lengths.empty
-            else pd.Series(dtype="int64")
+            library.loc[library[PARTITION_COLUMN].isin(wanted)]
+            if not library.empty
+            else library
         )
         payload[scope.name] = {
             "sequences": threshold.sequences,
@@ -595,8 +694,19 @@ def sequence_observations(
             "min_support_count": threshold.min_support_count,
             "threshold_bound_by": threshold.bound_by,
             "spark_min_support": threshold.spark_min_support,
-            **_length_stats(scoped),
+            # The hour split can only add up to `support` while every sequence
+            # started inside the four 时段; this is where a run that read a wider
+            # window would say so.
+            "sequences_outside_hours": (
+                int((~scoped["start_hour"].isin(parameters.hours)).sum())
+                if not scoped.empty
+                else 0
+            ),
+            **_length_stats(
+                scoped["length"] if not scoped.empty else pd.Series(dtype="int64")
+            ),
             **dict(patterns.get(scope.name, _EMPTY_PATTERN_STATS)),
+            **dict((scope_extras or {}).get(scope.name, {})),
         }
     return payload
 
@@ -622,28 +732,41 @@ _EMPTY_PATTERN_STATS: dict[str, object] = {
     "patterns": 0,
     "patterns_by_length": {},
     "pattern_length_max": None,
+    "contiguous_patterns": 0,
+    "support_recount_mismatches": 0,
 }
 
 
-def pattern_observations(patterns: DataFrame) -> dict[str, dict[str, object]]:
+def pattern_observations(
+    pattern_frame: pd.DataFrame, thresholds: Mapping[str, SupportThreshold]
+) -> dict[str, dict[str, object]]:
     """Per scope: how many patterns, split by length, and the longest one mined.
 
     The longest one is here so a `max_pattern_length` truncation is visible the
     moment it happens: a scope whose longest pattern sits on the cap has probably
     lost longer ones, and nothing else in the run products would say so.
+    `support_recount_mismatches` is the standing check on the attribution scan —
+    it recounts containment and must land on MLlib's `support` every time, so any
+    number but zero says the containment test is wrong.
     """
-    pdf = patterns.select("scope", "length").toPandas()
     payload: dict[str, dict[str, object]] = {}
-    if pdf.empty:
+    if pattern_frame.empty:
         return payload
-    for scope, rows in pdf.groupby("scope", sort=True):
+    for scope, rows in pattern_frame.groupby("scope", sort=True):
         by_length = rows["length"].value_counts().sort_index()
+        threshold = thresholds[str(scope)]
         payload[str(scope)] = {
             "patterns": int(len(rows)),
             "patterns_by_length": {
                 str(int(length)): int(count) for length, count in by_length.items()
             },
             "pattern_length_max": int(rows["length"].max()),
+            "contiguous_patterns": int(
+                (rows["contiguous_support"] >= threshold.min_support_count).sum()
+            ),
+            "support_recount_mismatches": int(
+                (rows["contained_support"] != rows["support"]).sum()
+            ),
         }
     return payload
 
@@ -731,7 +854,7 @@ def _mine_one_scope(
         )
         .withColumn("length", F.size("pattern").cast("int"))
         .where(F.col("length") >= parameters.min_sequence_length)
-        .select(*SEQUENCE_PATTERN_COLUMNS)
+        .select(*MINED_PATTERN_COLUMNS)
     )
 
 
@@ -747,6 +870,519 @@ def write_pattern_table(frame: DataFrame, output_root: Path, overwrite: bool) ->
         frame.select(*SEQUENCE_PATTERN_COLUMNS)
         .repartition(1)
         .sortWithinPartitions(*pattern_sort_key())
+        .write.mode("overwrite" if overwrite else "errorifexists")
+        .parquet(str(path))
+    )
+    return path
+
+
+def region_adjacency(region_cells: pd.DataFrame) -> frozenset[tuple[int, int]]:
+    """The unordered pairs of distinct regions that touch somewhere on the grid.
+
+    Two regions are adjacent as soon as one cell of each shares an edge, which is
+    the adjacency the postprocess already split and merged on (`partition.py`).
+    Same-region neighbours are skipped there and skipped here: adjacency is a
+    relation between two regions, and a region is not next to itself. It matters
+    because a pattern may revisit a region — `(12, 5, 12)` mines `(12, 12)` —
+    and counting that step as adjacent would say every region big enough to hold
+    two cells is its own corridor.
+    """
+    region_of = {
+        (int(cell_x), int(cell_y)): int(region_id)
+        for cell_x, cell_y, region_id in zip(
+            region_cells["cell_x"], region_cells["cell_y"], region_cells["region_id"]
+        )
+    }
+    pairs = {
+        _region_pair(region_id, region_of[neighbour])
+        for cell, region_id in region_of.items()
+        for neighbour in rook_neighbours(cell)
+        if neighbour in region_of and region_of[neighbour] != region_id
+    }
+    return frozenset(pairs)
+
+
+def all_steps_adjacent(
+    pattern: Sequence[int], adjacency: frozenset[tuple[int, int]]
+) -> bool:
+    """True when every consecutive pair of the pattern is an adjacent region pair.
+
+    False is the interesting value: it marks the patterns whose two ends are both
+    often ridden through while the middle is not a single corridor.
+    """
+    return all(
+        _region_pair(int(left), int(right)) in adjacency
+        for left, right in zip(pattern, pattern[1:])
+    )
+
+
+def _region_pair(left: int, right: int) -> tuple[int, int]:
+    return (left, right) if left <= right else (right, left)
+
+
+def build_pattern_trie(patterns: Sequence[Sequence[int]]) -> dict:
+    """A prefix trie over the mined patterns, each leaf carrying its index.
+
+    One trie for every scope's patterns together: a sequence is scanned once and
+    the per-scope split happens afterwards, on counts.
+    """
+    root: dict = {}
+    for uid, pattern in enumerate(patterns):
+        node = root
+        for region in pattern:
+            node = node.setdefault(int(region), {})
+        node[_UID] = uid
+    return root
+
+
+def contained_patterns(trie: Mapping, sequence: Sequence[int]) -> list[int]:
+    """Uids of the patterns that occur in `sequence`, gaps allowed.
+
+    Greedy prefix matching: the earliest occurrence of a region is never a worse
+    place to continue from than a later one, so one walk per trie branch settles
+    it. Each node is reached once, so a pattern occurring twice in the sequence
+    still counts once — the same reading support has (ADR-0013).
+    """
+    positions: dict[int, list[int]] = {}
+    for index, region in enumerate(sequence):
+        positions.setdefault(int(region), []).append(index)
+    hits: list[int] = []
+    stack: list[tuple[Mapping, int]] = [(trie, 0)]
+    while stack:
+        node, start = stack.pop()
+        for region, child in node.items():
+            if region is _UID:
+                continue
+            index = _first_at_or_after(positions.get(region, ()), start)
+            if index is None:
+                continue
+            uid = child.get(_UID)
+            if uid is not None:
+                hits.append(uid)
+            stack.append((child, index + 1))
+    return sorted(hits)
+
+
+def contiguous_patterns(trie: Mapping, sequence: Sequence[int]) -> list[int]:
+    """Uids of the patterns that occur in `sequence` as a run, no gaps allowed.
+
+    Corridor attribution can only use this one: a subsequence with a gap names a
+    common pair of ends, not a road anyone rode end to end.
+    """
+    hits: set[int] = set()
+    for start in range(len(sequence)):
+        node: Mapping | None = trie
+        for region in sequence[start:]:
+            node = node.get(int(region))
+            if node is None:
+                break
+            uid = node.get(_UID)
+            if uid is not None:
+                hits.add(uid)
+    return sorted(hits)
+
+
+def _first_at_or_after(positions: Sequence[int], start: int) -> int | None:
+    index = bisect_left(positions, start)
+    return positions[index] if index < len(positions) else None
+
+
+def prepared_trie(payload: Sequence[Sequence[int]]) -> dict:
+    """Rebuild the trie once per broadcast payload object on this executor.
+
+    The cache holds the payload itself and compares identity against it, rather
+    than remembering its `id`: a freed payload's address can be handed to the
+    next one, and a stale trie would then answer for every sequence the worker
+    sees without anything going wrong out loud.
+    """
+    global _PREPARED
+    cached = _PREPARED
+    if cached is None or cached[0] is not payload:
+        cached = (payload, build_pattern_trie(payload))
+        _PREPARED = cached
+    return cached[1]
+
+
+@dataclass(frozen=True, slots=True)
+class PatternCatalogue:
+    """The distinct mined patterns, numbered, with everything derivable from them.
+
+    `patterns` is the broadcast payload and its position is the uid the scan
+    reports; the three per-pattern facts beside it need no scan at all.
+    """
+
+    patterns: tuple[tuple[int, ...], ...]
+    all_steps_adjacent: tuple[bool, ...]
+    region_codes: tuple[tuple[str, ...], ...]
+    districts: tuple[tuple[int, ...], ...]
+
+
+def pattern_catalogue(
+    patterns: Sequence[Sequence[int]],
+    adjacency: frozenset[tuple[int, int]],
+    codes: Mapping[int, str],
+    districts: Mapping[int, int],
+) -> PatternCatalogue:
+    """Number the distinct patterns and read each one out in region codes."""
+    distinct = sorted({tuple(int(region) for region in pattern) for pattern in patterns})
+    missing = sorted(
+        {region for pattern in distinct for region in pattern}
+        - (set(codes) & set(districts))
+    )
+    if missing:
+        named = ", ".join(str(region) for region in missing)
+        raise PipelineError(
+            f"mined pattern names region(s) {named}, which the frozen partition "
+            f"does not hold; the patterns and the partition are from different runs"
+        )
+    return PatternCatalogue(
+        patterns=tuple(distinct),
+        all_steps_adjacent=tuple(
+            all_steps_adjacent(pattern, adjacency) for pattern in distinct
+        ),
+        region_codes=tuple(
+            tuple(codes[region] for region in pattern) for pattern in distinct
+        ),
+        districts=tuple(
+            tuple(districts[region] for region in pattern) for pattern in distinct
+        ),
+    )
+
+
+def attribute_patterns(
+    session: SparkSession,
+    sequences: DataFrame,
+    patterns: DataFrame,
+    scopes: Sequence[Scope],
+    *,
+    adjacency: frozenset[tuple[int, int]],
+    codes: Mapping[int, str],
+    districts: Mapping[int, int],
+    parameters: RegionSequencesStageParameters,
+) -> DataFrame:
+    """Broadcast the mined patterns back over the library and enrich every row.
+
+    One pass over the sequences produces three of the columns at once: the
+    contiguous support, the departure-hour split (ADR-0012) and a recount of the
+    plain containment. The recount is not published — `support` stays MLlib's —
+    but it rides along so a disagreement between the two is visible instead of
+    being assumed away.
+    """
+    catalogue = pattern_catalogue(
+        [row["pattern"] for row in patterns.select("pattern").collect()],
+        adjacency,
+        codes,
+        districts,
+    )
+    hours = parameters.hours
+    broadcast = session.sparkContext.broadcast(catalogue.patterns)
+
+    @F.udf(returnType=_HIT, useArrow=False)
+    def scan(regions):
+        trie = prepared_trie(broadcast.value)
+        sequence = [int(region) for region in regions or []]
+        return (
+            contained_patterns(trie, sequence),
+            contiguous_patterns(trie, sequence),
+        )
+
+    hits = (
+        sequences.select(
+            PARTITION_COLUMN, "start_hour", scan(F.col("regions")).alias("hit")
+        )
+        .select(
+            PARTITION_COLUMN,
+            "start_hour",
+            F.col("hit.contiguous").alias("contiguous"),
+            F.explode("hit.contained").alias("pattern_uid"),
+        )
+        .withColumn(
+            "is_contiguous", F.array_contains("contiguous", F.col("pattern_uid"))
+        )
+    )
+    aggregations = [
+        F.count(F.lit(1)).alias("contained_support"),
+        F.sum(F.col("is_contiguous").cast("long")).alias("contiguous_support"),
+        *[
+            F.sum((F.col("start_hour") == hour).cast("long")).alias(name)
+            for hour, name in zip(hours, HOUR_SUPPORT_COLUMNS)
+        ],
+    ]
+    counted = ("contained_support", "contiguous_support", *HOUR_SUPPORT_COLUMNS)
+    per_date = hits.groupBy(PARTITION_COLUMN, "pattern_uid").agg(*aggregations)
+    scope_dates = session.createDataFrame(
+        [(scope.name, day) for scope in scopes for day in scope.dates],
+        f"scope string, {PARTITION_COLUMN} date",
+    )
+    per_scope = (
+        per_date.join(scope_dates, PARTITION_COLUMN)
+        .groupBy("scope", "pattern_uid")
+        .agg(*[F.sum(name).alias(name) for name in counted])
+    )
+    return (
+        patterns.join(
+            F.broadcast(_catalogue_frame(session, catalogue)), on="pattern", how="left"
+        )
+        .join(per_scope, on=["scope", "pattern_uid"], how="left")
+        .select(
+            *(
+                column
+                for column in SEQUENCE_PATTERN_COLUMNS
+                if column not in counted
+            ),
+            *[
+                F.coalesce(F.col(name), F.lit(0)).cast("long").alias(name)
+                for name in counted
+            ],
+        )
+    )
+
+
+def _catalogue_frame(
+    session: SparkSession, catalogue: PatternCatalogue
+) -> DataFrame:
+    return session.createDataFrame(
+        [
+            (list(pattern), uid, adjacent, list(codes), list(districts))
+            for uid, (pattern, adjacent, codes, districts) in enumerate(
+                zip(
+                    catalogue.patterns,
+                    catalogue.all_steps_adjacent,
+                    catalogue.region_codes,
+                    catalogue.districts,
+                )
+            )
+        ],
+        _CATALOGUE,
+    )
+
+
+def support_scan_frame(
+    pattern_frame: pd.DataFrame,
+    thresholds: Mapping[str, SupportThreshold],
+    parameters: RegionSequencesStageParameters,
+) -> pd.DataFrame:
+    """The six-rung audit table, aggregated out of the pattern table.
+
+    Not a second truth: the pattern table is mined at the lowest rung, and support
+    is an exact count, so every higher rung is a subset of it and the two cannot
+    disagree. It exists because the acceptance conditions name these numbers —
+    how many patterns at which threshold, and what MLlib would have been handed.
+    """
+    rows = []
+    for scope, threshold in thresholds.items():
+        if threshold.sequences <= 0:
+            continue
+        scoped = pattern_frame.loc[pattern_frame["scope"] == scope]
+        for min_support in parameters.support_scan:
+            rung = support_threshold(
+                valid_tracks=threshold.valid_tracks,
+                sequences=threshold.sequences,
+                parameters=dataclass_replace(
+                    parameters, mining_min_support=min_support
+                ),
+            )
+            kept = scoped.loc[scoped["support"] >= rung.min_support_count]
+            lengths = kept["length"]
+            rows.append(
+                {
+                    "scope": scope,
+                    "min_support": float(min_support),
+                    "min_support_count": rung.min_support_count,
+                    "spark_min_support": rung.spark_min_support,
+                    "sequences": rung.sequences,
+                    "valid_tracks": rung.valid_tracks,
+                    "patterns_ge2": len(kept),
+                    "len2": int((lengths == 2).sum()),
+                    "len3": int((lengths == 3).sum()),
+                    "len4": int((lengths == 4).sum()),
+                    "len_ge5": int((lengths >= 5).sum()),
+                    "contiguous_ge2": int(
+                        (
+                            scoped["contiguous_support"] >= rung.min_support_count
+                        ).sum()
+                    ),
+                }
+            )
+    frame = pd.DataFrame(rows, columns=list(SUPPORT_SCAN_COLUMNS))
+    return frame.sort_values(
+        ["scope", "min_support"], kind="mergesort"
+    ).reset_index(drop=True)
+
+
+_SCAN_REAL_COLUMNS = ("min_support", "spark_min_support")
+
+
+def support_scan_records(frame: pd.DataFrame, scope: str) -> list[dict[str, object]]:
+    """One scope's six rungs as JSON-serialisable rows, in table order.
+
+    The scope is dropped: these rows are filed under the scope they belong to.
+    """
+    scoped = frame.loc[frame["scope"] == scope]
+    return [
+        {
+            column: (
+                None
+                if pd.isna(row[column])
+                else (
+                    float(row[column])
+                    if column in _SCAN_REAL_COLUMNS
+                    else int(row[column])
+                )
+            )
+            for column in SUPPORT_SCAN_COLUMNS
+            if column != "scope"
+        }
+        for _index, row in scoped.iterrows()
+    ]
+
+
+def top_contiguous_patterns(
+    pattern_frame: pd.DataFrame,
+    threshold: SupportThreshold,
+    scope: str,
+    limit: int,
+) -> list[dict[str, object]]:
+    """The longest-chain end of the corridor story, read out in region codes.
+
+    Length ≥ 3 and contiguous at the mining threshold: the patterns the report can
+    call a commuting chain rather than a common pair of ends.
+    """
+    scoped = pattern_frame.loc[
+        (pattern_frame["scope"] == scope)
+        & (pattern_frame["length"] >= 3)
+        & (pattern_frame["contiguous_support"] >= threshold.min_support_count)
+    ].copy()
+    if scoped.empty:
+        return []
+    scoped["key"] = [
+        (-int(row.contiguous_support), -int(row.support), tuple(row.pattern))
+        for row in scoped.itertuples(index=False)
+    ]
+    ordered = scoped.sort_values("key", kind="mergesort").head(limit)
+    return [
+        {
+            "region_codes": [str(code) for code in row.region_codes],
+            "pattern": [int(region) for region in row.pattern],
+            "support": int(row.support),
+            "contiguous_support": int(row.contiguous_support),
+            **{
+                name: int(getattr(row, name))
+                for name in HOUR_SUPPORT_COLUMNS
+            },
+        }
+        for row in ordered.itertuples(index=False)
+    ]
+
+
+def read_clear_day_channel(
+    session: SparkSession, profiles: Path, dates: Sequence[date]
+) -> pd.DataFrame | None:
+    """Clear-day `flow_channel` totalled per region pair, or None when absent.
+
+    A diagnostic input, not an upstream: the comparison it feeds is recorded, not
+    asserted (ADR-0013), so a run without the profiles stage on disk says so in
+    its notes instead of refusing to start.
+    """
+    if tuple(dates) != STUDY_DATES:
+        return None
+    root = profiles / FLOW_CHANNEL_TABLE
+    if not root.is_dir():
+        return None
+    clear_days = [day.isoformat() for day in CLEAR_DAY_DATES]
+    return (
+        session.read.parquet(str(root))
+        .where(F.col(PARTITION_COLUMN).cast("string").isin(clear_days))
+        .groupBy("from_region", "to_region")
+        .agg(F.sum("tracks").cast("long").alias("tracks"))
+        .toPandas()
+    )
+
+
+def channel_comparison(
+    pattern_frame: pd.DataFrame, channel: pd.DataFrame, scope: str
+) -> dict[str, object]:
+    """Length-2 contiguous support against the channel flow on the same pairs.
+
+    Recorded, never asserted: the two count different things by construction —
+    sequences here, tracks deduplicated there — so they should differ by roughly
+    the sequence inflation and the numbers are here for the reader to see that
+    (ADR-0013).
+    """
+    pairs = pattern_frame.loc[
+        (pattern_frame["scope"] == scope) & (pattern_frame["length"] == 2)
+    ]
+    left = pd.DataFrame(
+        [
+            (int(row.pattern[0]), int(row.pattern[1]), int(row.contiguous_support))
+            for row in pairs.itertuples(index=False)
+        ],
+        columns=["from_region", "to_region", "contiguous_support"],
+    )
+    shared = left.merge(channel, on=["from_region", "to_region"], how="inner")
+    shared = shared.loc[shared["tracks"] > 0]
+    relative = (shared["contiguous_support"] - shared["tracks"]) / shared["tracks"]
+    # The same keys either way: the two sizes are what explain an empty overlap,
+    # so they are the last thing to drop when there is nothing to correlate.
+    return {
+        "shared_pairs": len(shared),
+        "length2_contiguous_patterns": len(left),
+        "channel_pairs": len(channel),
+        "spearman": (
+            spearman(shared["contiguous_support"], shared["tracks"])
+            if not shared.empty
+            else None
+        ),
+        "median_relative_diff": (
+            round(float(relative.median()), 4) if not shared.empty else None
+        ),
+    }
+
+
+def merged_scope_extras(
+    session: SparkSession,
+    pattern_frame: pd.DataFrame,
+    scan: pd.DataFrame,
+    thresholds: Mapping[str, SupportThreshold],
+    profiles: Path,
+    parameters: RegionSequencesStageParameters,
+) -> dict[str, dict[str, object]]:
+    """What only the merged scope carries: the scan rungs, the Top-10, the contrast.
+
+    The `flow_channel` contrast is recorded, never asserted (ADR-0013), so its
+    input is a diagnostic rather than an upstream: a run without the profiles
+    stage on disk files the reason where the contrast would have been.
+    """
+    if CLEAR_DAY_SCOPE not in thresholds:
+        return {}
+    extras: dict[str, object] = {
+        "support_scan": support_scan_records(scan, CLEAR_DAY_SCOPE),
+        "top_contiguous_patterns": top_contiguous_patterns(
+            pattern_frame,
+            thresholds[CLEAR_DAY_SCOPE],
+            CLEAR_DAY_SCOPE,
+            parameters.top_pattern_count,
+        ),
+    }
+    channel = read_clear_day_channel(session, profiles, parameters.dates)
+    extras["flow_channel_contrast"] = (
+        channel_comparison(pattern_frame, channel, CLEAR_DAY_SCOPE)
+        if channel is not None
+        else f"未记录：{profiles / 'flow_channel'} 不存在，或本次运行不是默认日期集"
+    )
+    return {CLEAR_DAY_SCOPE: extras}
+
+
+def write_support_scan_table(
+    session: SparkSession, frame: pd.DataFrame, output_root: Path, overwrite: bool
+) -> Path:
+    """Write `sequence_support_scan` as one sorted file, sort key `(scope, min_support)`."""
+    path = support_scan_table_path(output_root)
+    (
+        session.createDataFrame(frame, _SUPPORT_SCAN)
+        .select(*SUPPORT_SCAN_COLUMNS)
+        .repartition(1)
+        .sortWithinPartitions("scope", "min_support")
         .write.mode("overwrite" if overwrite else "errorifexists")
         .parquet(str(path))
     )

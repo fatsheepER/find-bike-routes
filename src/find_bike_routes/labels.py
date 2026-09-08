@@ -1,8 +1,14 @@
-"""Read and check the versioned district-label config against a freeze."""
+"""Read and check the versioned district-label config against a freeze.
+
+The human-facing region code is built here too, because the only thing it adds to
+`region_id` is the district's manual label, and that label's provenance — which
+freeze it was written for — is what this module already checks.
+"""
 
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from collections.abc import Collection, Mapping
 from pathlib import Path
 
@@ -56,6 +62,35 @@ def load_district_labels(
         named = ", ".join(str(district_id) for district_id in empty)
         raise PipelineError(f"district-labels empty label for district(s) {named}")
     return {district_id: labels[district_id] for district_id in wanted}
+
+
+def region_codes(
+    regions: pd.DataFrame, labels: Mapping[int, str]
+) -> dict[int, str]:
+    """region_id → `<district label>-<rank inside the district>`, ranked from 1.
+
+    The rank counts cells down, ties broken by `region_id` up. That is the same
+    order as `region_id` ascending — the global numbering already ran cells down —
+    so the code introduces no second ordering and cannot drift from the table it
+    names. Display only: every statistic is still keyed by `region_id`.
+    """
+    ordered = regions.loc[:, ["region_id", "cells", "district_id"]].sort_values(
+        ["district_id", "cells", "region_id"],
+        ascending=[True, False, True],
+        kind="mergesort",
+    )
+    ranks: dict[int, int] = defaultdict(int)
+    codes: dict[int, str] = {}
+    for row in ordered.itertuples(index=False):
+        district_id = int(row.district_id)
+        label = labels.get(district_id)
+        if label is None:
+            raise PipelineError(
+                f"district-labels missing labels for district(s) {district_id}"
+            )
+        ranks[district_id] += 1
+        codes[int(row.region_id)] = f"{label}-{ranks[district_id]}"
+    return codes
 
 
 def _read(path: Path) -> Mapping[str, object]:

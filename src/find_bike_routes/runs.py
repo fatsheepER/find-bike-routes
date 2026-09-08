@@ -205,6 +205,7 @@ REGION_SEQUENCES_DEFINITION_FIELDS = (
     "support_scan",
     "hours",
     "max_local_proj_db_size",
+    "top_pattern_count",
     "track_funnel_stage_names",
     "sequence_funnel_stage_names",
 )
@@ -312,6 +313,7 @@ def write_params(
     spark_conf: Mapping[str, str] | None = None,
     lock_path: Path = LOCK_PATH,
     region_cells_digest: str | None = None,
+    district_labels_digest: str | None = None,
     scopes: Sequence[Mapping[str, object]] | None = None,
     notes: Sequence[str] | None = None,
 ) -> Path:
@@ -402,6 +404,10 @@ def write_params(
             "spark": dict(spark_conf or {}),
             "dates": [day.isoformat() for day in parameters.dates],
             "region_cells_digest": region_cells_digest,
+            # The region codes are the manual half of this stage's output, so the
+            # label file answers "which version of the names" the way the freeze
+            # answers "which version of the partition".
+            "district_labels_sha256": district_labels_digest,
             "parameters": {
                 name: _jsonable(getattr(parameters, name))
                 for name in REGION_SEQUENCES_DEFINITION_FIELDS
@@ -1552,16 +1558,19 @@ def write_region_sequences_digest(
     run_dir: Path,
     sequences: DataFrame,
     patterns: DataFrame,
+    scan: pd.DataFrame,
     counts: DataFrame,
     observations: Mapping[str, object],
     notes: Sequence[str] = (),
 ) -> Path:
-    """Content digest of the sequence library, the mined patterns and the funnel."""
+    """Content digest of the library, the mined patterns, the scan and the funnel."""
     from .funnel import digest_funnel, funnel_observations, funnel_records
     from .sequences import (
         SEQUENCE_PATTERN_COLUMNS,
         SEQUENCE_PATTERN_TABLE,
+        SEQUENCE_SUPPORT_SCAN_TABLE,
         STAGE,
+        SUPPORT_SCAN_COLUMNS,
         TRACK_SEQUENCE_COLUMNS,
         pattern_sort_key,
     )
@@ -1574,6 +1583,9 @@ def write_region_sequences_digest(
     pattern_sha, pattern_rows = digest_frame(
         patterns, SEQUENCE_PATTERN_COLUMNS, pattern_sort_key()
     )
+    scan_sha, scan_rows = digest_table(
+        scan, SUPPORT_SCAN_COLUMNS, ("scope", "min_support")
+    )
     count_sha, count_rows = digest_funnel(counts)
     stages = funnel_records(counts)
     scoped: dict[str, object] = {"scopes": dict(observations)}
@@ -1583,6 +1595,7 @@ def write_region_sequences_digest(
         "tables": {
             "track_sequences": {"sha256": sequence_sha, "rows": sequence_rows},
             SEQUENCE_PATTERN_TABLE: {"sha256": pattern_sha, "rows": pattern_rows},
+            SEQUENCE_SUPPORT_SCAN_TABLE: {"sha256": scan_sha, "rows": scan_rows},
             f"stage_counts_{STAGE}": {"sha256": count_sha, "rows": count_rows},
         },
         "stage_counts": stages,

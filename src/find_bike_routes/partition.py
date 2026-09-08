@@ -142,7 +142,7 @@ def _split_components(assignment: Mapping[Cell, int]) -> dict[Cell, int]:
         queue = deque([cell])
         while queue:
             current = queue.popleft()
-            for neighbour in _rook_neighbours(current):
+            for neighbour in rook_neighbours(current):
                 if (
                     assignment.get(neighbour) == community
                     and neighbour not in component_of
@@ -194,7 +194,7 @@ def _merge_target(
     neighbour_flow: dict[int, float] = defaultdict(float)
     boundary: dict[int, int] = defaultdict(int)
     for cell in cells:
-        for neighbour in _rook_neighbours(cell):
+        for neighbour in rook_neighbours(cell):
             other = assignment.get(neighbour)
             if other is None or other == region_id:
                 continue
@@ -219,7 +219,7 @@ def _fill_enclosed(assignment: Mapping[Cell, int]) -> tuple[dict[Cell, int], int
         for cell, region_id in snapshot.items():
             neighbours = [
                 snapshot[neighbour]
-                for neighbour in _rook_neighbours(cell)
+                for neighbour in rook_neighbours(cell)
                 if neighbour in snapshot
             ]
             others = set(neighbours) - {region_id}
@@ -254,6 +254,10 @@ def _undirected_pair(left: Cell, right: Cell) -> tuple[Cell, Cell]:
     return (left, right) if left <= right else (right, left)
 
 
-def _rook_neighbours(cell: Cell) -> tuple[Cell, ...]:
+def rook_neighbours(cell: Cell) -> tuple[Cell, ...]:
+    """The four edge-sharing cells. This is the project's one adjacency definition:
+    the postprocess splits, merges and fills on it, and the region adjacency the
+    sequence stage marks patterns against is built from it.
+    """
     x, y = cell
     return tuple((x + dx, y + dy) for dx, dy in _FOUR_ADJACENT)

@@ -1,16 +1,22 @@
-"""Cut valid tracks into region sequences and mine the frequent ones per scope.
+"""Cut valid tracks into region sequences, mine them, and attribute the patterns.
 
 This stage builds the sequence library, writes down what each of the six scopes
 will be measured with — how many sequences and valid tracks it covers, the
 effective absolute threshold, which term pinned it, and the `minSupport` MLlib is
-handed — and then runs PrefixSpan once per scope into a flat `sequence_patterns`.
+handed — runs PrefixSpan once per scope into a flat `sequence_patterns`, then
+broadcasts that pattern set back over the library for one attribution pass: the
+contiguous support, the four departure-hour columns (ADR-0012), whether every
+step of the pattern is a real region adjacency, and the region codes that let a
+chain be read out as place names. `sequence_support_scan` aggregates the same
+table at six thresholds so the threshold choice is itself auditable.
 
 Every parameter that could shift a definition is fixed in code (ADR-0002); the
 flags here only choose which days to read, where to read and write them, how to
 name the run, and whether to replace what is already on disk. The one exception
 is `--mining-min-count-floor`, an escape hatch for fixtures and threshold
 diagnosis: a non-default value is recorded loudly in the run products. The
-consumed `region_cells` digest is written into the run parameters (ADR-0008).
+consumed `region_cells` digest and the district-label file's digest are written
+into the run parameters (ADR-0008).
 """
 
 from __future__ import annotations
@@ -25,31 +31,39 @@ from pathlib import Path
 from find_bike_routes import PipelineError
 from find_bike_routes.config import RegionSequencesStageParameters
 from find_bike_routes.funnel import write_funnel
+from find_bike_routes.labels import load_district_labels, region_codes
 from find_bike_routes.region_context import read_frozen_partition
 from find_bike_routes.regions import REGION_CELL_COLUMNS
 from find_bike_routes.runs import (
     digest_table,
     ensure_data_contract,
+    sha256,
     write_environment,
     write_params,
     write_region_sequences_digest,
 )
 from find_bike_routes.sequences import (
+    PATTERN_OBSERVATION_COLUMNS,
     STAGE,
+    attribute_patterns,
     build_region_sequences_funnel,
     build_track_sequences,
     day_total_records,
     enumerate_scopes,
+    merged_scope_extras,
     mine_scope_patterns,
     pattern_observations,
     read_sequence_inputs,
     refuse_to_clobber,
+    region_adjacency,
     resolve_upstream,
     scope_thresholds,
     sequence_day_totals,
     sequence_observations,
+    support_scan_frame,
     threshold_payload,
     write_pattern_table,
+    write_support_scan_table,
     write_track_sequence_table,
 )
 from find_bike_routes.spark import build_session, ensure_java_runtime
@@ -59,6 +73,8 @@ TRAJECTORY_DIR = PROJECT_ROOT / "data/processed/trajectory"
 MATCHING_DIR = PROJECT_ROOT / "data/processed/matching"
 ASSIGNMENT_DIR = PROJECT_ROOT / "data/processed/region_assignment"
 REGIONS_DIR = PROJECT_ROOT / "data/processed/regions"
+PROFILES_DIR = PROJECT_ROOT / "data/processed/region_profiles"
+DISTRICT_LABELS = PROJECT_ROOT / "config/district-labels.json"
 OUTPUT_DIR = PROJECT_ROOT / "data/processed/region_sequences"
 ARTIFACTS_ROOT = PROJECT_ROOT / "artifacts" / "runs"
 PARAMETERS = RegionSequencesStageParameters()
@@ -117,7 +133,24 @@ def run(args: argparse.Namespace) -> None:
         dates=parameters.dates,
     )
     refuse_to_clobber(args.output, args.overwrite)
-    _regions, region_cells = read_frozen_partition(args.regions)
+    regions, region_cells = read_frozen_partition(args.regions)
+    # The freeze, the labels written for it and the region codes derived from both
+    # are settled before Spark starts, so labels belonging to another partition
+    # stop the run rather than colouring a table that already exists.
+    region_cells_digest, _rows = digest_table(
+        region_cells, REGION_CELL_COLUMNS, ("cell_x", "cell_y")
+    )
+    labels = load_district_labels(
+        args.district_labels,
+        region_cells_digest,
+        sorted({int(value) for value in regions["district_id"]}),
+    )
+    codes = region_codes(regions, labels)
+    districts = {
+        int(row.region_id): int(row.district_id)
+        for row in regions.itertuples(index=False)
+    }
+    adjacency = region_adjacency(region_cells)
     ensure_java_runtime()
     run_dir = ARTIFACTS_ROOT / args.run_id
     spark_logs = run_dir / "spark-logs"
@@ -129,9 +162,6 @@ def run(args: argparse.Namespace) -> None:
             "spark.eventLog.enabled": "true",
             "spark.eventLog.dir": spark_logs.resolve().as_uri(),
         },
-    )
-    region_cells_digest, _rows = digest_table(
-        region_cells, REGION_CELL_COLUMNS, ("cell_x", "cell_y")
     )
     write_environment(run_dir)
     try:
@@ -169,33 +199,60 @@ def run(args: argparse.Namespace) -> None:
             spark_conf=dict(session.sparkContext.getConf().getAll()),
             contract_check_skipped=args.skip_data_contract,
             region_cells_digest=region_cells_digest,
+            district_labels_digest=sha256(args.district_labels),
             scopes=threshold_payload(thresholds),
             notes=notes,
         )
-        patterns = mine_scope_patterns(
+        mined = mine_scope_patterns(
             session, sequences, scopes, thresholds, parameters
         )
+        # The attribution reads the pattern set twice — once to build the trie on
+        # the driver, once to join the counts back — so PrefixSpan runs once.
+        mined.persist()
+        patterns = attribute_patterns(
+            session,
+            sequences,
+            mined,
+            scopes,
+            adjacency=adjacency,
+            codes=codes,
+            districts=districts,
+            parameters=parameters,
+        )
         patterns.persist()
+        # One read of the enriched table feeds the scan table, the observations and
+        # the quoted Top-10, so none of the three can be computed off a different
+        # read of it.
+        pattern_frame = patterns.select(*PATTERN_OBSERVATION_COLUMNS).toPandas()
+        scan = support_scan_frame(pattern_frame, thresholds, parameters)
         sequences_path = write_track_sequence_table(
             sequences, args.output, args.overwrite
         )
         patterns_path = write_pattern_table(patterns, args.output, args.overwrite)
+        scan_path = write_support_scan_table(
+            session, scan, args.output, args.overwrite
+        )
         counts_path = write_funnel(counts, args.output, STAGE, args.overwrite)
+        extras = merged_scope_extras(
+            session, pattern_frame, scan, thresholds, args.profiles, parameters
+        )
         observations = sequence_observations(
             sequences,
             scopes,
             day_totals,
             thresholds,
-            pattern_observations(patterns),
+            pattern_observations(pattern_frame, thresholds),
+            parameters,
+            extras,
         )
         write_region_sequences_digest(
-            run_dir, sequences, patterns, counts, observations, notes
+            run_dir, sequences, patterns, scan, counts, observations, notes
         )
     finally:
         session.stop()
 
     print(
-        f"wrote {sequences_path}, {patterns_path} and {counts_path} "
+        f"wrote {sequences_path}, {patterns_path}, {scan_path} and {counts_path} "
         f"({len(parameters.dates)} date partition(s), {len(scopes)} scope(s), "
         f"run-id {args.run_id})"
     )
@@ -233,6 +290,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         default=REGIONS_DIR,
         help="regions output root holding region_cells and regions",
+    )
+    parser.add_argument(
+        "--district-labels",
+        type=Path,
+        default=DISTRICT_LABELS,
+        help=(
+            "manual district labels the region codes are built from; the run "
+            "refuses to start when the file was written for another freeze"
+        ),
+    )
+    parser.add_argument(
+        "--profiles",
+        type=Path,
+        default=PROFILES_DIR,
+        help=(
+            "region-profiles output root holding flow_channel, read only to "
+            "record the length-2 contrast on a default-date run; a missing one "
+            "leaves a note rather than failing the run"
+        ),
     )
     parser.add_argument("--output", type=Path, default=OUTPUT_DIR)
     parser.add_argument(

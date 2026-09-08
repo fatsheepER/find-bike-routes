@@ -870,13 +870,13 @@ def region_profile_observations(
             "pearson_area": _correlation(
                 area["net_inflow_per_km2"], area["area_composition"]
             ),
-            "spearman_area": _spearman(
+            "spearman_area": spearman(
                 area["net_inflow_per_km2"], area["area_composition"]
             ),
             "pearson_poi": _correlation(
                 poi["net_inflow_per_km2"], poi["poi_composition"]
             ),
-            "spearman_poi": _spearman(
+            "spearman_poi": spearman(
                 poi["net_inflow_per_km2"], poi["poi_composition"]
             ),
             "regions_area": len(area),
@@ -934,13 +934,13 @@ def region_profile_observations(
                     else None
                 ),
                 "track_od_pairs": len(track_od_pairs),
-                "track_od_flow_od_spearman": _spearman(
+                "track_od_flow_od_spearman": spearman(
                     shared["tracks"], shared["trips"]
                 ),
                 "shared_pairs": len(shared),
             },
             "core_full_pi_r": {
-                "spearman": _spearman(paired["pi_r_full"], paired["pi_r_core"]),
+                "spearman": spearman(paired["pi_r_full"], paired["pi_r_core"]),
                 "regions": len(paired),
             },
             "net_inflow_context_correlations": correlations,
@@ -993,7 +993,13 @@ def _correlation(left: pd.Series, right: pd.Series) -> float | None:
     return None if pd.isna(value) else round(float(value), 4)
 
 
-def _spearman(left: pd.Series, right: pd.Series) -> float | None:
+def spearman(left: pd.Series, right: pd.Series) -> float | None:
+    """Rank correlation, rounded, or None when either side has nothing to rank.
+
+    Public because the sequence stage records the same statistic against
+    `flow_channel`, and two spellings of one coefficient in one report is one
+    spelling too many.
+    """
     return _correlation(left.rank(method="average"), right.rank(method="average"))
 
 
