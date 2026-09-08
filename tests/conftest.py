@@ -21,6 +21,7 @@ from support import (
     AUDIT_MAPS,
     FIXTURE,
     FIXTURE_DATE,
+    FIXTURE_MIN_COUNT_FLOOR,
     FIXTURE_NETWORK,
     FIXTURE_OSM_CONTEXT,
     ORDER_FIXTURE,
@@ -409,6 +410,7 @@ def region_profiles_run(
 class RegionSequencesRun:
     output: Path
     track_sequences: Path
+    sequence_patterns: Path
     stage_counts: Path
     artifacts: Path
     trajectory: Path
@@ -423,10 +425,11 @@ def region_sequences_run(
     assign_regions_run: AssignRegionsRun,
     tmp_path_factory: pytest.TempPathFactory,
 ) -> Iterator[RegionSequencesRun]:
-    """Cut the fixture's assigned visits into region sequences.
+    """Cut the fixture's assigned visits into region sequences and mine them.
 
     Declared last because it is the last pipeline step; the stage itself needs
-    only the split tracks and the assignment, not the profiles.
+    only the split tracks and the assignment, not the profiles. The support floor
+    is overridden here, in the test, because 20 bike ids cannot reach the real one.
     """
     output = tmp_path_factory.mktemp("region_sequences") / "region_sequences"
     artifacts = ARTIFACTS_ROOT / "test-region-sequences"
@@ -439,12 +442,14 @@ def region_sequences_run(
         "--dates", FIXTURE_DATE,
         "--output", str(output),
         "--run-id", "test-region-sequences",
+        "--mining-min-count-floor", str(FIXTURE_MIN_COUNT_FLOOR),
     )
     assert completed.returncode == 0, completed.stderr
     try:
         yield RegionSequencesRun(
             output=output,
             track_sequences=output / "track_sequences",
+            sequence_patterns=output / "sequence_patterns",
             stage_counts=output / "stage_counts_region_sequences",
             artifacts=artifacts,
             trajectory=split_run.output,

@@ -1,4 +1,4 @@
-"""Region-sequence cutting, the support-threshold arithmetic, and the CLI contract."""
+"""Region-sequence cutting, the threshold arithmetic, the mining, and the CLI."""
 
 from __future__ import annotations
 
@@ -11,26 +11,43 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from dataclasses import replace
+
+from pyspark.sql.types import (
+    ArrayType,
+    DateType,
+    IntegerType,
+    StructField,
+    StructType,
+)
+
 from find_bike_routes.config import (
     CLEAR_DAY_DATES,
     STUDY_DATES,
     RegionSequencesStageParameters,
+    SparkParameters,
 )
 from find_bike_routes.regions import REGION_CELL_COLUMNS
 from find_bike_routes.runs import digest_table
 from find_bike_routes.sequences import (
     TRACK_SEQUENCE_COLUMNS,
+    Scope,
     cut_region_sequences,
     enumerate_scopes,
+    mine_scope_patterns,
+    pattern_observations,
     scope_thresholds,
     spark_min_support,
     support_threshold,
 )
+from find_bike_routes.spark import build_session, ensure_java_runtime
 from support import (
     ARTIFACTS_ROOT,
     FIXTURE_DATE,
+    FIXTURE_MIN_COUNT_FLOOR,
     ORDER_FIXTURE,
     read_region_cells,
+    read_sequence_patterns,
     read_stage_counts,
     read_track_match,
     read_track_regions,
@@ -290,6 +307,140 @@ def test_a_relative_term_that_only_reaches_the_floor_counts_as_relative():
     assert threshold.bound_by == "relative"
 
 
+# The fixture is one day, so the six-scope shape — a merged scope stacked on the
+# daily ones, and a scope with nothing in it — is only reachable on a synthetic
+# library. These run in-process on a one-core session, like the funnel cases.
+DAY_ONE = date(2020, 12, 21)
+DAY_TWO = date(2020, 12, 22)
+EMPTY_DAY = date(2020, 12, 26)
+
+SYNTHETIC_SCHEMA = StructType(
+    [
+        StructField("regions", ArrayType(IntegerType(), False), False),
+        StructField("length", IntegerType(), False),
+        StructField("source_date", DateType(), True),
+    ]
+)
+SYNTHETIC_LIBRARY = [
+    ((1, 2, 3), DAY_ONE),
+    ((1, 2, 3), DAY_ONE),
+    ((1, 2, 3), DAY_ONE),
+    ((1, 3), DAY_ONE),
+    ((1, 2, 3), DAY_TWO),
+    ((1, 2, 3), DAY_TWO),
+    ((4, 5), DAY_TWO),
+    ((4, 5), DAY_TWO),
+]
+SYNTHETIC_TOTALS = {
+    DAY_ONE.isoformat(): {"valid_tracks": 4, "sequences": 4},
+    DAY_TWO.isoformat(): {"valid_tracks": 4, "sequences": 4},
+    EMPTY_DAY.isoformat(): {"valid_tracks": 0, "sequences": 0},
+}
+SYNTHETIC_SCOPES = (
+    Scope(name="clear-days", dates=(DAY_ONE, DAY_TWO)),
+    Scope(name=DAY_ONE.isoformat(), dates=(DAY_ONE,)),
+    Scope(name=EMPTY_DAY.isoformat(), dates=(EMPTY_DAY,)),
+)
+# Two occurrences is the smallest threshold that still separates a pattern from
+# noise on eight sequences; the defaults would mine nothing at this size.
+SYNTHETIC_PARAMETERS = replace(PARAMETERS, mining_min_count_floor=2)
+
+
+@pytest.fixture(scope="module")
+def spark():
+    ensure_java_runtime()
+    session = build_session(
+        "test-region-sequences-mining",
+        SparkParameters(master="local[1]", driver_memory="1g", shuffle_partitions=2),
+    )
+    try:
+        yield session
+    finally:
+        session.stop()
+
+
+def mine_synthetic(spark, parameters=SYNTHETIC_PARAMETERS):
+    sequences = spark.createDataFrame(
+        [(list(regions), len(regions), day) for regions, day in SYNTHETIC_LIBRARY],
+        SYNTHETIC_SCHEMA,
+    )
+    thresholds = scope_thresholds(SYNTHETIC_SCOPES, SYNTHETIC_TOTALS, parameters)
+    patterns = mine_scope_patterns(
+        spark, sequences, SYNTHETIC_SCOPES, thresholds, parameters
+    )
+    return [
+        (row["scope"], tuple(row["pattern"]), int(row["length"]), int(row["support"]))
+        for row in patterns.collect()
+    ], patterns
+
+
+@pytest.mark.spark
+def test_each_scope_is_mined_on_its_own_sequences_with_its_own_ruler(spark):
+    rows, _patterns = mine_synthetic(spark)
+
+    merged = {
+        pattern: support
+        for scope, pattern, _length, support in rows
+        if scope == "clear-days"
+    }
+    daily = {
+        pattern: support
+        for scope, pattern, _length, support in rows
+        if scope == DAY_ONE.isoformat()
+    }
+
+    assert merged == {(1, 2): 5, (1, 3): 6, (2, 3): 5, (1, 2, 3): 5, (4, 5): 2}
+    assert daily == {(1, 2): 3, (1, 3): 4, (2, 3): 3, (1, 2, 3): 3}
+    # The merged scope is mined, not summed: (4, 5) never entered day one at all,
+    # and every shared pattern counts sequences the daily scope cannot see.
+    assert (4, 5) not in daily
+
+
+@pytest.mark.spark
+def test_a_scope_without_sequences_contributes_no_rows(spark):
+    rows, patterns = mine_synthetic(spark)
+
+    assert EMPTY_DAY.isoformat() not in {scope for scope, *_rest in rows}
+    assert EMPTY_DAY.isoformat() not in pattern_observations(patterns)
+
+
+@pytest.mark.spark
+def test_length_one_patterns_are_not_materialised(spark):
+    rows, _patterns = mine_synthetic(spark)
+
+    assert rows
+    assert all(length >= 2 for *_head, length, _support in rows)
+    assert all(len(pattern) == length for _scope, pattern, length, _support in rows)
+
+
+@pytest.mark.spark
+def test_stacked_scopes_come_back_in_the_sort_key_order(spark):
+    rows, _patterns = mine_synthetic(spark)
+
+    keys = [
+        (scope, length, -support, pattern)
+        for scope, pattern, length, support in rows
+    ]
+
+    assert keys == sorted(keys)
+
+
+@pytest.mark.spark
+def test_max_pattern_length_truncates_and_the_observation_shows_it(spark):
+    capped = replace(SYNTHETIC_PARAMETERS, max_pattern_length=2)
+
+    rows, patterns = mine_synthetic(spark, capped)
+    observed = pattern_observations(patterns)
+
+    assert all(length <= 2 for *_head, length, _support in rows)
+    assert observed["clear-days"]["pattern_length_max"] == 2
+    assert observed["clear-days"]["patterns_by_length"] == {"2": 4}
+    # Uncapped, the same library mines a three-region chain; the cap is what took
+    # it away, and the observation is where that is visible.
+    uncapped, _frame = mine_synthetic(spark)
+    assert any(length == 3 for *_head, length, _support in uncapped)
+
+
 PARTITIONED_INPUTS = {
     "tracks": "trajectory",
     "track_match": "matching",
@@ -520,7 +671,10 @@ def test_params_carry_the_scope_arithmetic_and_the_consumed_freeze(
     assert params["parameters"]["min_sequence_length"] == 2
     assert params["parameters"]["max_pattern_length"] == 10
     assert params["parameters"]["mining_min_support"] == 0.0002
-    assert params["parameters"]["mining_min_count_floor"] == 10
+    # The fixture run overrides the floor, and params.json records what it mined
+    # with rather than what the default says.
+    assert params["parameters"]["mining_min_count_floor"] == FIXTURE_MIN_COUNT_FLOOR
+    assert any("绝对下限被覆盖" in note for note in params["notes"])
     assert params["parameters"]["support_scan"] == [
         0.0002,
         0.0005,
@@ -544,9 +698,9 @@ def test_params_carry_the_scope_arithmetic_and_the_consumed_freeze(
     # spec's arithmetic rather than from the code that wrote them.
     relative = math.floor(0.0002 * valid_tracks + 0.5)
     assert scope["relative_count"] == relative
-    assert scope["min_support_count"] == max(relative, 10)
+    assert scope["min_support_count"] == max(relative, FIXTURE_MIN_COUNT_FLOOR)
     assert scope["threshold_bound_by"] == (
-        "relative" if relative >= 10 else "floor"
+        "relative" if relative >= FIXTURE_MIN_COUNT_FLOOR else "floor"
     )
     assert scope["spark_min_support"] == pytest.approx(
         (scope["min_support_count"] - 0.5) / scope["sequences"]
@@ -581,6 +735,9 @@ def test_digest_observes_the_library_per_scope(region_sequences_run):
         "length_p90",
         "length_max",
         "length_ge5",
+        "patterns",
+        "patterns_by_length",
+        "pattern_length_max",
     }
     lengths = sequences["length"].to_numpy()
     assert scope["sequences"] == len(sequences)
@@ -592,6 +749,91 @@ def test_digest_observes_the_library_per_scope(region_sequences_run):
     assert scope["length_p90"] == pytest.approx(float(np.percentile(lengths, 90)))
     assert scope["length_max"] == int(lengths.max())
     assert scope["length_ge5"] == int((lengths >= 5).sum())
+
+
+@pytest.mark.spark
+def test_mined_scopes_are_the_requested_days_and_nothing_merged(
+    region_sequences_run,
+):
+    patterns = read_sequence_patterns(region_sequences_run.sequence_patterns)
+
+    assert list(patterns.columns) == ["scope", "pattern", "length", "support"]
+    # One fixture day, so the merged scope has no business being here.
+    assert set(patterns["scope"]) == {FIXTURE_DATE}
+    assert "clear-days" not in set(patterns["scope"])
+
+
+@pytest.mark.spark
+def test_every_pattern_is_two_regions_or_more_and_under_the_cap(
+    region_sequences_run,
+):
+    patterns = read_sequence_patterns(region_sequences_run.sequence_patterns)
+
+    assert not patterns.empty
+    for row in patterns.itertuples(index=False):
+        assert len(row.pattern) == row.length
+        assert row.length >= PARAMETERS.min_sequence_length
+        assert row.length <= PARAMETERS.max_pattern_length
+
+
+@pytest.mark.spark
+def test_patterns_are_written_in_the_sort_key_order(region_sequences_run):
+    patterns = read_sequence_patterns(region_sequences_run.sequence_patterns)
+
+    keys = [
+        (
+            row.scope,
+            int(row.length),
+            -int(row.support),
+            tuple(int(region) for region in row.pattern),
+        )
+        for row in patterns.itertuples(index=False)
+    ]
+
+    assert keys == sorted(keys)
+    assert len(set(keys)) == len(keys)
+
+
+@pytest.mark.spark
+def test_every_pattern_clears_the_threshold_the_params_published(
+    region_sequences_run,
+):
+    patterns = read_sequence_patterns(region_sequences_run.sequence_patterns)
+    params = json.loads(
+        (region_sequences_run.artifacts / "params.json").read_text(encoding="utf-8")
+    )
+    scope = params["scopes"][0]
+
+    # The absolute count is the ruler; what MLlib was handed only has to land on
+    # it. Both readings are checked against the table that came out.
+    assert scope["min_support_count"] == FIXTURE_MIN_COUNT_FLOOR
+    assert (
+        math.ceil(scope["sequences"] * scope["spark_min_support"])
+        == scope["min_support_count"]
+    )
+    assert patterns["support"].min() >= scope["min_support_count"]
+    assert patterns["support"].max() <= scope["sequences"]
+
+
+@pytest.mark.spark
+def test_digest_observes_the_mined_patterns_per_scope(region_sequences_run):
+    digest = json.loads(
+        (region_sequences_run.artifacts / "digest.json").read_text(encoding="utf-8")
+    )
+    patterns = read_sequence_patterns(region_sequences_run.sequence_patterns)
+
+    assert digest["tables"]["sequence_patterns"]["rows"] == len(patterns)
+    scope = digest["observations"]["region_sequences"]["scopes"][FIXTURE_DATE]
+    by_length = {
+        str(length): int(count)
+        for length, count in patterns["length"].value_counts().items()
+    }
+
+    assert scope["patterns"] == len(patterns)
+    assert scope["patterns_by_length"] == by_length
+    assert sum(scope["patterns_by_length"].values()) == scope["patterns"]
+    assert scope["pattern_length_max"] == int(patterns["length"].max())
+    assert scope["spark_min_support"] is not None
 
 
 @pytest.mark.spark
@@ -609,6 +851,7 @@ def test_repeat_run_has_the_same_content_and_skip_marker(
         "--dates", FIXTURE_DATE,
         "--output", str(tmp_path / "output"),
         "--run-id", run_id,
+        "--mining-min-count-floor", str(FIXTURE_MIN_COUNT_FLOOR),
         "--skip-data-contract",
     )
 

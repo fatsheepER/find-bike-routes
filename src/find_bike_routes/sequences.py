@@ -23,10 +23,13 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from pyspark.sql import DataFrame, SparkSession, functions as F
+from pyspark.ml.fpm import PrefixSpan
+from pyspark.sql import Column, DataFrame, SparkSession, functions as F
 from pyspark.sql.types import (
     ArrayType,
     IntegerType,
+    LongType,
+    StringType,
     StructField,
     StructType,
 )
@@ -39,6 +42,7 @@ from .funnel import funnel_table_name
 from .matching import TRACK_MATCH_TABLE
 
 TRACK_SEQUENCE_TABLE = "track_sequences"
+SEQUENCE_PATTERN_TABLE = "sequence_patterns"
 STAGE = "region_sequences"
 # The merged scope. `source_date` cannot name it, which is why `scope` is a plain
 # string column on the mined tables rather than a partition.
@@ -47,6 +51,13 @@ RELATIVE_BOUND = "relative"
 FLOOR_BOUND = "floor"
 FUNNEL_TRACK_UNIT = "轨迹"
 FUNNEL_SEQUENCE_UNIT = "序列"
+
+SEQUENCE_PATTERN_COLUMNS = (
+    "scope",
+    "pattern",
+    "length",
+    "support",
+)
 
 TRACK_SEQUENCE_COLUMNS = (
     "TRACK_ID",
@@ -85,6 +96,14 @@ _TRACK_RESULT = StructType(
     [
         StructField("sequences", ArrayType(_SEQUENCE), False),
         StructField("candidate_segments", IntegerType(), False),
+    ]
+)
+_PATTERN = StructType(
+    [
+        StructField("scope", StringType(), True),
+        StructField("pattern", ArrayType(IntegerType(), True), True),
+        StructField("length", IntegerType(), True),
+        StructField("support", LongType(), True),
     ]
 )
 
@@ -283,6 +302,10 @@ def track_sequence_table_path(output_root: Path) -> Path:
     return output_root / TRACK_SEQUENCE_TABLE
 
 
+def pattern_table_path(output_root: Path) -> Path:
+    return output_root / SEQUENCE_PATTERN_TABLE
+
+
 def funnel_path(output_root: Path) -> Path:
     return output_root / funnel_table_name(STAGE)
 
@@ -318,7 +341,11 @@ def refuse_to_clobber(output_root: Path, overwrite: bool) -> None:
         return
     existing = [
         path
-        for path in (track_sequence_table_path(output_root), funnel_path(output_root))
+        for path in (
+            track_sequence_table_path(output_root),
+            pattern_table_path(output_root),
+            funnel_path(output_root),
+        )
         if path.is_dir() and any(path.iterdir())
     ]
     if existing:
@@ -534,8 +561,14 @@ def sequence_observations(
     scopes: Sequence[Scope],
     day_totals: Mapping[str, Mapping[str, int]],
     thresholds: Mapping[str, SupportThreshold],
+    patterns: Mapping[str, Mapping[str, object]],
 ) -> dict[str, object]:
-    """One group per scope: how many sequences, from how many tracks, how long."""
+    """One group per scope: how many sequences, from how many tracks, how long.
+
+    The mined side joins the same group rather than getting one of its own: the
+    ruler, the library it measured and the patterns it produced are read together
+    or not at all.
+    """
     lengths = sequences.select(PARTITION_COLUMN, "length").toPandas()
     if not lengths.empty:
         lengths[PARTITION_COLUMN] = lengths[PARTITION_COLUMN].map(
@@ -563,6 +596,7 @@ def sequence_observations(
             "threshold_bound_by": threshold.bound_by,
             "spark_min_support": threshold.spark_min_support,
             **_length_stats(scoped),
+            **dict(patterns.get(scope.name, _EMPTY_PATTERN_STATS)),
         }
     return payload
 
@@ -584,6 +618,36 @@ def _length_stats(lengths: pd.Series) -> dict[str, object]:
     }
 
 
+_EMPTY_PATTERN_STATS: dict[str, object] = {
+    "patterns": 0,
+    "patterns_by_length": {},
+    "pattern_length_max": None,
+}
+
+
+def pattern_observations(patterns: DataFrame) -> dict[str, dict[str, object]]:
+    """Per scope: how many patterns, split by length, and the longest one mined.
+
+    The longest one is here so a `max_pattern_length` truncation is visible the
+    moment it happens: a scope whose longest pattern sits on the cap has probably
+    lost longer ones, and nothing else in the run products would say so.
+    """
+    pdf = patterns.select("scope", "length").toPandas()
+    payload: dict[str, dict[str, object]] = {}
+    if pdf.empty:
+        return payload
+    for scope, rows in pdf.groupby("scope", sort=True):
+        by_length = rows["length"].value_counts().sort_index()
+        payload[str(scope)] = {
+            "patterns": int(len(rows)),
+            "patterns_by_length": {
+                str(int(length)): int(count) for length, count in by_length.items()
+            },
+            "pattern_length_max": int(rows["length"].max()),
+        }
+    return payload
+
+
 def write_track_sequence_table(
     frame: DataFrame, output_root: Path, overwrite: bool
 ) -> Path:
@@ -592,6 +656,98 @@ def write_track_sequence_table(
         frame.select(*TRACK_SEQUENCE_COLUMNS)
         .write.mode("overwrite" if overwrite else "errorifexists")
         .partitionBy(PARTITION_COLUMN)
+        .parquet(str(path))
+    )
+    return path
+
+
+def pattern_sort_key() -> tuple[Column, ...]:
+    """`(scope, length, −support, pattern)`.
+
+    MLlib does not promise an output order, so this is the only thing standing
+    between two identical runs and two different files.
+    """
+    return (
+        F.col("scope").asc(),
+        F.col("length").asc(),
+        F.col("support").desc(),
+        F.col("pattern").asc(),
+    )
+
+
+def mine_scope_patterns(
+    session: SparkSession,
+    sequences: DataFrame,
+    scopes: Sequence[Scope],
+    thresholds: Mapping[str, SupportThreshold],
+    parameters: RegionSequencesStageParameters,
+) -> DataFrame:
+    """Mine every scope once and stack the results into one flat table.
+
+    Each scope is mined on its own sequences with its own ruler; the merged scope
+    is not the sum of the daily ones, because a pattern under a day's threshold
+    was already dropped from that day's result and cannot be added back.
+    """
+    mined = [
+        _mine_one_scope(session, sequences, scope, thresholds[scope.name], parameters)
+        for scope in scopes
+    ]
+    stacked = mined[0] if mined else session.createDataFrame([], _PATTERN)
+    for frame in mined[1:]:
+        stacked = stacked.unionByName(frame)
+    return stacked.orderBy(*pattern_sort_key())
+
+
+def _mine_one_scope(
+    session: SparkSession,
+    sequences: DataFrame,
+    scope: Scope,
+    threshold: SupportThreshold,
+    parameters: RegionSequencesStageParameters,
+) -> DataFrame:
+    """One PrefixSpan run. Each region becomes its own one-item itemset.
+
+    Length-1 patterns are dropped: their support is `region_metrics.tracks_visiting`
+    counted the other way round, and one number does not need two tables.
+    """
+    if threshold.spark_min_support is None:
+        return session.createDataFrame([], _PATTERN)
+    wanted = [day.isoformat() for day in scope.dates]
+    itemsets = sequences.where(
+        F.col(PARTITION_COLUMN).cast("string").isin(wanted)
+    ).select(F.transform("regions", lambda region: F.array(region)).alias("sequence"))
+    model = PrefixSpan(
+        minSupport=threshold.spark_min_support,
+        maxPatternLength=parameters.max_pattern_length,
+        maxLocalProjDBSize=parameters.max_local_proj_db_size,
+        sequenceCol="sequence",
+    )
+    found = model.findFrequentSequentialPatterns(itemsets)
+    return (
+        found.select(
+            F.lit(scope.name).cast("string").alias("scope"),
+            F.flatten("sequence").cast("array<int>").alias("pattern"),
+            F.col("freq").cast("long").alias("support"),
+        )
+        .withColumn("length", F.size("pattern").cast("int"))
+        .where(F.col("length") >= parameters.min_sequence_length)
+        .select(*SEQUENCE_PATTERN_COLUMNS)
+    )
+
+
+def write_pattern_table(frame: DataFrame, output_root: Path, overwrite: bool) -> Path:
+    """Write `sequence_patterns` as one sorted file.
+
+    No partition: the merged scope has no `source_date` that would not be a lie,
+    and at a few thousand rows one file costs nothing and keeps the sort key
+    readable straight off the disk.
+    """
+    path = pattern_table_path(output_root)
+    (
+        frame.select(*SEQUENCE_PATTERN_COLUMNS)
+        .repartition(1)
+        .sortWithinPartitions(*pattern_sort_key())
+        .write.mode("overwrite" if overwrite else "errorifexists")
         .parquet(str(path))
     )
     return path

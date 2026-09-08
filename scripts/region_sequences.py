@@ -1,14 +1,16 @@
-"""Cut valid tracks into region sequences and size the mining threshold per scope.
+"""Cut valid tracks into region sequences and mine the frequent ones per scope.
 
-This stage builds the sequence library and writes down what the next stage will
-measure patterns with: for each of the six scopes, how many sequences and valid
-tracks it covers, the effective absolute threshold, which term pinned it, and the
-`minSupport` MLlib would be handed. It does not mine.
+This stage builds the sequence library, writes down what each of the six scopes
+will be measured with — how many sequences and valid tracks it covers, the
+effective absolute threshold, which term pinned it, and the `minSupport` MLlib is
+handed — and then runs PrefixSpan once per scope into a flat `sequence_patterns`.
 
 Every parameter that could shift a definition is fixed in code (ADR-0002); the
 flags here only choose which days to read, where to read and write them, how to
-name the run, and whether to replace what is already on disk. The consumed
-`region_cells` digest is written into the run parameters (ADR-0008).
+name the run, and whether to replace what is already on disk. The one exception
+is `--mining-min-count-floor`, an escape hatch for fixtures and threshold
+diagnosis: a non-default value is recorded loudly in the run products. The
+consumed `region_cells` digest is written into the run parameters (ADR-0008).
 """
 
 from __future__ import annotations
@@ -38,6 +40,8 @@ from find_bike_routes.sequences import (
     build_track_sequences,
     day_total_records,
     enumerate_scopes,
+    mine_scope_patterns,
+    pattern_observations,
     read_sequence_inputs,
     refuse_to_clobber,
     resolve_upstream,
@@ -45,6 +49,7 @@ from find_bike_routes.sequences import (
     sequence_day_totals,
     sequence_observations,
     threshold_payload,
+    write_pattern_table,
     write_track_sequence_table,
 )
 from find_bike_routes.spark import build_session, ensure_java_runtime
@@ -100,7 +105,11 @@ def run(args: argparse.Namespace) -> None:
                 if path.is_file()
             }
         )
-    parameters = replace(PARAMETERS, dates=tuple(args.dates))
+    parameters = replace(
+        PARAMETERS,
+        dates=tuple(args.dates),
+        mining_min_count_floor=args.mining_min_count_floor,
+    )
     resolve_upstream(
         trajectory=args.trajectory,
         matching=args.matching,
@@ -145,6 +154,12 @@ def run(args: argparse.Namespace) -> None:
         day_totals = day_total_records(totals)
         scopes, skipped = enumerate_scopes(parameters.dates)
         notes = [skipped] if skipped else []
+        if parameters.mining_min_count_floor != PARAMETERS.mining_min_count_floor:
+            notes.append(
+                f"绝对下限被覆盖为 {parameters.mining_min_count_floor}"
+                f"（默认 {PARAMETERS.mining_min_count_floor}）；本次运行的模式集"
+                f"与默认口径不可比"
+            )
         thresholds = scope_thresholds(scopes, day_totals, parameters)
         # The scope arithmetic is part of the parameters, so params.json waits for
         # the counts it is derived from rather than being written on the way in.
@@ -157,21 +172,30 @@ def run(args: argparse.Namespace) -> None:
             scopes=threshold_payload(thresholds),
             notes=notes,
         )
+        patterns = mine_scope_patterns(
+            session, sequences, scopes, thresholds, parameters
+        )
+        patterns.persist()
         sequences_path = write_track_sequence_table(
             sequences, args.output, args.overwrite
         )
+        patterns_path = write_pattern_table(patterns, args.output, args.overwrite)
         counts_path = write_funnel(counts, args.output, STAGE, args.overwrite)
         observations = sequence_observations(
-            sequences, scopes, day_totals, thresholds
+            sequences,
+            scopes,
+            day_totals,
+            thresholds,
+            pattern_observations(patterns),
         )
         write_region_sequences_digest(
-            run_dir, sequences, counts, observations, notes
+            run_dir, sequences, patterns, counts, observations, notes
         )
     finally:
         session.stop()
 
     print(
-        f"wrote {sequences_path} and {counts_path} "
+        f"wrote {sequences_path}, {patterns_path} and {counts_path} "
         f"({len(parameters.dates)} date partition(s), {len(scopes)} scope(s), "
         f"run-id {args.run_id})"
     )
@@ -212,6 +236,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--output", type=Path, default=OUTPUT_DIR)
     parser.add_argument(
+        "--mining-min-count-floor",
+        type=int,
+        default=PARAMETERS.mining_min_count_floor,
+        help=(
+            "override the absolute support floor; for fixtures and threshold "
+            "diagnosis only, since it changes the 口径 (ADR-0002). A non-default "
+            "value is written into params.json and the digest as a note"
+        ),
+    )
+    parser.add_argument(
         "--run-id",
         default=None,
         help="names this run; default {UTC timestamp}-{git short sha}-region-sequences",
@@ -219,7 +253,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--overwrite",
         action="store_true",
-        help="replace the date partitions this run produces, leaving other dates alone",
+        help=(
+            "replace the date partitions this run produces, leaving other dates "
+            "alone; sequence_patterns has no partitions, so it is replaced whole "
+            "and holds only the scopes this run mined"
+        ),
     )
     parser.add_argument(
         "--skip-data-contract",

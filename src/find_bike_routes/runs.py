@@ -15,7 +15,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from pyspark.sql import DataFrame, functions as F
+from pyspark.sql import Column, DataFrame, functions as F
 
 from . import PipelineError
 from .config import (
@@ -545,9 +545,15 @@ def digest_table(
 
 
 def digest_frame(
-    frame: DataFrame, columns: tuple[str, ...], order: tuple[str, ...]
+    frame: DataFrame,
+    columns: tuple[str, ...],
+    order: Sequence[str | Column],
 ) -> tuple[str, int]:
-    """sha256 of the table's content: sorted by primary key, one TSV line per row."""
+    """sha256 of the table's content: sorted by primary key, one TSV line per row.
+
+    The order may be given as column expressions rather than names, because not
+    every table's sort key is ascending on every column.
+    """
     hasher = hashlib.sha256()
     rows = 0
     for row in frame.orderBy(*order).select(*columns).toLocalIterator():
@@ -1545,18 +1551,28 @@ def write_region_profiles_digest(
 def write_region_sequences_digest(
     run_dir: Path,
     sequences: DataFrame,
+    patterns: DataFrame,
     counts: DataFrame,
     observations: Mapping[str, object],
     notes: Sequence[str] = (),
 ) -> Path:
-    """Content digest of the sequence library and the funnel (ADR-0003)."""
+    """Content digest of the sequence library, the mined patterns and the funnel."""
     from .funnel import digest_funnel, funnel_observations, funnel_records
-    from .sequences import STAGE, TRACK_SEQUENCE_COLUMNS
+    from .sequences import (
+        SEQUENCE_PATTERN_COLUMNS,
+        SEQUENCE_PATTERN_TABLE,
+        STAGE,
+        TRACK_SEQUENCE_COLUMNS,
+        pattern_sort_key,
+    )
 
     sequence_sha, sequence_rows = digest_frame(
         sequences,
         TRACK_SEQUENCE_COLUMNS,
         ("source_date", "TRACK_ID", "piece_index", "segment_index"),
+    )
+    pattern_sha, pattern_rows = digest_frame(
+        patterns, SEQUENCE_PATTERN_COLUMNS, pattern_sort_key()
     )
     count_sha, count_rows = digest_funnel(counts)
     stages = funnel_records(counts)
@@ -1566,6 +1582,7 @@ def write_region_sequences_digest(
     payload = {
         "tables": {
             "track_sequences": {"sha256": sequence_sha, "rows": sequence_rows},
+            SEQUENCE_PATTERN_TABLE: {"sha256": pattern_sha, "rows": pattern_rows},
             f"stage_counts_{STAGE}": {"sha256": count_sha, "rows": count_rows},
         },
         "stage_counts": stages,

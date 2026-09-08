@@ -42,6 +42,10 @@ FIXTURE_OSM_EXTENT = (
     PROJECT_ROOT / "tests" / "fixtures" / "osm-features-extent.geojson"
 )
 FIXTURE_DATE = "2020-12-21"
+# The fixture is 20 bike ids, so the default absolute floor of 10 mines nothing at
+# all. The threshold is overridden for the fixture run rather than lowered in the
+# parameters: the ruler the real days are measured with stays untouched.
+FIXTURE_MIN_COUNT_FLOOR = 2
 FIXTURE_POINTS = 4460
 ORDER_FIXTURE_TRIPS = 45
 ORDER_FIXTURE_DURATION_KEPT = 42
@@ -298,6 +302,11 @@ def read_track_sequences(sequences: Path) -> pd.DataFrame:
     return pd.read_parquet(sequences).sort_values(
         ["source_date", "TRACK_ID", "piece_index", "segment_index"]
     ).reset_index(drop=True)
+
+
+def read_sequence_patterns(patterns: Path) -> pd.DataFrame:
+    """Read `sequence_patterns` as written. Row order is the assertion, so no sort."""
+    return pd.read_parquet(patterns)
 
 
 def read_order_trip_regions(trips: Path) -> pd.DataFrame:
