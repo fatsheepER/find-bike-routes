@@ -29,6 +29,7 @@ ASSIGN_REGIONS_SCRIPT = PROJECT_ROOT / "scripts" / "assign_regions.py"
 OSM_CONTEXT_SCRIPT = PROJECT_ROOT / "scripts" / "extract_osm_context.py"
 REGION_CONTEXT_SCRIPT = PROJECT_ROOT / "scripts" / "region_context.py"
 REGION_PROFILES_SCRIPT = PROJECT_ROOT / "scripts" / "region_profiles.py"
+REGION_SEQUENCES_SCRIPT = PROJECT_ROOT / "scripts" / "region_sequences.py"
 ARTIFACTS_ROOT = PROJECT_ROOT / "artifacts" / "runs"
 AUDIT_MAPS = PROJECT_ROOT / "artifacts" / "audit" / "maps"
 FIXTURE = PROJECT_ROOT / "tests" / "fixtures" / "regression-sample-20201221.csv"
@@ -144,6 +145,17 @@ def run_region_profiles_cli(
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(REGION_PROFILES_SCRIPT), *arguments],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "TZ": RUNNER_TIME_ZONE, **(env or {})},
+    )
+
+
+def run_region_sequences_cli(
+    *arguments: str, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(REGION_SEQUENCES_SCRIPT), *arguments],
         capture_output=True,
         text=True,
         env={**os.environ, "TZ": RUNNER_TIME_ZONE, **(env or {})},
@@ -279,6 +291,12 @@ def read_seed_check(check: Path) -> pd.DataFrame:
 def read_track_regions(regions: Path) -> pd.DataFrame:
     return pd.read_parquet(regions).sort_values(
         ["TRACK_ID", "piece_index", "run_index"]
+    ).reset_index(drop=True)
+
+
+def read_track_sequences(sequences: Path) -> pd.DataFrame:
+    return pd.read_parquet(sequences).sort_values(
+        ["source_date", "TRACK_ID", "piece_index", "segment_index"]
     ).reset_index(drop=True)
 
 

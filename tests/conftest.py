@@ -4,7 +4,7 @@ A JVM start costs seconds, so each stage runs once per session over the committe
 fixture and the assertions read that run's products. Cases that need their own run —
 overwrite behaviour, refused arguments — pay for it themselves. The chain is
 split → match → order-trips → grid-flow → regions → assign-regions →
-region-context.
+region-context → region-profiles → region-sequences.
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ from support import (
     run_assign_regions_cli,
     run_region_context_cli,
     run_region_profiles_cli,
+    run_region_sequences_cli,
 )
 
 
@@ -399,6 +400,57 @@ def region_profiles_run(
             assignment=assign_regions_run.output,
             regions=assign_regions_run.regions,
             region_context=region_context_run.output,
+        )
+    finally:
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+@dataclass(frozen=True)
+class RegionSequencesRun:
+    output: Path
+    track_sequences: Path
+    stage_counts: Path
+    artifacts: Path
+    trajectory: Path
+    matching: Path
+    assignment: Path
+    regions: Path
+
+
+@pytest.fixture(scope="session")
+def region_sequences_run(
+    split_run: SplitRun,
+    assign_regions_run: AssignRegionsRun,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[RegionSequencesRun]:
+    """Cut the fixture's assigned visits into region sequences.
+
+    Declared last because it is the last pipeline step; the stage itself needs
+    only the split tracks and the assignment, not the profiles.
+    """
+    output = tmp_path_factory.mktemp("region_sequences") / "region_sequences"
+    artifacts = ARTIFACTS_ROOT / "test-region-sequences"
+    shutil.rmtree(artifacts, ignore_errors=True)
+    completed = run_region_sequences_cli(
+        "--trajectory", str(split_run.output),
+        "--matching", str(assign_regions_run.matching),
+        "--assignment", str(assign_regions_run.output),
+        "--regions", str(assign_regions_run.regions),
+        "--dates", FIXTURE_DATE,
+        "--output", str(output),
+        "--run-id", "test-region-sequences",
+    )
+    assert completed.returncode == 0, completed.stderr
+    try:
+        yield RegionSequencesRun(
+            output=output,
+            track_sequences=output / "track_sequences",
+            stage_counts=output / "stage_counts_region_sequences",
+            artifacts=artifacts,
+            trajectory=split_run.output,
+            matching=assign_regions_run.matching,
+            assignment=assign_regions_run.output,
+            regions=assign_regions_run.regions,
         )
     finally:
         shutil.rmtree(artifacts, ignore_errors=True)

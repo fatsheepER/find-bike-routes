@@ -7,7 +7,7 @@ import json
 import math
 import platform
 import subprocess
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import is_dataclass
 from datetime import date, datetime
 from importlib import metadata
@@ -30,6 +30,7 @@ from .config import (
     OsmContextStageParameters,
     RegionContextStageParameters,
     RegionProfilesStageParameters,
+    RegionSequencesStageParameters,
     RegionsStageParameters,
     SplitStageParameters,
 )
@@ -196,6 +197,17 @@ REGION_PROFILES_DEFINITION_FIELDS = (
     "track_funnel_stage_names",
     "trip_funnel_stage_names",
 )
+REGION_SEQUENCES_DEFINITION_FIELDS = (
+    "min_sequence_length",
+    "max_pattern_length",
+    "mining_min_support",
+    "mining_min_count_floor",
+    "support_scan",
+    "hours",
+    "max_local_proj_db_size",
+    "track_funnel_stage_names",
+    "sequence_funnel_stage_names",
+)
 OSM_CONTEXT_DEFINITION_FIELDS = (
     "island_tolerance_m",
     "crs",
@@ -294,11 +306,14 @@ def write_params(
         | AssignRegionsStageParameters
         | RegionContextStageParameters
         | RegionProfilesStageParameters
+        | RegionSequencesStageParameters
     ),
     contract_check_skipped: bool,
     spark_conf: Mapping[str, str] | None = None,
     lock_path: Path = LOCK_PATH,
     region_cells_digest: str | None = None,
+    scopes: Sequence[Mapping[str, object]] | None = None,
+    notes: Sequence[str] | None = None,
 ) -> Path:
     """Serialize the effective run parameters. A skipped check is marked in all caps."""
     if type(parameters) in PBF_STAGE_DEFINITION_FIELDS:
@@ -377,6 +392,25 @@ def write_params(
             },
             "data_contract_lock_sha256": sha256(lock_path),
         }
+    elif isinstance(parameters, RegionSequencesStageParameters):
+        # The scope arithmetic belongs here rather than in the digest: it is what
+        # the mined tables will be measured with, so it has to be readable before
+        # any mining happens. Its counts come from the sequence library, so this
+        # stage writes its params once that library exists.
+        payload = {
+            "timezone": parameters.spark.session_time_zone,
+            "spark": dict(spark_conf or {}),
+            "dates": [day.isoformat() for day in parameters.dates],
+            "region_cells_digest": region_cells_digest,
+            "parameters": {
+                name: _jsonable(getattr(parameters, name))
+                for name in REGION_SEQUENCES_DEFINITION_FIELDS
+            },
+            "scopes": [dict(scope) for scope in scopes or ()],
+            "data_contract_lock_sha256": sha256(lock_path),
+        }
+        if notes:
+            payload["notes"] = list(notes)
     elif isinstance(parameters, RegionProfilesStageParameters):
         payload = {
             "timezone": parameters.spark.session_time_zone,
@@ -1503,6 +1537,41 @@ def write_region_profiles_digest(
                 if flow_checks is not None
                 else {}
             ),
+        },
+    }
+    return _write_json(run_dir / "digest.json", payload)
+
+
+def write_region_sequences_digest(
+    run_dir: Path,
+    sequences: DataFrame,
+    counts: DataFrame,
+    observations: Mapping[str, object],
+    notes: Sequence[str] = (),
+) -> Path:
+    """Content digest of the sequence library and the funnel (ADR-0003)."""
+    from .funnel import digest_funnel, funnel_observations, funnel_records
+    from .sequences import STAGE, TRACK_SEQUENCE_COLUMNS
+
+    sequence_sha, sequence_rows = digest_frame(
+        sequences,
+        TRACK_SEQUENCE_COLUMNS,
+        ("source_date", "TRACK_ID", "piece_index", "segment_index"),
+    )
+    count_sha, count_rows = digest_funnel(counts)
+    stages = funnel_records(counts)
+    scoped: dict[str, object] = {"scopes": dict(observations)}
+    if notes:
+        scoped["notes"] = list(notes)
+    payload = {
+        "tables": {
+            "track_sequences": {"sha256": sequence_sha, "rows": sequence_rows},
+            f"stage_counts_{STAGE}": {"sha256": count_sha, "rows": count_rows},
+        },
+        "stage_counts": stages,
+        "observations": {
+            **funnel_observations(stages),
+            STAGE: scoped,
         },
     }
     return _write_json(run_dir / "digest.json", payload)

@@ -528,3 +528,36 @@ class RegionProfilesStageParameters:
         "两端归属已知",
         "解锁与上锁时刻都在时段集合内",
     )
+
+
+@dataclass(frozen=True, slots=True)
+class RegionSequencesStageParameters:
+    """Everything the frequent-region-sequence stage runs on (ADR-0002).
+
+    `mining_min_support` is relative to the valid tracks a scope covers and
+    `mining_min_count_floor` is the absolute floor under it; the effective
+    threshold is the larger of the two, and it is the only truth at this layer —
+    what MLlib is handed is derived from it (ADR-0013). `support_scan` is the
+    consumer-side filter ladder, `hours` is the same 时段 definition
+    `region_profiles` uses (ADR-0012), and `max_local_proj_db_size` is MLlib's
+    own default, recorded so a given run names the value it mined with.
+    """
+
+    dates: tuple[date, ...] = STUDY_DATES
+    spark: SparkParameters = SparkParameters()
+    min_sequence_length: int = 2
+    max_pattern_length: int = 10
+    mining_min_support: float = 0.0002
+    mining_min_count_floor: int = 10
+    support_scan: tuple[float, ...] = (0.0002, 0.0005, 0.001, 0.002, 0.005, 0.01)
+    hours: tuple[int, ...] = (6, 7, 8, 9)
+    max_local_proj_db_size: int = 32_000_000
+    track_funnel_stage_names: tuple[str, ...] = (
+        "有效轨迹",
+        "有 ≥ 1 次进入",
+        "有 ≥ 1 条区域序列",
+    )
+    sequence_funnel_stage_names: tuple[str, ...] = (
+        "切出的候选段",
+        "长度 ≥ 2 的区域序列",
+    )
