@@ -2,10 +2,11 @@
 
 `markov_scan.pairwise_ami` = 0.7922 is one number with no reference frame, taken
 over raw Infomap communities rather than over the 区域 every published statistic
-is keyed by. This stage gives it one. Five arms: the four leave-one-day folds
+is keyed by. This stage gives it one. Seven arms: the four leave-one-day folds
 (three days trained, one day held out), the same folds under the link-weight null
 model, the exposure-symmetric controls (2v2, which shares no day, and 3v3, which
-shares two), and the five-day partition that puts the rain day back in. Out of it
+shares two), the five-day partition that puts the rain day back in, Leiden, and
+alternate cell sizes. Out of it
 come `partitions` — every alternative partition on disk, one row per cell, with
 the arm, the variant and the solver settings it was cut with — and
 `partition_similarity`, one row per comparison.
@@ -44,9 +45,14 @@ Every 口径 parameter is fixed in code (ADR-0002); the flags here only choose
 which days to read, where to read and write them, how to name the run, and
 whether to replace what is already on disk. The one exception is `--arms`, which
 narrows the run to some of the arms so a single arm can be re-built without
-re-running the other 22 community detections; a non-default arm set is recorded
+re-running the other community detections; a non-default arm set is recorded
 loudly in the run products, because a table holding one arm is not the same
-evidence as a table holding five.
+evidence as a table holding all seven.
+
+The cell-size arm compares only order-trip Top-K pairs. Channel flow is not
+compared across cell sizes because changing the grid changes both crossing
+detection and the qualifying threshold, so the difference cannot be attributed
+to the region boundary (ADR-0015).
 """
 
 from __future__ import annotations
@@ -58,12 +64,21 @@ from dataclasses import replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+import pandas as pd
+
 from find_bike_routes import PipelineError
-from find_bike_routes.config import PARTITION_ARMS, ValidatePartitionsStageParameters
+from find_bike_routes.config import (
+    CELL_SIZE_ARM,
+    PARTITION_ARMS,
+    ValidatePartitionsStageParameters,
+)
 from find_bike_routes.funnel import write_funnel
 from find_bike_routes.partition_validation import (
     DOWNSTREAM_NEVER_READS_NOTE,
+    NO_CHANNEL_GRANULARITY_NOTE,
     STAGE,
+    attach_null_model,
+    build_control_arms,
     build_partitions,
     clear_days_in,
     element_counts_from,
@@ -72,6 +87,7 @@ from find_bike_routes.partition_validation import (
     partition_digests,
     partition_records,
     plan_arms,
+    read_control_inputs,
     read_day_links,
     read_element_coordinates,
     read_frozen_assignment,
@@ -167,7 +183,7 @@ def run(args: argparse.Namespace) -> None:
     region_cells_digest, _rows = digest_table(
         region_cells, REGION_CELL_COLUMNS, ("cell_x", "cell_y")
     )
-    notes = [DOWNSTREAM_NEVER_READS_NOTE, *plan.notes]
+    notes = [DOWNSTREAM_NEVER_READS_NOTE, NO_CHANNEL_GRANULARITY_NOTE, *plan.notes]
     if tuple(parameters.arms) != tuple(PARAMETERS.arms):
         notes.append(
             f"ARMS_OVERRIDDEN: 只跑了 {', '.join(parameters.arms)}，"
@@ -192,17 +208,45 @@ def run(args: argparse.Namespace) -> None:
         day_links = read_day_links(
             session, grid_flow=args.grid_flow, dates=parameters.dates
         )
-        cell_counts = element_counts_from(
-            read_element_coordinates(
-                session,
-                matching=args.matching,
-                trajectory=args.trajectory,
-                dates=clear_days_in(parameters),
-            ),
-            parameters,
+        coordinates = read_element_coordinates(
+            session,
+            matching=args.matching,
+            trajectory=args.trajectory,
+            dates=clear_days_in(parameters),
         )
+        cell_counts = element_counts_from(coordinates, parameters)
         built = build_partitions(plan, day_links, parameters)
         rows = similarity_records(plan, built, frozen, cell_counts, parameters)
+        links_by_size = {parameters.cell_size_m: day_links}
+        trips = pd.DataFrame()
+        if CELL_SIZE_ARM in parameters.arms:
+            alternate_links, trips = read_control_inputs(
+                session,
+                matching=args.matching,
+                orders=args.orders,
+                dates=clear_days_in(parameters),
+                cell_sizes=(
+                    tuple(
+                        size
+                        for size in parameters.cell_sizes
+                        if size != parameters.cell_size_m
+                    )
+                ),
+            )
+            links_by_size.update(alternate_links)
+        controls = build_control_arms(
+            requested=parameters.arms,
+            links_by_size=links_by_size,
+            frozen=frozen,
+            coordinates=coordinates,
+            trips=trips,
+            parameters=parameters,
+        )
+        rows.extend(controls.similarity)
+        rows = sorted(
+            attach_null_model(rows),
+            key=lambda row: (str(row["arm"]), str(row["variant"])),
+        )
         # Params come after the partitions rather than before the session: one of
         # the things they have to record is a content digest per alternative
         # partition, which does not exist until the partitions do.
@@ -212,13 +256,15 @@ def run(args: argparse.Namespace) -> None:
             spark_conf=dict(session.sparkContext.getConf().getAll()),
             contract_check_skipped=args.skip_data_contract,
             region_cells_digest=region_cells_digest,
-            partitions=partition_digests(built, parameters),
+            partitions=partition_digests(built, parameters, controls.partitions),
             notes=notes,
         )
         tables = write_partition_tables(
             session,
-            partition_records(built, parameters),
+            partition_records(built, parameters, controls.partitions),
             rows,
+            controls.granularity_scan,
+            controls.granularity_topk,
             args.output,
             args.overwrite,
         )
@@ -233,17 +279,20 @@ def run(args: argparse.Namespace) -> None:
             run_dir,
             tables.partitions,
             tables.similarity,
+            tables.granularity_scan,
+            tables.granularity_topk,
             funnel,
-            validate_partitions_observations(rows, built, plan),
+            validate_partitions_observations(rows, built, plan, controls),
             notes,
         )
     finally:
         session.stop()
 
     print(
-        f"wrote {tables.partitions_path}, {tables.similarity_path} and "
-        f"{counts_path} ({len(plan.sides)} partition(s), "
-        f"{len(plan.comparisons)} comparison(s), run-id {args.run_id})"
+        f"wrote {tables.partitions_path}, {tables.similarity_path}, "
+        f"{tables.granularity_scan_path}, {tables.granularity_topk_path} and "
+        f"{counts_path} ({len(built) + len(controls.partitions)} partition(s), "
+        f"{len(rows)} comparison(s), run-id {args.run_id})"
     )
 
 

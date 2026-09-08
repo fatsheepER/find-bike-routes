@@ -453,3 +453,13 @@ def read_partitions(partitions: Path, arm: str) -> pd.DataFrame:
 def read_partition_similarity(similarity: Path) -> pd.DataFrame:
     """Read `partition_similarity` as written. Row order is the assertion."""
     return pd.read_parquet(similarity)
+
+
+def read_granularity_scan(scan: Path) -> pd.DataFrame:
+    """Read `granularity_scan` as written. Row order is the assertion."""
+    return pd.read_parquet(scan)
+
+
+def read_granularity_topk(topk: Path) -> pd.DataFrame:
+    """Read `granularity_topk` as written. Row order is the assertion."""
+    return pd.read_parquet(topk)

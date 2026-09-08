@@ -236,6 +236,12 @@ VALIDATE_PARTITIONS_DEFINITION_FIELDS = (
     "clear_days",
     "cell_size_m",
     "min_component_cells",
+    "cell_sizes",
+    "alignment_target",
+    "markov_times",
+    "leiden_resolutions",
+    "leiden_seeds",
+    "topk",
     "region_infomap",
     # Both seeds by name: the Infomap seed every partition was solved with, and
     # the seed the `fold-null` arm permutes link weights from. A run that cannot
@@ -1746,11 +1752,13 @@ def write_validate_partitions_digest(
     run_dir: Path,
     partitions: DataFrame,
     similarity: DataFrame,
+    granularity_scan: DataFrame,
+    granularity_topk: DataFrame,
     counts: DataFrame,
     observations: Mapping[str, object],
     notes: Sequence[str] = (),
 ) -> Path:
-    """Content digest of the two partition-validation tables and the funnel.
+    """Content digest of the four partition-validation tables and the funnel.
 
     One sha256 per table covers every alternative partition and every score in
     one equality, which is what "two runs over the same input agree" is checked
@@ -1761,11 +1769,17 @@ def write_validate_partitions_digest(
     from .partition_validation import (
         PARTITION_COLUMNS,
         PARTITION_TABLE,
+        GRANULARITY_SCAN_COLUMNS,
+        GRANULARITY_SCAN_TABLE,
+        GRANULARITY_TOPK_COLUMNS,
+        GRANULARITY_TOPK_TABLE,
         SIMILARITY_COLUMNS,
         SIMILARITY_TABLE,
         STAGE,
         partition_sort_key,
         similarity_sort_key,
+        granularity_scan_sort_key,
+        granularity_topk_sort_key,
     )
 
     partition_sha, partition_rows = digest_frame(
@@ -1773,6 +1787,12 @@ def write_validate_partitions_digest(
     )
     similarity_sha, similarity_rows = digest_frame(
         similarity, SIMILARITY_COLUMNS, similarity_sort_key()
+    )
+    scan_sha, scan_rows = digest_frame(
+        granularity_scan, GRANULARITY_SCAN_COLUMNS, granularity_scan_sort_key()
+    )
+    topk_sha, topk_rows = digest_frame(
+        granularity_topk, GRANULARITY_TOPK_COLUMNS, granularity_topk_sort_key()
     )
     count_sha, count_rows = digest_funnel(counts)
     stages = funnel_records(counts)
@@ -1786,6 +1806,8 @@ def write_validate_partitions_digest(
                 "sha256": similarity_sha,
                 "rows": similarity_rows,
             },
+            GRANULARITY_SCAN_TABLE: {"sha256": scan_sha, "rows": scan_rows},
+            GRANULARITY_TOPK_TABLE: {"sha256": topk_sha, "rows": topk_rows},
             f"stage_counts_{STAGE}": {"sha256": count_sha, "rows": count_rows},
         },
         "stage_counts": stages,

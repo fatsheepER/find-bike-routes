@@ -640,12 +640,16 @@ FOLD_NULL_ARM = "fold-null"
 FOLD_2V2_ARM = "fold-2v2"
 FOLD_3V3_ARM = "fold-3v3"
 RAIN_INCLUDED_ARM = "rain-included"
+LEIDEN_ARM = "leiden"
+CELL_SIZE_ARM = "cell-size"
 PARTITION_ARMS: tuple[str, ...] = (
     FOLD_ARM,
     FOLD_NULL_ARM,
     FOLD_2V2_ARM,
     FOLD_3V3_ARM,
     RAIN_INCLUDED_ARM,
+    LEIDEN_ARM,
+    CELL_SIZE_ARM,
 )
 
 
@@ -672,6 +676,22 @@ class ValidatePartitionsStageParameters:
     clear_days: tuple[date, ...] = CLEAR_DAY_DATES
     cell_size_m: int = CellParameters().size_m
     min_component_cells: int = CellParameters().min_component_cells
+    cell_sizes: tuple[int, ...] = (150, 200, 300)
+    alignment_target: str = "adopted"
+    markov_times: tuple[float, ...] = GranularityAuditParameters().markov_times
+    leiden_resolutions: tuple[float, ...] = (
+        0.5,
+        0.75,
+        1.0,
+        1.5,
+        2.0,
+        3.0,
+        4.0,
+        6.0,
+        8.0,
+    )
+    leiden_seeds: tuple[int, ...] = (42, 7, 2020, 1234)
+    topk: tuple[int, ...] = (50, 200)
     region_infomap: InfomapParameters = replace(
         RegionsStageParameters().region_infomap,
         num_trials=GranularityAuditParameters().num_trials,

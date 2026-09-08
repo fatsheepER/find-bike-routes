@@ -51,6 +51,11 @@ is its content digest (ADR-0008). This stage never writes into
 `data/processed/regions/`, and the alternative partitions carry `arm` and
 `variant` columns so a row of `partition_similarity` names the two partitions it
 was computed from and a single arm can be re-run on its own.
+
+**Channel flow is not compared across cell sizes (ADR-0015).** Changing the
+cell size changes both crossing detection and the qualifying threshold, so that
+difference cannot be attributed to the region boundary. The granularity arm
+therefore rebuilds and compares order-trip flow only.
 """
 
 from __future__ import annotations
@@ -58,15 +63,19 @@ from __future__ import annotations
 import hashlib
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from itertools import combinations
 from pathlib import Path
 
+import igraph as ig
+import leidenalg as la
 import numpy as np
 import pandas as pd
-from pyspark.sql import Column, DataFrame, SparkSession, functions as F
+from pyspark.sql import Column, DataFrame, SparkSession
+from pyspark.sql import functions as F
 from pyspark.sql.types import (
+    BooleanType,
     DateType,
     DoubleType,
     IntegerType,
@@ -75,29 +84,42 @@ from pyspark.sql.types import (
     StructField,
     StructType,
 )
+from shapely.geometry import box
+from shapely.ops import unary_union
 from sklearn.metrics import adjusted_mutual_info_score
 
 from . import PipelineError
+from .assignment import RegionLocator, assign_endpoint
 from .cells import cell_of
 from .config import (
+    CELL_SIZE_ARM,
     FOLD_2V2_ARM,
     FOLD_3V3_ARM,
     FOLD_ARM,
     FOLD_NULL_ARM,
+    LEIDEN_ARM,
     PARTITION_ARMS,
     RAIN_INCLUDED_ARM,
+    GridFlowStageParameters,
     ValidatePartitionsStageParameters,
 )
 from .datasets import PARTITION_COLUMN, POINT_TABLE
 from .funnel import FUNNEL_COLUMNS, funnel_table_name
-from .grid_flow import CELL_LINK_TABLE, TRACK_CELL_TABLE
+from .grid_flow import (
+    CELL_LINK_TABLE,
+    TRACK_CELL_TABLE,
+    build_cell_links,
+    build_track_cells,
+    read_valid_pieces,
+)
 from .matching import (
     MATCH_EDGE_TABLE,
+    MATCH_PIECE_TABLE,
     MATCH_POINT_TABLE,
     TRACK_MATCH_TABLE,
 )
 from .orders import ORDER_TABLE
-from .partition import infomap_partition, postprocess
+from .partition import infomap_partition, min_cells_for_size, postprocess
 from .region_context import read_frozen_partition
 from .regions import (
     REGION_CELL_COLUMNS,
@@ -109,12 +131,15 @@ from .regions import (
     read_dated_table,
     shuffle_link_weights,
 )
+from .validation import jaccard, top_pairs
 
 Cell = tuple[int, int]
 
 STAGE = "validate_partitions"
 PARTITION_TABLE = "partitions"
 SIMILARITY_TABLE = "partition_similarity"
+GRANULARITY_SCAN_TABLE = "granularity_scan"
+GRANULARITY_TOPK_TABLE = "granularity_topk"
 
 # The right-hand side of an arm that compares against the freeze. It is not a
 # side this stage builds, so it has no row in `partitions`; the digest of the
@@ -131,6 +156,10 @@ DOWNSTREAM_NEVER_READS_NOTE = (
     "validation/ 下的备选划分永不被任何下游阶段引用：assign-regions、"
     "region-profiles、region-sequences 的 --regions 只接受冻结划分（ADR-0008）。"
     "这些划分只用于与冻结划分比较。"
+)
+NO_CHANNEL_GRANULARITY_NOTE = (
+    "通道流不参与跨格边长比较：换格边长同时改变穿越判定与够格门槛，"
+    "差异无法归因到区域边界（ADR-0015）。"
 )
 
 PARTITION_COLUMNS = (
@@ -168,6 +197,22 @@ SIMILARITY_COLUMNS = (
     "resolution",
     "seed",
 )
+GRANULARITY_SCAN_COLUMNS = (
+    "cell_size_m",
+    "markov_time",
+    "communities",
+    "regions",
+    "median_width_m",
+    "min_cells",
+    "chosen",
+)
+GRANULARITY_TOPK_COLUMNS = (
+    "cell_size_m",
+    "k",
+    "jaccard_od",
+    "pairs_left",
+    "pairs_right",
+)
 
 _PARTITIONS = StructType(
     [
@@ -176,7 +221,7 @@ _PARTITIONS = StructType(
         StructField("region_id", IntegerType(), False),
         StructField("variant", StringType(), False),
         StructField("cell_size_m", IntegerType(), False),
-        StructField("markov_time", DoubleType(), False),
+        StructField("markov_time", DoubleType(), True),
         # Leiden's resolution. Null on every arm that runs Infomap.
         StructField("resolution", DoubleType(), True),
         StructField("seed", IntegerType(), False),
@@ -204,9 +249,29 @@ _SIMILARITY = StructType(
         StructField("excess_ami_points", DoubleType(), True),
         StructField("alignment", StringType(), False),
         StructField("cell_size_m", IntegerType(), False),
-        StructField("markov_time", DoubleType(), False),
+        StructField("markov_time", DoubleType(), True),
         StructField("resolution", DoubleType(), True),
         StructField("seed", IntegerType(), False),
+    ]
+)
+_GRANULARITY_SCAN = StructType(
+    [
+        StructField("cell_size_m", IntegerType(), False),
+        StructField("markov_time", DoubleType(), False),
+        StructField("communities", IntegerType(), False),
+        StructField("regions", IntegerType(), False),
+        StructField("median_width_m", DoubleType(), False),
+        StructField("min_cells", IntegerType(), False),
+        StructField("chosen", BooleanType(), False),
+    ]
+)
+_GRANULARITY_TOPK = StructType(
+    [
+        StructField("cell_size_m", IntegerType(), False),
+        StructField("k", IntegerType(), False),
+        StructField("jaccard_od", DoubleType(), True),
+        StructField("pairs_left", IntegerType(), False),
+        StructField("pairs_right", IntegerType(), False),
     ]
 )
 # The arms have no date, so the funnel is undated and unpartitioned, the way the
@@ -233,12 +298,26 @@ _UPSTREAM = (
     (CELL_LINK_TABLE, "grid_flow", "grid-flow", "scripts/grid_flow.py"),
     (TRACK_CELL_TABLE, "grid_flow", "grid-flow", "scripts/grid_flow.py"),
     (MATCH_EDGE_TABLE, "matching", "match-tracks", "scripts/match_tracks.py"),
+    (MATCH_PIECE_TABLE, "matching", "match-tracks", "scripts/match_tracks.py"),
     (MATCH_POINT_TABLE, "matching", "match-tracks", "scripts/match_tracks.py"),
     (TRACK_MATCH_TABLE, "matching", "match-tracks", "scripts/match_tracks.py"),
     (POINT_TABLE, "trajectory", "split-tracks", "scripts/split_tracks.py"),
     (ORDER_TABLE, "orders", "order-trips", "scripts/order_trips.py"),
 )
 _FROZEN = ((REGION_CELL_TABLE, "regions"), (REGION_TABLE, "regions"))
+
+
+def select_aligned(
+    candidates: Sequence[tuple[float, int]], target: int
+) -> tuple[float, int, str]:
+    """Closest region count; smaller parameter wins ties, below-range is capped."""
+    if not candidates:
+        raise ValueError("alignment scan has no candidates")
+    parameter, regions = min(
+        candidates, key=lambda candidate: (abs(candidate[1] - target), candidate[0])
+    )
+    alignment = "capped" if max(count for _value, count in candidates) < target else "aligned"
+    return float(parameter), int(regions), alignment
 
 
 # --------------------------------------------------------------------------- #
@@ -605,6 +684,10 @@ def plan_arms(parameters: ValidatePartitionsStageParameters) -> ArmPlan:
                     right_days=clear,
                 )
             )
+        elif arm in (LEIDEN_ARM, CELL_SIZE_ARM):
+            # These controls need a parameter scan before their comparisons can
+            # be named; build_control_arms adds them after the shared inputs load.
+            continue
         else:  # every name in PARTITION_ARMS is dispatched above
             raise PipelineError(f"arm {arm} has no plan")
     return ArmPlan(
@@ -721,6 +804,368 @@ def build_partitions(
     }
 
 
+@dataclass(frozen=True, slots=True)
+class ControlPartition:
+    arm: str
+    variant: str
+    assignment: dict[Cell, int]
+    raw: dict[Cell, int]
+    communities: int
+    cell_size_m: int
+    markov_time: float | None
+    resolution: float | None
+    seed: int
+
+    @property
+    def regions(self) -> int:
+        return len(set(self.assignment.values()))
+
+
+def _infomap_control(
+    links: Sequence[tuple[Cell, Cell, float]],
+    *,
+    cell_size_m: int,
+    markov_time: float,
+    parameters: ValidatePartitionsStageParameters,
+) -> ControlPartition:
+    variant = f"s={cell_size_m},markov-time={markov_time:g}"
+    if not links:
+        return ControlPartition(
+            CELL_SIZE_ARM, variant, {}, {}, 0, cell_size_m, markov_time, None,
+            parameters.infomap_seed,
+        )
+    solver = replace(parameters.region_infomap, markov_time=markov_time)
+    raw = infomap_partition(links, solver)
+    processed = postprocess(
+        raw.assignment, links, min_cells_for_size(cell_size_m)
+    )
+    return ControlPartition(
+        CELL_SIZE_ARM,
+        variant,
+        processed.assignment,
+        {cell: int(label) for cell, label in raw.assignment.items()},
+        raw.community_count,
+        cell_size_m,
+        markov_time,
+        None,
+        parameters.infomap_seed,
+    )
+
+
+def _leiden_control(
+    links: Sequence[tuple[Cell, Cell, float]],
+    *,
+    resolution: float,
+    seed: int,
+    parameters: ValidatePartitionsStageParameters,
+) -> ControlPartition:
+    variant = f"gamma={resolution:g}" + (
+        "" if seed == parameters.leiden_seeds[0] else f",seed={seed}"
+    )
+    if not links:
+        return ControlPartition(
+            LEIDEN_ARM, variant, {}, {}, 0, parameters.cell_size_m,
+            None, resolution, seed,
+        )
+    nodes = sorted({node for source, target, _weight in links for node in (source, target)})
+    index = {node: offset for offset, node in enumerate(nodes)}
+    graph = ig.Graph(
+        n=len(nodes),
+        edges=[(index[source], index[target]) for source, target, _weight in sorted(links)],
+        directed=True,
+    )
+    weights = [float(weight) for _source, _target, weight in sorted(links)]
+    found = la.find_partition(
+        graph,
+        la.RBConfigurationVertexPartition,
+        weights=weights,
+        resolution_parameter=float(resolution),
+        seed=int(seed),
+    )
+    raw_assignment = {node: int(found.membership[index[node]]) for node in nodes}
+    processed = postprocess(
+        raw_assignment, links, parameters.min_component_cells
+    )
+    return ControlPartition(
+        LEIDEN_ARM,
+        variant,
+        processed.assignment,
+        raw_assignment,
+        len(set(raw_assignment.values())),
+        parameters.cell_size_m,
+        None,
+        float(resolution),
+        int(seed),
+    )
+
+
+def paired_coordinate_elements(
+    coordinates: pd.DataFrame,
+    left: Mapping[Cell, int],
+    left_size_m: float,
+    right: Mapping[Cell, int],
+    right_size_m: float,
+) -> PairedElements:
+    counts: dict[tuple[int, int], int] = defaultdict(int)
+    elements = 0
+    for row in coordinates.itertuples(index=False):
+        left_label = left.get(cell_of(float(row.x), float(row.y), left_size_m))
+        right_label = right.get(cell_of(float(row.x), float(row.y), right_size_m))
+        if left_label is None or right_label is None:
+            continue
+        counts[(int(left_label), int(right_label))] += 1
+        elements += 1
+    total = len(coordinates)
+    return PairedElements(dict(counts), elements, total - elements, total)
+
+
+def _similarity_row(
+    partition: ControlPartition,
+    frozen: Mapping[Cell, int],
+    coordinates: pd.DataFrame,
+    parameters: ValidatePartitionsStageParameters,
+    alignment: str,
+) -> dict[str, object]:
+    paired = paired_coordinate_elements(
+        coordinates,
+        partition.assignment,
+        partition.cell_size_m,
+        frozen,
+        parameters.cell_size_m,
+    )
+    same_grid = partition.cell_size_m == parameters.cell_size_m
+    return {
+        "arm": partition.arm,
+        "variant": partition.variant,
+        "left": partition.variant,
+        "right": FROZEN_SIDE,
+        "shared_days": len(clear_days_in(parameters)),
+        "regions_left": partition.regions,
+        "regions_right": len(set(frozen.values())),
+        "median_width_left_m": median_region_width_m(
+            partition.assignment, partition.cell_size_m
+        ),
+        "median_width_right_m": median_region_width_m(
+            frozen, parameters.cell_size_m
+        ),
+        "elements": paired.elements,
+        "dropped_element_share": _round(paired.dropped_share),
+        "ami_points": _round(_clean(element_ami(paired.counts))),
+        "ami_points_raw": None,
+        "ami_cells": (
+            _round(_clean(assignment_ami(partition.assignment, frozen)))
+            if same_grid
+            else None
+        ),
+        "ecs_points": _round(
+            _clean(element_centric_similarity(paired.counts, parameters.ecs_alpha))
+        ),
+        "null_ami_points": None,
+        "excess_ami_points": None,
+        "alignment": alignment,
+        "cell_size_m": partition.cell_size_m,
+        "markov_time": partition.markov_time,
+        "resolution": partition.resolution,
+        "seed": partition.seed,
+    }
+
+
+def order_pair_counts(
+    trips: pd.DataFrame,
+    assignment: Mapping[Cell, int],
+    cell_size_m: float,
+) -> dict[tuple[int, int], int]:
+    """Valid trips assigned with the production endpoint fallback."""
+    if not assignment:
+        return {}
+    region_cells: dict[int, list[Cell]] = defaultdict(list)
+    for cell, region_id in assignment.items():
+        region_cells[int(region_id)].append(cell)
+    region_ids = sorted(region_cells)
+    locator = RegionLocator(
+        region_ids,
+        [
+            unary_union(
+                [
+                    box(
+                        x * cell_size_m,
+                        y * cell_size_m,
+                        (x + 1) * cell_size_m,
+                        (y + 1) * cell_size_m,
+                    )
+                    for x, y in region_cells[region_id]
+                ]
+            )
+            for region_id in region_ids
+        ],
+    )
+    counts: dict[tuple[int, int], int] = defaultdict(int)
+    valid = trips.loc[trips["is_valid"]] if "is_valid" in trips else trips
+    for row in valid.itertuples(index=False):
+        source, _ = assign_endpoint(
+            float(row.unlock_x), float(row.unlock_y), assignment, locator, cell_size_m
+        )
+        target, _ = assign_endpoint(
+            float(row.lock_x), float(row.lock_y), assignment, locator, cell_size_m
+        )
+        counts[(source, target)] += 1
+    return dict(counts)
+
+
+@dataclass(frozen=True, slots=True)
+class ControlArmResults:
+    partitions: tuple[ControlPartition, ...]
+    similarity: tuple[dict[str, object], ...]
+    granularity_scan: tuple[dict[str, object], ...]
+    granularity_topk: tuple[dict[str, object], ...]
+
+
+def build_control_arms(
+    *,
+    requested: Sequence[str],
+    links_by_size: Mapping[int, Mapping[str, Sequence[tuple[Cell, Cell, float]]]],
+    frozen: Mapping[Cell, int],
+    coordinates: pd.DataFrame,
+    trips: pd.DataFrame,
+    parameters: ValidatePartitionsStageParameters,
+) -> ControlArmResults:
+    target = len(set(frozen.values()))
+    partitions: list[ControlPartition] = []
+    similarity: list[dict[str, object]] = []
+    scan_rows: list[dict[str, object]] = []
+    topk_rows: list[dict[str, object]] = []
+    clear = clear_days_in(parameters)
+
+    if CELL_SIZE_ARM in requested:
+        chosen: dict[int, tuple[ControlPartition, str]] = {}
+        identity = ControlPartition(
+            CELL_SIZE_ARM,
+            f"s={parameters.cell_size_m}",
+            dict(frozen),
+            {},
+            target,
+            parameters.cell_size_m,
+            parameters.region_infomap.markov_time,
+            None,
+            parameters.infomap_seed,
+        )
+        chosen[parameters.cell_size_m] = (identity, "identity")
+        scan_rows.append(
+            {
+                "cell_size_m": parameters.cell_size_m,
+                "markov_time": parameters.region_infomap.markov_time,
+                "communities": target,
+                "regions": target,
+                "median_width_m": median_region_width_m(
+                    frozen, parameters.cell_size_m
+                ),
+                "min_cells": parameters.min_component_cells,
+                "chosen": True,
+            }
+        )
+        for size in parameters.cell_sizes:
+            if size == parameters.cell_size_m:
+                continue
+            links = merge_day_links(links_by_size.get(size, {}), clear)
+            scanned = [
+                _infomap_control(
+                    links,
+                    cell_size_m=size,
+                    markov_time=markov_time,
+                    parameters=parameters,
+                )
+                for markov_time in parameters.markov_times
+            ]
+            selected_value, _regions, alignment = select_aligned(
+                [(row.markov_time, row.regions) for row in scanned], target
+            )
+            selected = next(row for row in scanned if row.markov_time == selected_value)
+            chosen[size] = (selected, alignment)
+            partitions.extend(scanned)
+            scan_rows.extend(
+                {
+                    "cell_size_m": size,
+                    "markov_time": row.markov_time,
+                    "communities": row.communities,
+                    "regions": row.regions,
+                    "median_width_m": median_region_width_m(row.assignment, size),
+                    "min_cells": min_cells_for_size(size),
+                    "chosen": row is selected,
+                }
+                for row in scanned
+            )
+        frozen_od = order_pair_counts(trips, frozen, parameters.cell_size_m)
+        for size, (partition, alignment) in sorted(chosen.items()):
+            similarity.append(
+                _similarity_row(partition, frozen, coordinates, parameters, alignment)
+            )
+            alternative_od = order_pair_counts(trips, partition.assignment, size)
+            for k in parameters.topk:
+                left = top_pairs(alternative_od, k)
+                right = top_pairs(frozen_od, k)
+                score, _union = jaccard(left, right)
+                if alignment == "identity":
+                    score = 1.0
+                topk_rows.append(
+                    {
+                        "cell_size_m": size,
+                        "k": k,
+                        "jaccard_od": _round(score),
+                        "pairs_left": len(left),
+                        "pairs_right": len(right),
+                    }
+                )
+
+    if LEIDEN_ARM in requested:
+        links = merge_day_links(links_by_size.get(parameters.cell_size_m, {}), clear)
+        base_seed = parameters.leiden_seeds[0]
+        scan = [
+            _leiden_control(
+                links,
+                resolution=resolution,
+                seed=base_seed,
+                parameters=parameters,
+            )
+            for resolution in parameters.leiden_resolutions
+        ]
+        selected_value, _regions, alignment = select_aligned(
+            [(row.resolution or 0.0, row.regions) for row in scan], target
+        )
+        selected = next(row for row in scan if row.resolution == selected_value)
+        seed_checks = [
+            _leiden_control(
+                links,
+                resolution=selected_value,
+                seed=seed,
+                parameters=parameters,
+            )
+            for seed in parameters.leiden_seeds[1:]
+        ]
+        partitions.extend([*scan, *seed_checks])
+        report = [selected]
+        natural = next((row for row in scan if row.resolution == 1.0), None)
+        if natural is not None and natural is not selected:
+            report.append(natural)
+        report.extend(seed_checks)
+        for row in report:
+            row_alignment = (
+                alignment
+                if row is selected
+                else "natural" if row.resolution == 1.0 and row.seed == base_seed
+                else "seed-check"
+            )
+            similarity.append(
+                _similarity_row(row, frozen, coordinates, parameters, row_alignment)
+            )
+
+    return ControlArmResults(
+        tuple(partitions),
+        tuple(sorted(similarity, key=lambda row: (str(row["arm"]), str(row["variant"])))),
+        tuple(sorted(scan_rows, key=lambda row: (int(row["cell_size_m"]), float(row["markov_time"])))),
+        tuple(sorted(topk_rows, key=lambda row: (int(row["cell_size_m"]), int(row["k"])))),
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Records
 # --------------------------------------------------------------------------- #
@@ -729,6 +1174,7 @@ def build_partitions(
 def partition_records(
     built: Mapping[str, BuiltPartition],
     parameters: ValidatePartitionsStageParameters,
+    controls: Sequence[ControlPartition] = (),
 ) -> list[dict[str, object]]:
     """One row per (arm, side, cell), in the table's own sort order."""
     records = [
@@ -746,6 +1192,21 @@ def partition_records(
         for partition in built.values()
         for cell, region_id in partition.assignment.items()
     ]
+    records.extend(
+        {
+            "cell_x": int(cell[0]),
+            "cell_y": int(cell[1]),
+            "region_id": int(region_id),
+            "variant": partition.variant,
+            "cell_size_m": partition.cell_size_m,
+            "markov_time": partition.markov_time,
+            "resolution": partition.resolution,
+            "seed": partition.seed,
+            "arm": partition.arm,
+        }
+        for partition in controls
+        for cell, region_id in partition.assignment.items()
+    )
     return sorted(
         records,
         key=lambda row: (
@@ -835,7 +1296,7 @@ def similarity_records(
                 "seed": int(parameters.infomap_seed),
             }
         )
-    return _attach_null_model(rows)
+    return attach_null_model(rows)
 
 
 def _side_assignment(
@@ -865,7 +1326,7 @@ def _raw_paired(
     )
 
 
-def _attach_null_model(rows: Sequence[dict[str, object]]) -> list[dict[str, object]]:
+def attach_null_model(rows: Sequence[dict[str, object]]) -> list[dict[str, object]]:
     null_of_fold = {
         str(row["variant"]): row["ami_points"]
         for row in rows
@@ -924,9 +1385,10 @@ def validate_partitions_observations(
     rows: Sequence[Mapping[str, object]],
     built: Mapping[str, BuiltPartition],
     plan: ArmPlan,
+    controls: ControlArmResults | None = None,
 ) -> dict[str, object]:
     """What the report quotes: every arm's score, and what it was scored over."""
-    return {
+    result = {
         "arms": [
             {
                 "arm": row["arm"],
@@ -952,6 +1414,50 @@ def validate_partitions_observations(
         "partitions": partition_observations(built),
         "skipped_arms": list(plan.notes),
     }
+    if controls is not None:
+        result["granularity_scan"] = [
+            dict(row) for row in controls.granularity_scan if bool(row["chosen"])
+        ]
+        result["granularity_topk"] = [dict(row) for row in controls.granularity_topk]
+        leiden = [row for row in controls.similarity if row["arm"] == LEIDEN_ARM]
+        result["leiden"] = [
+            {
+                "variant": row["variant"],
+                "regions": row["regions_left"],
+                "ami_points": row["ami_points"],
+                "ecs_points": row["ecs_points"],
+                "alignment": row["alignment"],
+                "resolution": row["resolution"],
+                "seed": row["seed"],
+            }
+            for row in leiden
+        ]
+        aligned = next(
+            (row for row in leiden if row["alignment"] in ("aligned", "capped")),
+            None,
+        )
+        if aligned is not None:
+            same_resolution = [
+                row for row in leiden if row["resolution"] == aligned["resolution"]
+            ]
+            region_counts = [int(row["regions_left"]) for row in same_resolution]
+            ami_values = [
+                float(row["ami_points"])
+                for row in same_resolution
+                if row["ami_points"] is not None
+            ]
+            result["leiden_seed_range"] = {
+                "resolution": aligned["resolution"],
+                "regions_min": min(region_counts),
+                "regions_max": max(region_counts),
+                "regions_range": max(region_counts) - min(region_counts),
+                "ami_points_min": min(ami_values) if ami_values else None,
+                "ami_points_max": max(ami_values) if ami_values else None,
+                "ami_points_range": (
+                    max(ami_values) - min(ami_values) if ami_values else None
+                ),
+            }
+    return result
 
 
 def partition_observations(
@@ -976,6 +1482,7 @@ def partition_observations(
 def partition_digests(
     built: Mapping[str, BuiltPartition],
     parameters: ValidatePartitionsStageParameters,
+    controls: Sequence[ControlPartition] = (),
 ) -> list[dict[str, object]]:
     """A content digest per built partition, for `params.json` (ADR-0003).
 
@@ -1016,6 +1523,30 @@ def partition_digests(
                 "seed": int(parameters.infomap_seed),
             }
         )
+    for partition in sorted(controls, key=lambda row: (row.arm, row.variant)):
+        frame = pd.DataFrame(
+            sorted(
+                (cell[0], cell[1], region_id)
+                for cell, region_id in partition.assignment.items()
+            ),
+            columns=list(REGION_CELL_COLUMNS),
+        )
+        digest, rows = digest_table(
+            frame, REGION_CELL_COLUMNS, ("cell_x", "cell_y")
+        )
+        entries.append(
+            {
+                "arm": partition.arm,
+                "variant": partition.variant,
+                "digest": digest,
+                "cells": rows,
+                "regions": partition.regions,
+                "cell_size_m": partition.cell_size_m,
+                "markov_time": partition.markov_time,
+                "resolution": partition.resolution,
+                "seed": partition.seed,
+            }
+        )
     return entries
 
 
@@ -1030,6 +1561,14 @@ def partition_table_path(output_root: Path) -> Path:
 
 def similarity_table_path(output_root: Path) -> Path:
     return output_root / SIMILARITY_TABLE
+
+
+def granularity_scan_path(output_root: Path) -> Path:
+    return output_root / GRANULARITY_SCAN_TABLE
+
+
+def granularity_topk_path(output_root: Path) -> Path:
+    return output_root / GRANULARITY_TOPK_TABLE
 
 
 def funnel_path(output_root: Path) -> Path:
@@ -1085,6 +1624,8 @@ def refuse_to_clobber(output_root: Path, overwrite: bool) -> None:
         for path in (
             partition_table_path(output_root),
             similarity_table_path(output_root),
+            granularity_scan_path(output_root),
+            granularity_topk_path(output_root),
             funnel_path(output_root),
         )
         if path.is_dir() and any(path.iterdir())
@@ -1113,6 +1654,35 @@ def read_day_links(
         session, grid_flow, CELL_LINK_TABLE, sorted(set(dates))
     ).toPandas()
     return links_by_day(frame)
+
+
+def read_control_inputs(
+    session: SparkSession,
+    *,
+    matching: Path,
+    orders: Path,
+    dates: Sequence[date],
+    cell_sizes: Sequence[int],
+) -> tuple[dict[int, dict[str, list[tuple[Cell, Cell, float]]]], pd.DataFrame]:
+    """Re-grid valid matched pieces in-memory and read valid trips once."""
+    pieces, _tracks = read_valid_pieces(session, matching, dates)
+    pieces = pieces.persist()
+    links: dict[int, dict[str, list[tuple[Cell, Cell, float]]]] = {}
+    try:
+        for size in sorted(set(cell_sizes)):
+            cells = build_track_cells(
+                pieces,
+                replace(
+                    GridFlowStageParameters(),
+                    dates=tuple(dates),
+                    cell_size_m=size,
+                ),
+            )
+            links[size] = links_by_day(build_cell_links(cells).toPandas())
+    finally:
+        pieces.unpersist()
+    trips = read_dated_table(session, orders, ORDER_TABLE, sorted(set(dates))).toPandas()
+    return links, trips
 
 
 def read_element_coordinates(
@@ -1201,6 +1771,22 @@ def similarity_frame(
     )
 
 
+def granularity_scan_frame(
+    session: SparkSession, records: Sequence[Mapping[str, object]]
+) -> DataFrame:
+    return session.createDataFrame(
+        _tuples(records, GRANULARITY_SCAN_COLUMNS), _GRANULARITY_SCAN
+    )
+
+
+def granularity_topk_frame(
+    session: SparkSession, records: Sequence[Mapping[str, object]]
+) -> DataFrame:
+    return session.createDataFrame(
+        _tuples(records, GRANULARITY_TOPK_COLUMNS), _GRANULARITY_TOPK
+    )
+
+
 def funnel_frame(
     session: SparkSession, records: Sequence[Mapping[str, object]]
 ) -> DataFrame:
@@ -1220,6 +1806,14 @@ def partition_sort_key() -> tuple[Column, ...]:
 def similarity_sort_key() -> tuple[Column, ...]:
     """`(arm, variant)`."""
     return (F.col("arm").asc(), F.col("variant").asc())
+
+
+def granularity_scan_sort_key() -> tuple[Column, ...]:
+    return (F.col("cell_size_m").asc(), F.col("markov_time").asc())
+
+
+def granularity_topk_sort_key() -> tuple[Column, ...]:
+    return (F.col("cell_size_m").asc(), F.col("k").asc())
 
 
 def write_partition_table(
@@ -1257,33 +1851,74 @@ def write_similarity_table(
     return path
 
 
+def _write_sorted_table(
+    frame: DataFrame,
+    columns: Sequence[str],
+    sort_key: Sequence[Column],
+    path: Path,
+    overwrite: bool,
+) -> Path:
+    (
+        frame.select(*columns)
+        .repartition(1)
+        .sortWithinPartitions(*sort_key)
+        .write.mode("overwrite" if overwrite else "errorifexists")
+        .parquet(str(path))
+    )
+    return path
+
+
 @dataclass(frozen=True, slots=True)
 class PartitionTables:
-    """The two tables this stage writes, and where they went."""
+    """The four tables this stage writes, and where they went."""
 
     partitions: DataFrame
     similarity: DataFrame
+    granularity_scan: DataFrame
+    granularity_topk: DataFrame
     partitions_path: Path
     similarity_path: Path
+    granularity_scan_path: Path
+    granularity_topk_path: Path
 
 
 def write_partition_tables(
     session: SparkSession,
     partitions: Sequence[Mapping[str, object]],
     similarity: Sequence[Mapping[str, object]],
+    granularity_scan: Sequence[Mapping[str, object]],
+    granularity_topk: Sequence[Mapping[str, object]],
     output_root: Path,
     overwrite: bool,
 ) -> PartitionTables:
-    """Both tables, kept as DataFrames so the digest reads what was written."""
+    """All four tables, kept as DataFrames so the digest reads what was written."""
     partition_table = partition_frame(session, partitions).persist()
     similarity_table = similarity_frame(session, similarity).persist()
+    scan_table = granularity_scan_frame(session, granularity_scan).persist()
+    topk_table = granularity_topk_frame(session, granularity_topk).persist()
     return PartitionTables(
         partitions=partition_table,
         similarity=similarity_table,
+        granularity_scan=scan_table,
+        granularity_topk=topk_table,
         partitions_path=write_partition_table(
             partition_table, output_root, overwrite
         ),
         similarity_path=write_similarity_table(
             similarity_table, output_root, overwrite
+        ),
+        granularity_scan_path=_write_sorted_table(
+            scan_table,
+            GRANULARITY_SCAN_COLUMNS,
+            granularity_scan_sort_key(),
+            granularity_scan_path(output_root),
+            overwrite,
+        ),
+        granularity_topk_path=_write_sorted_table(
+            topk_table,
+            GRANULARITY_TOPK_COLUMNS,
+            granularity_topk_sort_key(),
+            granularity_topk_path(output_root),
+            overwrite,
         ),
     )

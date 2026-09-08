@@ -11,6 +11,7 @@ one of the two partitions covers.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import shutil
 from dataclasses import replace
@@ -20,13 +21,27 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+from support import (
+    ARTIFACTS_ROOT,
+    FIXTURE_DATE,
+    ORDER_FIXTURE,
+    read_granularity_scan,
+    read_granularity_topk,
+    read_partition_similarity,
+    read_partitions,
+    read_region_cells,
+    read_stage_counts,
+    run_validate_partitions_cli,
+)
 
 from find_bike_routes.cells import cell_of
 from find_bike_routes.config import (
+    CELL_SIZE_ARM,
     FOLD_2V2_ARM,
     FOLD_3V3_ARM,
     FOLD_ARM,
     FOLD_NULL_ARM,
+    LEIDEN_ARM,
     PARTITION_ARMS,
     RAIN_INCLUDED_ARM,
     ValidatePartitionsStageParameters,
@@ -35,8 +50,12 @@ from find_bike_routes.partition_validation import (
     ADOPTED_ALIGNMENT,
     DOWNSTREAM_NEVER_READS_NOTE,
     FROZEN_SIDE,
+    GRANULARITY_SCAN_COLUMNS,
+    GRANULARITY_TOPK_COLUMNS,
+    NO_CHANNEL_GRANULARITY_NOTE,
     PARTITION_COLUMNS,
     SIMILARITY_COLUMNS,
+    build_control_arms,
     build_partitions,
     clear_days_in,
     days_key,
@@ -51,21 +70,12 @@ from find_bike_routes.partition_validation import (
     paired_elements,
     partition_records,
     plan_arms,
+    select_aligned,
     similarity_records,
     training_side_pairs,
 )
 from find_bike_routes.regions import REGION_CELL_COLUMNS
 from find_bike_routes.runs import digest_table
-from support import (
-    ARTIFACTS_ROOT,
-    FIXTURE_DATE,
-    ORDER_FIXTURE,
-    read_partition_similarity,
-    read_partitions,
-    read_region_cells,
-    read_stage_counts,
-    run_validate_partitions_cli,
-)
 
 PARAMETERS = ValidatePartitionsStageParameters()
 CLEAR_DAYS = list(PARAMETERS.clear_days)
@@ -324,7 +334,7 @@ def test_the_plan_names_every_arm_its_variants_and_its_shared_days():
     for comparison in plan.comparisons:
         by_arm.setdefault(comparison.arm, []).append(comparison)
 
-    assert set(by_arm) == set(PARTITION_ARMS)
+    assert set(by_arm) == set(PARTITION_ARMS) - {CELL_SIZE_ARM, LEIDEN_ARM}
     assert len(by_arm[FOLD_ARM]) == 4
     assert len(by_arm[FOLD_NULL_ARM]) == 4
     assert len(by_arm[FOLD_2V2_ARM]) == 3
@@ -398,9 +408,9 @@ def test_a_run_without_a_clear_day_says_it_has_no_elements():
 
 def test_an_unknown_arm_is_refused():
     with pytest.raises(Exception) as problem:
-        plan_arms(replace(PARAMETERS, arms=("fold", "leiden")))
+        plan_arms(replace(PARAMETERS, arms=("fold", "bogus")))
 
-    assert "leiden" in str(problem.value)
+    assert "bogus" in str(problem.value)
 
 
 def test_the_clear_days_of_a_run_exclude_the_rain_day():
@@ -416,6 +426,84 @@ def test_each_permutation_stream_is_keyed_by_name_not_by_draw_order():
     assert first == again
     assert first != other
     assert first[0] == PARAMETERS.lattice_null_seed
+
+
+def test_alignment_chooses_nearest_then_the_smaller_parameter():
+    candidates = [(0.5, 140), (0.75, 148), (1.0, 154), (1.5, 160)]
+
+    assert select_aligned(candidates, 151) == (0.75, 148, "aligned")
+    assert select_aligned([(0.75, 148), (1.0, 154)], 151) == (
+        0.75,
+        148,
+        "aligned",
+    )
+    # The same pure function selects Leiden gamma; it has no solver-specific path.
+    assert select_aligned([(0.5, 149), (0.75, 153)], 151) == (
+        0.5,
+        149,
+        "aligned",
+    )
+
+
+def test_alignment_marks_a_scan_that_never_reaches_the_target_as_capped():
+    assert select_aligned([(0.5, 130), (0.75, 145), (1.0, 145)], 151) == (
+        0.75,
+        145,
+        "capped",
+    )
+
+
+def test_control_arms_write_identity_chosen_rows_and_repeat_deterministically():
+    frozen = {cell: 1 if cell[0] < 8 else 2 for cell in synthetic_cell_counts() if cell != (99, 99)}
+    coordinates = pd.DataFrame(
+        [
+            {"x": cell[0] * 150.0 + 1.0, "y": cell[1] * 150.0 + 1.0}
+            for cell in frozen
+        ]
+    )
+    trips = pd.DataFrame(
+        columns=["is_valid", "unlock_x", "unlock_y", "lock_x", "lock_y"]
+    )
+    parameters = replace(
+        PARAMETERS,
+        dates=(CLEAR_DAYS[0],),
+        clear_days=(CLEAR_DAYS[0],),
+        arms=(CELL_SIZE_ARM, LEIDEN_ARM),
+        cell_sizes=(150, 300),
+        markov_times=(0.75, 1.0),
+        leiden_resolutions=(1.0, 2.0),
+        leiden_seeds=(42, 7),
+        topk=(2,),
+    )
+    links = {CLEAR_DAYS[0].isoformat(): two_block_links()}
+    inputs = {
+        "requested": parameters.arms,
+        "links_by_size": {150: links, 300: links},
+        "frozen": frozen,
+        "coordinates": coordinates,
+        "trips": trips,
+        "parameters": parameters,
+    }
+
+    first = build_control_arms(**inputs)
+    second = build_control_arms(**inputs)
+
+    assert first == second
+    assert all(set(row) == set(GRANULARITY_SCAN_COLUMNS) for row in first.granularity_scan)
+    assert all(set(row) == set(GRANULARITY_TOPK_COLUMNS) for row in first.granularity_topk)
+    for size in parameters.cell_sizes:
+        rows = [row for row in first.granularity_scan if row["cell_size_m"] == size]
+        assert sum(bool(row["chosen"]) for row in rows) == 1
+    identity = next(
+        row
+        for row in first.similarity
+        if row["arm"] == CELL_SIZE_ARM and row["cell_size_m"] == 150
+    )
+    assert identity["alignment"] == "identity"
+    assert identity["ami_points"] == 1.0
+    assert next(row for row in first.granularity_topk if row["cell_size_m"] == 150)[
+        "jaccard_od"
+    ] == 1.0
 
 
 # --------------------------------------------------------------------------- #
@@ -688,6 +776,7 @@ PARTITIONED_INPUTS = {
     "cell_links": ("grid_flow", "grid-flow"),
     "track_cells": ("grid_flow", "grid-flow"),
     "match_edges": ("matching", "match-tracks"),
+    "match_pieces": ("matching", "match-tracks"),
     "match_points": ("matching", "match-tracks"),
     "track_match": ("matching", "match-tracks"),
     "points": ("trajectory", "split-tracks"),
@@ -782,11 +871,11 @@ def test_an_unknown_arm_is_refused_by_the_cli(tmp_path):
     roots = validate_input_dirs(tmp_path)
 
     completed = run_validate_partitions_cli(
-        *validate_args(roots, tmp_path / "output"), "--arms", "leiden"
+        *validate_args(roots, tmp_path / "output"), "--arms", "bogus"
     )
 
     assert completed.returncode == 2
-    assert "leiden" in completed.stderr
+    assert "bogus" in completed.stderr
 
 
 def test_existing_output_is_refused_without_overwrite(tmp_path):
@@ -1005,3 +1094,78 @@ def test_repeat_run_has_the_same_content_and_skip_marker(
         assert params["DATA_CONTRACT_CHECK_SKIPPED"] is True
     finally:
         shutil.rmtree(artifacts, ignore_errors=True)
+
+
+@pytest.mark.spark
+def test_control_fixture_writes_four_sorted_tables_twice_with_narrow_parameters(
+    validate_partitions_run, tmp_path, monkeypatch
+):
+    script = Path(__file__).parents[1] / "scripts" / "validate_partitions.py"
+    spec = importlib.util.spec_from_file_location("validate_partitions_cli", script)
+    assert spec is not None and spec.loader is not None
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+
+    narrowed = replace(
+        PARAMETERS,
+        dates=(date.fromisoformat(FIXTURE_DATE),),
+        clear_days=(date.fromisoformat(FIXTURE_DATE),),
+        arms=(CELL_SIZE_ARM, LEIDEN_ARM),
+        cell_sizes=(150, 300),
+        markov_times=(1.25,),
+        leiden_resolutions=(1.0,),
+        leiden_seeds=(42,),
+        topk=(50,),
+    )
+    monkeypatch.setattr(cli, "PARAMETERS", narrowed)
+    monkeypatch.setattr(cli, "ARTIFACTS_ROOT", tmp_path / "artifacts")
+    digests = []
+    for index in (1, 2):
+        output = tmp_path / f"output-{index}"
+        args = cli.parse_args(
+            [
+                "--grid-flow", str(validate_partitions_run.grid_flow),
+                "--matching", str(validate_partitions_run.matching),
+                "--trajectory", str(validate_partitions_run.trajectory),
+                "--orders", str(validate_partitions_run.orders),
+                "--regions", str(validate_partitions_run.regions),
+                "--dates", FIXTURE_DATE,
+                "--arms", CELL_SIZE_ARM, LEIDEN_ARM,
+                "--output", str(output),
+                "--run-id", f"control-{index}",
+                "--skip-data-contract",
+            ]
+        )
+        cli.run(args)
+        similarity = read_partition_similarity(output / "partition_similarity")
+        scan = read_granularity_scan(output / "granularity_scan")
+        topk = read_granularity_topk(output / "granularity_topk")
+        assert list(similarity.columns) == list(SIMILARITY_COLUMNS)
+        assert list(scan.columns) == list(GRANULARITY_SCAN_COLUMNS)
+        assert list(topk.columns) == list(GRANULARITY_TOPK_COLUMNS)
+        assert scan.equals(
+            scan.sort_values(["cell_size_m", "markov_time"], kind="mergesort")
+        )
+        assert topk.equals(topk.sort_values(["cell_size_m", "k"], kind="mergesort"))
+        assert scan.groupby("cell_size_m")["chosen"].sum().eq(1).all()
+        digest = json.loads(
+            (tmp_path / "artifacts" / f"control-{index}" / "digest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        params = json.loads(
+            (tmp_path / "artifacts" / f"control-{index}" / "params.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert params["parameters"]["cell_sizes"] == [150, 300]
+        assert params["parameters"]["alignment_target"] == "adopted"
+        assert params["parameters"]["leiden_resolutions"] == [1.0]
+        assert params["parameters"]["leiden_seeds"] == [42]
+        assert NO_CHANNEL_GRANULARITY_NOTE in params["notes"]
+        assert {row["arm"] for row in params["partitions"]} == {
+            CELL_SIZE_ARM,
+            LEIDEN_ARM,
+        }
+        digests.append(digest["tables"])
+    assert digests[0] == digests[1]
