@@ -1,5 +1,5 @@
 {
-  "note": "Section names mark evidence status. baselines holds 12-21 and the network — numbers that can falsify the implementation. recorded holds the other four days' split/match counts, all five days' assign-regions (freeze echo), the four-day freeze, and five-day order-trip totals. 12-21 split counts are from an independent pandas reproduction, verified against the notebook's 772-track remainder and project-plan §3.1's 2,849,243 points. 12-21 match counts are a port-fidelity check against the notebook matcher, not cross-validation. After the five-day run the 12-21 match table was corrected on two points already seen on the fixture: match_edges counts every entering track (the notebook's 542,220 was the valid-track remainder), and two extra tracks pass inferred-share because degenerate pieces are dropped before the share is computed, as the spec requires. 12-21 order-trips 49,328 valid trips and 742.3333 m median straight distance match the notebook. 12-21 grid-flow three counts stay on the notebook values with ±0.1% tolerance; cells_with_1_track is 237 (notebook 238) because two extra valid tracks change that observation — later runs must hit 237. 12-21 single-day region counts live under baselines.days.2020-12-21.regions (AMI is observation-only). The four-day freeze and five-day assign-regions have no independent counterpart. Fixture expectations live in config/regression-sample.json. Network counts are from the island-wide OSM extraction (notebooks/single_day_pipeline.py), frozen after scripts/extract_bike_network.py. The 2026-09-08 full-data acceptance adds OSM context, frozen-region context, five-day region profiles, and clear-day aggregate observations to recorded; these are implementation echoes, not independent baselines.",
+  "note": "Section names mark evidence status. baselines holds 12-21 and the network — numbers that can falsify the implementation. recorded holds the other four days' split/match counts, all five days' assign-regions (freeze echo), the four-day freeze, and five-day order-trip totals. 12-21 split counts are from an independent pandas reproduction, verified against the notebook's 772-track remainder and project-plan §3.1's 2,849,243 points. 12-21 match counts are a port-fidelity check against the notebook matcher, not cross-validation. After the five-day run the 12-21 match table was corrected on two points already seen on the fixture: match_edges counts every entering track (the notebook's 542,220 was the valid-track remainder), and two extra tracks pass inferred-share because degenerate pieces are dropped before the share is computed, as the spec requires. 12-21 order-trips 49,328 valid trips and 742.3333 m median straight distance match the notebook. 12-21 grid-flow three counts stay on the notebook values with ±0.1% tolerance; cells_with_1_track is 237 (notebook 238) because two extra valid tracks change that observation — later runs must hit 237. 12-21 single-day region counts live under baselines.days.2020-12-21.regions (AMI is observation-only). The four-day freeze and five-day assign-regions have no independent counterpart. Fixture expectations live in config/regression-sample.json. Network counts are from the island-wide OSM extraction (notebooks/single_day_pipeline.py), frozen after scripts/extract_bike_network.py. The 2026-09-08 full-data acceptance adds OSM context, frozen-region context, five-day region profiles, and clear-day aggregate observations to recorded; these are implementation echoes, not independent baselines. The same day's region-sequences acceptance adds five-day sequence libraries and six mined scopes to recorded; these too are implementation echoes on the frozen 151-region partition, cross-validated against a pure-Python PrefixSpan rather than against the notebook's incomparable 141-region numbers.",
   "baselines": {
     "days": {
       "2020-12-21": {
@@ -309,6 +309,30 @@
             "regions_area": 146,
             "regions_poi": 106
           }
+        },
+        "region_sequences": {
+          "sequences": 9921,
+          "valid_tracks": 14757,
+          "contributing_tracks": 9601,
+          "sequences_per_track": 1.0333,
+          "length_median": 2.0,
+          "length_p90": 4.0,
+          "length_max": 28,
+          "length_ge5": 611,
+          "min_support_count": 10,
+          "threshold_bound_by": "floor",
+          "spark_min_support": 0.0009575647616167725,
+          "patterns": 931,
+          "patterns_by_length": {
+            "2": 639,
+            "3": 238,
+            "4": 41,
+            "5": 11,
+            "6": 2
+          },
+          "pattern_length_max": 6,
+          "contiguous_patterns": 592,
+          "run_id": "20260908-acceptance-region-sequences"
         }
       },
       "2020-12-22": {
@@ -509,6 +533,29 @@
             "regions_area": 146,
             "regions_poi": 106
           }
+        },
+        "region_sequences": {
+          "sequences": 10729,
+          "valid_tracks": 16019,
+          "contributing_tracks": 10418,
+          "sequences_per_track": 1.0299,
+          "length_median": 2.0,
+          "length_p90": 4.0,
+          "length_max": 12,
+          "length_ge5": 677,
+          "min_support_count": 10,
+          "threshold_bound_by": "floor",
+          "spark_min_support": 0.0008854506477770529,
+          "patterns": 979,
+          "patterns_by_length": {
+            "2": 680,
+            "3": 267,
+            "4": 31,
+            "5": 1
+          },
+          "pattern_length_max": 5,
+          "contiguous_patterns": 630,
+          "run_id": "20260908-acceptance-region-sequences"
         }
       },
       "2020-12-23": {
@@ -709,6 +756,28 @@
             "regions_area": 146,
             "regions_poi": 106
           }
+        },
+        "region_sequences": {
+          "sequences": 3583,
+          "valid_tracks": 5372,
+          "contributing_tracks": 3479,
+          "sequences_per_track": 1.0299,
+          "length_median": 2.0,
+          "length_p90": 4.0,
+          "length_max": 40,
+          "length_ge5": 191,
+          "min_support_count": 10,
+          "threshold_bound_by": "floor",
+          "spark_min_support": 0.0026514094334356684,
+          "patterns": 291,
+          "patterns_by_length": {
+            "2": 256,
+            "3": 32,
+            "4": 3
+          },
+          "pattern_length_max": 4,
+          "contiguous_patterns": 225,
+          "run_id": "20260908-acceptance-region-sequences"
         }
       },
       "2020-12-24": {
@@ -909,6 +978,30 @@
             "regions_area": 146,
             "regions_poi": 106
           }
+        },
+        "region_sequences": {
+          "sequences": 16779,
+          "valid_tracks": 25291,
+          "contributing_tracks": 16270,
+          "sequences_per_track": 1.0313,
+          "length_median": 2.0,
+          "length_p90": 4.0,
+          "length_max": 14,
+          "length_ge5": 1063,
+          "min_support_count": 10,
+          "threshold_bound_by": "floor",
+          "spark_min_support": 0.0005661839203766613,
+          "patterns": 1504,
+          "patterns_by_length": {
+            "2": 866,
+            "3": 524,
+            "4": 101,
+            "5": 12,
+            "6": 1
+          },
+          "pattern_length_max": 6,
+          "contiguous_patterns": 837,
+          "run_id": "20260908-acceptance-region-sequences"
         }
       },
       "2020-12-25": {
@@ -1109,6 +1202,29 @@
             "regions_area": 146,
             "regions_poi": 106
           }
+        },
+        "region_sequences": {
+          "sequences": 10374,
+          "valid_tracks": 15519,
+          "contributing_tracks": 10046,
+          "sequences_per_track": 1.0326,
+          "length_median": 2.0,
+          "length_p90": 4.0,
+          "length_max": 18,
+          "length_ge5": 618,
+          "min_support_count": 10,
+          "threshold_bound_by": "floor",
+          "spark_min_support": 0.0009157509157509158,
+          "patterns": 919,
+          "patterns_by_length": {
+            "2": 650,
+            "3": 241,
+            "4": 27,
+            "5": 1
+          },
+          "pattern_length_max": 5,
+          "contiguous_patterns": 599,
+          "run_id": "20260908-acceptance-region-sequences"
         }
       }
     },
@@ -1144,6 +1260,34 @@
         "od_self_loop_share": 0.273,
         "clear_day_mean_od_self_loop_share": 0.2811,
         "note": "12-23 的五张画像与流表与晴天同 schema，可直接供第 7 步读取。出行流、通道流与有进入轨迹分别只有晴天日均的 38.16%、29.11% 与 30.02%；结合上游点留存与无区域段偏差，不能把降幅全归因于出行行为。"
+      },
+      "region_sequences": {
+        "schemas_match_clear_days": true,
+        "rows": {
+          "sequence_patterns": 291
+        },
+        "sequences": 3583,
+        "clear_day_mean_sequences": 11950.75,
+        "sequences_ratio_to_clear_day_mean": 0.2998,
+        "valid_tracks": 5372,
+        "clear_day_mean_valid_tracks": 17896.5,
+        "patterns": 291,
+        "clear_day_mean_daily_patterns": 1083.25,
+        "patterns_ratio_to_clear_day_mean": 0.2686,
+        "contiguous_patterns": 225,
+        "clear_day_mean_daily_contiguous_patterns": 664.5,
+        "contiguous_patterns_ratio_to_clear_day_mean": 0.3386,
+        "pattern_length_max": 4,
+        "clear_day_daily_pattern_length_max": [
+          6,
+          5,
+          6,
+          5
+        ],
+        "length_max": 40,
+        "patterns_also_in_clear_days_merged": 291,
+        "all_steps_adjacent": 260,
+        "note": "12-23 的 `sequence_patterns` 与晴天逐日同 schema、同 scope 列形状，可直接供第 7 步读取。门槛与逐日晴天同为绝对下限 10，所以模式条数可比：291 条只有晴天日均 1,083.25 条的 26.86%，最长模式 4 段（晴天逐日 5–6 段）；291 条全部也出现在晴天集合并的 2,874 条里。序列条数 3,583 是晴天日均的 29.98%，与上游点留存与无区域段偏差同量级，跨天重合率本身留给第 7 步。"
       }
     },
     "acceptance": {
@@ -1368,6 +1512,334 @@
         "od_self_loop_share_minus_markov_scan_1_25": 0.0063911442
       },
       "note": "画像、流表与相关系数是本实现基于冻结 151 区运行得到的 recorded 观测，不是独立 baseline。自环旁证的非零差来自口径差异：markov_scan 不回落区域外端点，flow_od 使用 assign-regions 的最近区域回落。"
+    },
+    "region_sequences": {
+      "run_id": "20260908-acceptance-region-sequences",
+      "scope": "clear-days",
+      "clear_day_dates": [
+        "2020-12-21",
+        "2020-12-22",
+        "2020-12-24",
+        "2020-12-25"
+      ],
+      "sequences": 47803,
+      "valid_tracks": 71586,
+      "contributing_tracks": 46335,
+      "sequences_per_track": 1.0317,
+      "length_median": 2.0,
+      "length_p90": 4.0,
+      "length_max": 28,
+      "length_ge5": 2969,
+      "min_support_count": 14,
+      "threshold_bound_by": "relative",
+      "spark_min_support": 0.00028240905382507375,
+      "patterns": 2874,
+      "patterns_by_length": {
+        "2": 1259,
+        "3": 1234,
+        "4": 313,
+        "5": 57,
+        "6": 10,
+        "7": 1
+      },
+      "pattern_length_max": 7,
+      "contiguous_patterns": 1360,
+      "support_scan": [
+        {
+          "min_support": 0.0002,
+          "min_support_count": 14,
+          "spark_min_support": 0.00028240905382507375,
+          "sequences": 47803,
+          "valid_tracks": 71586,
+          "patterns_ge2": 2874,
+          "len2": 1259,
+          "len3": 1234,
+          "len4": 313,
+          "len_ge5": 68,
+          "contiguous_ge2": 1360
+        },
+        {
+          "min_support": 0.0005,
+          "min_support_count": 36,
+          "spark_min_support": 0.0007426312156140828,
+          "sequences": 47803,
+          "valid_tracks": 71586,
+          "patterns_ge2": 1127,
+          "len2": 739,
+          "len3": 329,
+          "len4": 50,
+          "len_ge5": 9,
+          "contiguous_ge2": 687
+        },
+        {
+          "min_support": 0.001,
+          "min_support_count": 72,
+          "spark_min_support": 0.0014957220258142794,
+          "sequences": 47803,
+          "valid_tracks": 71586,
+          "patterns_ge2": 560,
+          "len2": 460,
+          "len3": 96,
+          "len4": 4,
+          "len_ge5": 0,
+          "contiguous_ge2": 403
+        },
+        {
+          "min_support": 0.002,
+          "min_support_count": 143,
+          "spark_min_support": 0.002980984457042445,
+          "sequences": 47803,
+          "valid_tracks": 71586,
+          "patterns_ge2": 247,
+          "len2": 229,
+          "len3": 18,
+          "len4": 0,
+          "len_ge5": 0,
+          "contiguous_ge2": 202
+        },
+        {
+          "min_support": 0.005,
+          "min_support_count": 358,
+          "spark_min_support": 0.007478610129071397,
+          "sequences": 47803,
+          "valid_tracks": 71586,
+          "patterns_ge2": 51,
+          "len2": 50,
+          "len3": 1,
+          "len4": 0,
+          "len_ge5": 0,
+          "contiguous_ge2": 40
+        },
+        {
+          "min_support": 0.01,
+          "min_support_count": 716,
+          "spark_min_support": 0.014967679852728908,
+          "sequences": 47803,
+          "valid_tracks": 71586,
+          "patterns_ge2": 5,
+          "len2": 5,
+          "len3": 0,
+          "len4": 0,
+          "len_ge5": 0,
+          "contiguous_ge2": 4
+        }
+      ],
+      "top_contiguous_patterns": [
+        {
+          "region_codes": [
+            "岭兜-2",
+            "岭兜-3",
+            "岭兜-4"
+          ],
+          "pattern": [
+            72,
+            149,
+            150
+          ],
+          "support": 334,
+          "contiguous_support": 334,
+          "support_h06": 0,
+          "support_h07": 13,
+          "support_h08": 292,
+          "support_h09": 29
+        },
+        {
+          "region_codes": [
+            "岭兜-3",
+            "岭兜-4",
+            "观音山-2"
+          ],
+          "pattern": [
+            149,
+            150,
+            16
+          ],
+          "support": 358,
+          "contiguous_support": 330,
+          "support_h06": 2,
+          "support_h07": 13,
+          "support_h08": 281,
+          "support_h09": 62
+        },
+        {
+          "region_codes": [
+            "岭兜-3",
+            "观音山-4",
+            "观音山-3"
+          ],
+          "pattern": [
+            149,
+            63,
+            60
+          ],
+          "support": 241,
+          "contiguous_support": 238,
+          "support_h06": 9,
+          "support_h07": 31,
+          "support_h08": 135,
+          "support_h09": 66
+        },
+        {
+          "region_codes": [
+            "岭兜-2",
+            "岭兜-3",
+            "观音山-4"
+          ],
+          "pattern": [
+            72,
+            149,
+            63
+          ],
+          "support": 207,
+          "contiguous_support": 206,
+          "support_h06": 16,
+          "support_h07": 39,
+          "support_h08": 135,
+          "support_h09": 17
+        },
+        {
+          "region_codes": [
+            "莲前-1",
+            "岭兜-3",
+            "岭兜-4"
+          ],
+          "pattern": [
+            5,
+            149,
+            150
+          ],
+          "support": 200,
+          "contiguous_support": 186,
+          "support_h06": 0,
+          "support_h07": 20,
+          "support_h08": 154,
+          "support_h09": 26
+        },
+        {
+          "region_codes": [
+            "金尚-1",
+            "岭兜-2",
+            "岭兜-3"
+          ],
+          "pattern": [
+            12,
+            72,
+            149
+          ],
+          "support": 170,
+          "contiguous_support": 168,
+          "support_h06": 8,
+          "support_h07": 30,
+          "support_h08": 123,
+          "support_h09": 9
+        },
+        {
+          "region_codes": [
+            "将军祠-2",
+            "嘉禾园-2",
+            "嘉禾园-1"
+          ],
+          "pattern": [
+            137,
+            145,
+            14
+          ],
+          "support": 172,
+          "contiguous_support": 163,
+          "support_h06": 18,
+          "support_h07": 89,
+          "support_h08": 47,
+          "support_h09": 18
+        },
+        {
+          "region_codes": [
+            "岭兜-1",
+            "岭兜-4",
+            "观音山-2"
+          ],
+          "pattern": [
+            56,
+            150,
+            16
+          ],
+          "support": 166,
+          "contiguous_support": 157,
+          "support_h06": 5,
+          "support_h07": 7,
+          "support_h08": 126,
+          "support_h09": 28
+        },
+        {
+          "region_codes": [
+            "育秀-2",
+            "育秀-3",
+            "育秀-4"
+          ],
+          "pattern": [
+            40,
+            103,
+            139
+          ],
+          "support": 151,
+          "contiguous_support": 151,
+          "support_h06": 15,
+          "support_h07": 37,
+          "support_h08": 73,
+          "support_h09": 26
+        },
+        {
+          "region_codes": [
+            "莲前-3",
+            "莲前-1",
+            "岭兜-3"
+          ],
+          "pattern": [
+            49,
+            5,
+            149
+          ],
+          "support": 153,
+          "contiguous_support": 150,
+          "support_h06": 3,
+          "support_h07": 14,
+          "support_h08": 117,
+          "support_h09": 19
+        }
+      ],
+      "flow_channel_contrast": {
+        "shared_pairs": 580,
+        "length2_contiguous_patterns": 1259,
+        "channel_pairs": 682,
+        "spearman": 1.0,
+        "median_relative_diff": 0.0,
+        "contiguous_support_total": 77580,
+        "channel_tracks_total": 77520,
+        "aggregate_relative_diff": 0.0008,
+        "pairs_equal": 532,
+        "max_relative_diff": 0.0682,
+        "pairs_below_channel": 0,
+        "channel_pairs_at_or_above_threshold": 556,
+        "channel_pairs_at_or_above_threshold_missing_from_patterns": 0,
+        "note": "长度 2 连续模式支持度按序列条数计，通道流按轨迹去重计，因此前者恒 ≥ 后者（580 对里 0 对低于通道流）。ADR-0013 预估的约 3% 是整个序列库的膨胀（47,803 条序列来自 46,335 条轨迹），只有当同一条轨迹的多条序列含同一个有向区域对时才落到区域对上；切段点是 piece 边界与无区域段，两侧通常不重复同一个相邻转移，所以对级差额只有 0.08%（合计 77,580 对 77,520，532 / 580 对完全相等，单对最大 +6.82%）。这是比预期更小的差，不是口径错位：556 个 tracks ≥ 14 的通道流区域对全部出现在挖出的长度 2 模式里。"
+      },
+      "prefixspan_cross_check": {
+        "oracle": "tests/reference_prefixspan.py",
+        "sequences": 47803,
+        "min_support_count": 14,
+        "max_pattern_length": 10,
+        "patterns_ge2_reference": 2874,
+        "patterns_ge2_product": 2874,
+        "patterns_length1_reference": 149,
+        "reference_only": 0,
+        "product_only": 0,
+        "support_disagreements": 0,
+        "brute_force_recounted": 2874,
+        "brute_force_disagreements": 0,
+        "note": "纯 Python PrefixSpan 在晴天集全部 47,803 条真实序列上按同一门槛重挖，模式集合与每条支持度与 MLlib 完全相同；2,874 条的支持度另用朴素子序列计数逐条重算，同样全部一致。长度 1 的 149 条按口径不物化。"
+      },
+      "region_cells_digest": "d84a0485dfcffeda6fdad52e5472df38f4c4e9be01649cc8c5143f8605f486ef",
+      "district_labels_sha256": "eb61916e26afd32a4c9ddbd94abaa592054671b6e62a515917e196511bd78afa",
+      "note": "序列库与模式集是本实现在冻结 151 区上运行得到的 recorded 观测，不是独立 baseline：notebook §6.8 的 9,617 条序列、498 条模式、387 条连续建立在 12-21 的 141 区单日划分上，区域号不对应，差异同时来自划分与阈值，两组数不可比。报告引用这些数时必须这么标注。"
     }
   },
   "totals": {

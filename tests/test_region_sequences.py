@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+import itertools
 import json
 import math
 import shutil
@@ -11,6 +13,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+import reference_prefixspan
 
 from dataclasses import replace
 
@@ -1847,3 +1850,56 @@ def test_no_shared_pair_leaves_the_contrast_empty_rather_than_wrong():
     assert set(contrast) == set(populated)
     assert contrast["length2_contiguous_patterns"] == 1
     assert contrast["channel_pairs"] == 1
+
+
+# The acceptance oracle. It mines the real clear-day library on ticket 05 and must
+# stay an independent implementation of the same semantics; these two keep it from
+# rotting between acceptance runs, on synthetic libraries a brute force can settle.
+REFERENCE_PREFIXSPAN = Path(__file__).parent / "reference_prefixspan.py"
+
+
+def test_the_prefixspan_oracle_stays_independent_of_the_product():
+    tree = ast.parse(REFERENCE_PREFIXSPAN.read_text(encoding="utf-8"))
+    imported: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                imported.append(node.module)
+    assert not any(
+        name == "pyspark"
+        or name.startswith("pyspark.")
+        or name == "find_bike_routes"
+        or name.startswith("find_bike_routes.")
+        for name in imported
+    )
+
+
+def test_the_prefixspan_oracle_agrees_with_brute_force_enumeration():
+    library = [
+        [1, 2, 3],
+        [1, 3, 2],
+        [1, 2],
+        [2, 3, 1, 2],
+        [1, 2, 3, 4],
+        [4, 1, 2],
+        [1, 1, 2],
+        [5],
+    ]
+    min_count = 3
+
+    mined = reference_prefixspan.mine(library, min_count, max_length=4)
+
+    candidates = {
+        tuple(sequence[position] for position in positions)
+        for sequence in library
+        for size in range(1, 5)
+        for positions in itertools.combinations(range(len(sequence)), size)
+    }
+    expected = {
+        pattern: reference_prefixspan.brute_force_support(pattern, library)
+        for pattern in candidates
+        if reference_prefixspan.brute_force_support(pattern, library) >= min_count
+    }
+    assert mined == expected
