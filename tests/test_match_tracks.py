@@ -376,11 +376,15 @@ def test_baselines_file_separates_falsifiable_from_recorded():
     recorded = baselines["recorded"]
     for date, day in recorded["days"].items():
         assert "assign_regions" in day
+        assert "region_profiles" in day
         if date != "2020-12-21":
             assert "match" in day
             assert "order_trips" in day
             assert "grid_flow" in day
-    assert recorded["days"]["2020-12-21"].keys() == {"assign_regions"}
+    assert recorded["days"]["2020-12-21"].keys() == {
+        "assign_regions",
+        "region_profiles",
+    }
     assert recorded["rain_day"]["date"] == "2020-12-23"
     assert recorded["rain_day"]["unassigned_gap_cuts"] == 8
     assert recorded["regions"]["region_cells"]["rows"] == 3943

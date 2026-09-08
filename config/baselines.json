@@ -1,5 +1,5 @@
 {
-  "note": "Section names mark evidence status. baselines holds 12-21 and the network — numbers that can falsify the implementation. recorded holds the other four days' split/match counts, all five days' assign-regions (freeze echo), the four-day freeze, and five-day order-trip totals. 12-21 split counts are from an independent pandas reproduction, verified against the notebook's 772-track remainder and project-plan §3.1's 2,849,243 points. 12-21 match counts are a port-fidelity check against the notebook matcher, not cross-validation. After the five-day run the 12-21 match table was corrected on two points already seen on the fixture: match_edges counts every entering track (the notebook's 542,220 was the valid-track remainder), and two extra tracks pass inferred-share because degenerate pieces are dropped before the share is computed, as the spec requires. 12-21 order-trips 49,328 valid trips and 742.3333 m median straight distance match the notebook. 12-21 grid-flow three counts stay on the notebook values with ±0.1% tolerance; cells_with_1_track is 237 (notebook 238) because two extra valid tracks change that observation — later runs must hit 237. 12-21 single-day region counts live under baselines.days.2020-12-21.regions (AMI is observation-only). The four-day freeze and five-day assign-regions have no independent counterpart. Fixture expectations live in config/regression-sample.json. Network counts are from the island-wide OSM extraction (notebooks/single_day_pipeline.py), frozen after scripts/extract_bike_network.py.",
+  "note": "Section names mark evidence status. baselines holds 12-21 and the network — numbers that can falsify the implementation. recorded holds the other four days' split/match counts, all five days' assign-regions (freeze echo), the four-day freeze, and five-day order-trip totals. 12-21 split counts are from an independent pandas reproduction, verified against the notebook's 772-track remainder and project-plan §3.1's 2,849,243 points. 12-21 match counts are a port-fidelity check against the notebook matcher, not cross-validation. After the five-day run the 12-21 match table was corrected on two points already seen on the fixture: match_edges counts every entering track (the notebook's 542,220 was the valid-track remainder), and two extra tracks pass inferred-share because degenerate pieces are dropped before the share is computed, as the spec requires. 12-21 order-trips 49,328 valid trips and 742.3333 m median straight distance match the notebook. 12-21 grid-flow three counts stay on the notebook values with ±0.1% tolerance; cells_with_1_track is 237 (notebook 238) because two extra valid tracks change that observation — later runs must hit 237. 12-21 single-day region counts live under baselines.days.2020-12-21.regions (AMI is observation-only). The four-day freeze and five-day assign-regions have no independent counterpart. Fixture expectations live in config/regression-sample.json. Network counts are from the island-wide OSM extraction (notebooks/single_day_pipeline.py), frozen after scripts/extract_bike_network.py. The 2026-09-08 full-data acceptance adds OSM context, frozen-region context, five-day region profiles, and clear-day aggregate observations to recorded; these are implementation echoes, not independent baselines.",
   "baselines": {
     "days": {
       "2020-12-21": {
@@ -258,6 +258,57 @@
           "tracks_with_unassigned_gap_cuts": 0,
           "unlock_fallback_share": 1.58,
           "lock_fallback_share": 0.81
+        },
+        "region_profiles": {
+          "hourly_order_events": [
+            {
+              "hour": 6,
+              "unlocks": 3929,
+              "locks": 2975,
+              "net_inflow": -954
+            },
+            {
+              "hour": 7,
+              "unlocks": 16320,
+              "locks": 14148,
+              "net_inflow": -2172
+            },
+            {
+              "hour": 8,
+              "unlocks": 22054,
+              "locks": 23110,
+              "net_inflow": 1056
+            },
+            {
+              "hour": 9,
+              "unlocks": 7025,
+              "locks": 9095,
+              "net_inflow": 2070
+            }
+          ],
+          "tracks_with_visits": 14757,
+          "tracks_with_transit_regions": 4168,
+          "flows": {
+            "channel_pairs": 640,
+            "channel_total": 16333,
+            "od_total": 49328,
+            "od_self_loop_share": 0.29,
+            "track_od_pairs": 1938,
+            "track_od_flow_od_spearman": 0.8379,
+            "shared_pairs": 1802
+          },
+          "core_full_pi_r": {
+            "spearman": 0.9723,
+            "regions": 149
+          },
+          "net_inflow_context_correlations": {
+            "pearson_area": 0.212,
+            "spearman_area": 0.2113,
+            "pearson_poi": 0.2923,
+            "spearman_poi": 0.2039,
+            "regions_area": 146,
+            "regions_poi": 106
+          }
         }
       },
       "2020-12-22": {
@@ -407,6 +458,57 @@
           "tracks_with_unassigned_gap_cuts": 0,
           "unlock_fallback_share": 1.57,
           "lock_fallback_share": 0.78
+        },
+        "region_profiles": {
+          "hourly_order_events": [
+            {
+              "hour": 6,
+              "unlocks": 4039,
+              "locks": 3084,
+              "net_inflow": -955
+            },
+            {
+              "hour": 7,
+              "unlocks": 16850,
+              "locks": 14551,
+              "net_inflow": -2299
+            },
+            {
+              "hour": 8,
+              "unlocks": 23639,
+              "locks": 24570,
+              "net_inflow": 931
+            },
+            {
+              "hour": 9,
+              "unlocks": 7581,
+              "locks": 9904,
+              "net_inflow": 2323
+            }
+          ],
+          "tracks_with_visits": 16019,
+          "tracks_with_transit_regions": 4453,
+          "flows": {
+            "channel_pairs": 647,
+            "channel_total": 17646,
+            "od_total": 52109,
+            "od_self_loop_share": 0.2836,
+            "track_od_pairs": 2010,
+            "track_od_flow_od_spearman": 0.8385,
+            "shared_pairs": 1853
+          },
+          "core_full_pi_r": {
+            "spearman": 0.9753,
+            "regions": 151
+          },
+          "net_inflow_context_correlations": {
+            "pearson_area": 0.2159,
+            "spearman_area": 0.2218,
+            "pearson_poi": 0.2902,
+            "spearman_poi": 0.2028,
+            "regions_area": 146,
+            "regions_poi": 106
+          }
         }
       },
       "2020-12-23": {
@@ -556,6 +658,57 @@
           "tracks_with_unassigned_gap_cuts": 6,
           "unlock_fallback_share": 1.84,
           "lock_fallback_share": 0.98
+        },
+        "region_profiles": {
+          "hourly_order_events": [
+            {
+              "hour": 6,
+              "unlocks": 1896,
+              "locks": 1490,
+              "net_inflow": -406
+            },
+            {
+              "hour": 7,
+              "unlocks": 6311,
+              "locks": 5213,
+              "net_inflow": -1098
+            },
+            {
+              "hour": 8,
+              "unlocks": 8471,
+              "locks": 9320,
+              "net_inflow": 849
+            },
+            {
+              "hour": 9,
+              "unlocks": 1815,
+              "locks": 2470,
+              "net_inflow": 655
+            }
+          ],
+          "tracks_with_visits": 5372,
+          "tracks_with_transit_regions": 1449,
+          "flows": {
+            "channel_pairs": 581,
+            "channel_total": 5686,
+            "od_total": 18493,
+            "od_self_loop_share": 0.273,
+            "track_od_pairs": 1171,
+            "track_od_flow_od_spearman": 0.7998,
+            "shared_pairs": 1096
+          },
+          "core_full_pi_r": {
+            "spearman": 0.955,
+            "regions": 148
+          },
+          "net_inflow_context_correlations": {
+            "pearson_area": 0.1753,
+            "spearman_area": 0.2115,
+            "pearson_poi": 0.3264,
+            "spearman_poi": 0.2154,
+            "regions_area": 146,
+            "regions_poi": 106
+          }
         }
       },
       "2020-12-24": {
@@ -705,6 +858,57 @@
           "tracks_with_unassigned_gap_cuts": 0,
           "unlock_fallback_share": 1.65,
           "lock_fallback_share": 0.79
+        },
+        "region_profiles": {
+          "hourly_order_events": [
+            {
+              "hour": 6,
+              "unlocks": 3454,
+              "locks": 2624,
+              "net_inflow": -830
+            },
+            {
+              "hour": 7,
+              "unlocks": 14689,
+              "locks": 12632,
+              "net_inflow": -2057
+            },
+            {
+              "hour": 8,
+              "unlocks": 22105,
+              "locks": 22668,
+              "net_inflow": 563
+            },
+            {
+              "hour": 9,
+              "unlocks": 7255,
+              "locks": 9579,
+              "net_inflow": 2324
+            }
+          ],
+          "tracks_with_visits": 25291,
+          "tracks_with_transit_regions": 6872,
+          "flows": {
+            "channel_pairs": 663,
+            "channel_total": 27305,
+            "od_total": 47503,
+            "od_self_loop_share": 0.2732,
+            "track_od_pairs": 2282,
+            "track_od_flow_od_spearman": 0.8462,
+            "shared_pairs": 2035
+          },
+          "core_full_pi_r": {
+            "spearman": 0.9615,
+            "regions": 151
+          },
+          "net_inflow_context_correlations": {
+            "pearson_area": 0.2081,
+            "spearman_area": 0.2185,
+            "pearson_poi": 0.3012,
+            "spearman_poi": 0.212,
+            "regions_area": 146,
+            "regions_poi": 106
+          }
         }
       },
       "2020-12-25": {
@@ -854,6 +1058,57 @@
           "tracks_with_unassigned_gap_cuts": 0,
           "unlock_fallback_share": 1.71,
           "lock_fallback_share": 0.88
+        },
+        "region_profiles": {
+          "hourly_order_events": [
+            {
+              "hour": 6,
+              "unlocks": 3701,
+              "locks": 2781,
+              "net_inflow": -920
+            },
+            {
+              "hour": 7,
+              "unlocks": 14962,
+              "locks": 13196,
+              "net_inflow": -1766
+            },
+            {
+              "hour": 8,
+              "unlocks": 19419,
+              "locks": 20005,
+              "net_inflow": 586
+            },
+            {
+              "hour": 9,
+              "unlocks": 6840,
+              "locks": 8940,
+              "net_inflow": 2100
+            }
+          ],
+          "tracks_with_visits": 15519,
+          "tracks_with_transit_regions": 4220,
+          "flows": {
+            "channel_pairs": 650,
+            "channel_total": 16838,
+            "od_total": 44922,
+            "od_self_loop_share": 0.2777,
+            "track_od_pairs": 1947,
+            "track_od_flow_od_spearman": 0.8215,
+            "shared_pairs": 1730
+          },
+          "core_full_pi_r": {
+            "spearman": 0.9893,
+            "regions": 150
+          },
+          "net_inflow_context_correlations": {
+            "pearson_area": 0.2182,
+            "spearman_area": 0.224,
+            "pearson_poi": 0.297,
+            "spearman_poi": 0.216,
+            "regions_area": 146,
+            "regions_poi": 106
+          }
         }
       }
     },
@@ -867,7 +1122,29 @@
       "unassigned_gap_cuts": 8,
       "tracks_with_unassigned_gap_cuts": 6,
       "unlock_fallback_share": 1.84,
-      "lock_fallback_share": 0.98
+      "lock_fallback_share": 0.98,
+      "region_profiles": {
+        "schemas_match_clear_days": true,
+        "rows": {
+          "region_metrics": 604,
+          "region_transit_core": 151,
+          "flow_od": 5423,
+          "flow_channel": 1495,
+          "flow_track_od": 2157
+        },
+        "od_total": 18493,
+        "clear_day_mean_od_total": 48465.5,
+        "od_total_ratio_to_clear_day_mean": 0.3816,
+        "channel_total": 5686,
+        "clear_day_mean_channel_total": 19530.5,
+        "channel_total_ratio_to_clear_day_mean": 0.2911,
+        "tracks_with_visits": 5372,
+        "clear_day_mean_tracks_with_visits": 17896.5,
+        "tracks_with_visits_ratio_to_clear_day_mean": 0.3002,
+        "od_self_loop_share": 0.273,
+        "clear_day_mean_od_self_loop_share": 0.2811,
+        "note": "12-23 的五张画像与流表与晴天同 schema，可直接供第 7 步读取。出行流、通道流与有进入轨迹分别只有晴天日均的 38.16%、29.11% 与 30.02%；结合上游点留存与无区域段偏差，不能把降幅全归因于出行行为。"
+      }
     },
     "acceptance": {
       "point_match_rate": 0.9919,
@@ -1023,6 +1300,74 @@
       "duration_kept": 212630,
       "valid": 212355,
       "note": "五天合计，是这次运行的回声。12-21 单日有效行程与中位距离在 baselines，可对照 notebook。"
+    },
+    "osm_context": {
+      "categories": {
+        "education": {
+          "points": 9,
+          "areas": 300,
+          "area_m2": 3733056.1
+        },
+        "transport": {
+          "points": 143,
+          "areas": 56,
+          "area_m2": 459216.4
+        },
+        "bus_stop": {
+          "points": 501,
+          "areas": 0,
+          "area_m2": 0.0
+        },
+        "employment": {
+          "points": 648,
+          "areas": 555,
+          "area_m2": 9070281.9
+        },
+        "residential": {
+          "points": 46,
+          "areas": 1905,
+          "area_m2": 14556671.2
+        }
+      },
+      "point_features": 1347,
+      "area_features": 2816,
+      "area_m2": 27819225.6,
+      "area_km2": 27.819,
+      "run_id": "20260908-acceptance-extract-osm-context"
+    },
+    "region_context": {
+      "regions": 151,
+      "classified_area_km2": 20.92,
+      "regions_without_classified_area": 5,
+      "area_features": 2816,
+      "area_features_meeting_regions": 2462,
+      "point_features": 1347,
+      "point_features_dropped": 88,
+      "point_features_dropped_share": 0.0653,
+      "region_cells_digest": "d84a0485dfcffeda6fdad52e5472df38f4c4e9be01649cc8c5143f8605f486ef",
+      "run_id": "20260908-acceptance-region-context"
+    },
+    "region_profiles": {
+      "run_id": "20260908-acceptance-region-profiles",
+      "clear_day_dates": [
+        "2020-12-21",
+        "2020-12-22",
+        "2020-12-24",
+        "2020-12-25"
+      ],
+      "clear_day_mean_net_inflow_context_correlations": {
+        "pearson_area": 0.2146,
+        "spearman_area": 0.2183,
+        "pearson_poi": 0.2968,
+        "spearman_poi": 0.2068,
+        "regions_area": 146,
+        "regions_poi": 106
+      },
+      "clear_day_flow_checks": {
+        "channel_total_minus_region_links": 0,
+        "od_self_loop_share_minus_markov_scan_1_25": 0.0063911442
+      },
+      "note": "画像、流表与相关系数是本实现基于冻结 151 区运行得到的 recorded 观测，不是独立 baseline。自环旁证的非零差来自口径差异：markov_scan 不回落区域外端点，flow_od 使用 assign-regions 的最近区域回落。"
     }
   },
   "totals": {
