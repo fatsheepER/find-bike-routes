@@ -565,3 +565,41 @@ class RegionSequencesStageParameters:
         "切出的候选段",
         "长度 ≥ 2 的区域序列",
     )
+
+
+@dataclass(frozen=True, slots=True)
+class ValidateFlowsStageParameters:
+    """Everything the flow-validation stage runs on (ADR-0002).
+
+    The test unit is one day × one matrix: the four hours are summed and the
+    distance bands are dropped, because a pair's count after either split is a
+    single digit for most pairs and the null distribution degenerates there.
+    `min_observed` is the count gate and also where the normal approximation
+    starts to hold; `fdr_q` is the only thing `is_significant` reads. The two
+    null-model names are parameters because they are the definition of what the
+    `z` in each matrix means, and a run has to name the constructions it used
+    (ADR-0014).
+    """
+
+    dates: tuple[date, ...] = STUDY_DATES
+    spark: SparkParameters = SparkParameters()
+    hours: tuple[int, ...] = (6, 7, 8, 9)
+    reps: int = 100
+    null_seed: int = 42
+    min_observed: int = 5
+    fdr_q: float = 0.05
+    # The closed-form audit is maximised only over cells whose closed-form sd
+    # reaches this, because 100 draws of a near-deterministic cell estimate its
+    # sd too poorly for a deviation there to mean anything about the sampler.
+    audit_min_null_sd: float = 1.0
+    # The stable scope is the AND of these four days' verdicts, never a fifth
+    # null run: the rain day has per-day rows only and never enters it.
+    clear_days: tuple[date, ...] = CLEAR_DAY_DATES
+    od_null_model: str = "端点重排零模型"
+    channel_null_model: str = "支撑内强度零模型"
+    pair_funnel_unit: str = "区域对"
+    funnel_stage_names: tuple[str, ...] = (
+        "通过计数守门",
+        "参与 FDR",
+        "显著",
+    )

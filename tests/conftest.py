@@ -4,7 +4,7 @@ A JVM start costs seconds, so each stage runs once per session over the committe
 fixture and the assertions read that run's products. Cases that need their own run —
 overwrite behaviour, refused arguments — pay for it themselves. The chain is
 split → match → order-trips → grid-flow → regions → assign-regions →
-region-context → region-profiles → region-sequences.
+region-context → region-profiles → region-sequences → validate-flows.
 """
 
 from __future__ import annotations
@@ -34,6 +34,7 @@ from support import (
     run_region_context_cli,
     run_region_profiles_cli,
     run_region_sequences_cli,
+    run_validate_flows_cli,
     write_fixture_district_labels,
 )
 
@@ -468,6 +469,59 @@ def region_sequences_run(
             assignment=assign_regions_run.output,
             regions=assign_regions_run.regions,
             district_labels=labels,
+        )
+    finally:
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+@dataclass(frozen=True)
+class ValidateFlowsRun:
+    output: Path
+    flow_significance: Path
+    null_audit: Path
+    stage_counts: Path
+    artifacts: Path
+    profiles: Path
+    assignment: Path
+    orders: Path
+    regions: Path
+
+
+@pytest.fixture(scope="session")
+def validate_flows_run(
+    region_profiles_run: RegionProfilesRun,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[ValidateFlowsRun]:
+    """Judge the fixture's two flow matrices against their null models.
+
+    The fixture is one day of 20 bike ids, so the clear-day set cannot be formed
+    and the run narrows itself to the single per-day scope; the assertions on it
+    are schema, sort key, funnel, determinism and fail-fast, never content.
+    """
+    output = tmp_path_factory.mktemp("validation") / "validation"
+    artifacts = ARTIFACTS_ROOT / "test-validate-flows"
+    shutil.rmtree(artifacts, ignore_errors=True)
+    completed = run_validate_flows_cli(
+        "--profiles", str(region_profiles_run.output),
+        "--assignment", str(region_profiles_run.assignment),
+        "--orders", str(region_profiles_run.orders),
+        "--regions", str(region_profiles_run.regions),
+        "--dates", FIXTURE_DATE,
+        "--output", str(output),
+        "--run-id", "test-validate-flows",
+    )
+    assert completed.returncode == 0, completed.stderr
+    try:
+        yield ValidateFlowsRun(
+            output=output,
+            flow_significance=output / "flow_significance",
+            null_audit=output / "null_audit",
+            stage_counts=output / "stage_counts_validate_flows",
+            artifacts=artifacts,
+            profiles=region_profiles_run.output,
+            assignment=region_profiles_run.assignment,
+            orders=region_profiles_run.orders,
+            regions=region_profiles_run.regions,
         )
     finally:
         shutil.rmtree(artifacts, ignore_errors=True)

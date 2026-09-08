@@ -33,6 +33,7 @@ from .config import (
     RegionSequencesStageParameters,
     RegionsStageParameters,
     SplitStageParameters,
+    ValidateFlowsStageParameters,
 )
 from .datasets import POINT_COLUMNS, STAGE_COUNT_COLUMNS, TRACK_COLUMNS
 from .matching import (
@@ -209,6 +210,19 @@ REGION_SEQUENCES_DEFINITION_FIELDS = (
     "track_funnel_stage_names",
     "sequence_funnel_stage_names",
 )
+VALIDATE_FLOWS_DEFINITION_FIELDS = (
+    "hours",
+    "reps",
+    "null_seed",
+    "min_observed",
+    "fdr_q",
+    "audit_min_null_sd",
+    "clear_days",
+    "od_null_model",
+    "channel_null_model",
+    "pair_funnel_unit",
+    "funnel_stage_names",
+)
 OSM_CONTEXT_DEFINITION_FIELDS = (
     "island_tolerance_m",
     "crs",
@@ -308,6 +322,7 @@ def write_params(
         | RegionContextStageParameters
         | RegionProfilesStageParameters
         | RegionSequencesStageParameters
+        | ValidateFlowsStageParameters
     ),
     contract_check_skipped: bool,
     spark_conf: Mapping[str, str] | None = None,
@@ -413,6 +428,23 @@ def write_params(
                 for name in REGION_SEQUENCES_DEFINITION_FIELDS
             },
             "scopes": [dict(scope) for scope in scopes or ()],
+            "data_contract_lock_sha256": sha256(lock_path),
+        }
+        if notes:
+            payload["notes"] = list(notes)
+    elif isinstance(parameters, ValidateFlowsStageParameters):
+        # The two null-model names sit in the parameters rather than in the digest:
+        # they are what the `z` column means, so a run has to name the constructions
+        # it judged with before anything reads the verdicts (ADR-0014).
+        payload = {
+            "timezone": parameters.spark.session_time_zone,
+            "spark": dict(spark_conf or {}),
+            "dates": [day.isoformat() for day in parameters.dates],
+            "region_cells_digest": region_cells_digest,
+            "parameters": {
+                name: _jsonable(getattr(parameters, name))
+                for name in VALIDATE_FLOWS_DEFINITION_FIELDS
+            },
             "data_contract_lock_sha256": sha256(lock_path),
         }
         if notes:
@@ -1603,5 +1635,50 @@ def write_region_sequences_digest(
             **funnel_observations(stages),
             STAGE: scoped,
         },
+    }
+    return _write_json(run_dir / "digest.json", payload)
+
+
+def write_validate_flows_digest(
+    run_dir: Path,
+    significance: DataFrame,
+    audit: DataFrame,
+    counts: DataFrame,
+    observations: Mapping[str, object],
+    notes: Sequence[str] = (),
+) -> Path:
+    """Content digest of the significance table, the null audit and the funnel."""
+    from .funnel import digest_funnel, funnel_observations, funnel_records
+    from .validation import (
+        FLOW_SIGNIFICANCE_COLUMNS,
+        FLOW_SIGNIFICANCE_TABLE,
+        NULL_AUDIT_COLUMNS,
+        NULL_AUDIT_TABLE,
+        STAGE,
+        significance_sort_key,
+    )
+
+    significance_sha, significance_rows = digest_frame(
+        significance, FLOW_SIGNIFICANCE_COLUMNS, significance_sort_key()
+    )
+    audit_sha, audit_rows = digest_frame(
+        audit, NULL_AUDIT_COLUMNS, ("matrix", "scope")
+    )
+    count_sha, count_rows = digest_funnel(counts)
+    stages = funnel_records(counts)
+    scoped: dict[str, object] = dict(observations)
+    if notes:
+        scoped["notes"] = list(notes)
+    payload = {
+        "tables": {
+            FLOW_SIGNIFICANCE_TABLE: {
+                "sha256": significance_sha,
+                "rows": significance_rows,
+            },
+            NULL_AUDIT_TABLE: {"sha256": audit_sha, "rows": audit_rows},
+            f"stage_counts_{STAGE}": {"sha256": count_sha, "rows": count_rows},
+        },
+        "stage_counts": stages,
+        "observations": {**funnel_observations(stages), STAGE: scoped},
     }
     return _write_json(run_dir / "digest.json", payload)

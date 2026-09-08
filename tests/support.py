@@ -30,6 +30,7 @@ OSM_CONTEXT_SCRIPT = PROJECT_ROOT / "scripts" / "extract_osm_context.py"
 REGION_CONTEXT_SCRIPT = PROJECT_ROOT / "scripts" / "region_context.py"
 REGION_PROFILES_SCRIPT = PROJECT_ROOT / "scripts" / "region_profiles.py"
 REGION_SEQUENCES_SCRIPT = PROJECT_ROOT / "scripts" / "region_sequences.py"
+VALIDATE_FLOWS_SCRIPT = PROJECT_ROOT / "scripts" / "validate_flows.py"
 ARTIFACTS_ROOT = PROJECT_ROOT / "artifacts" / "runs"
 AUDIT_MAPS = PROJECT_ROOT / "artifacts" / "audit" / "maps"
 FIXTURE = PROJECT_ROOT / "tests" / "fixtures" / "regression-sample-20201221.csv"
@@ -160,6 +161,17 @@ def run_region_sequences_cli(
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(REGION_SEQUENCES_SCRIPT), *arguments],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "TZ": RUNNER_TIME_ZONE, **(env or {})},
+    )
+
+
+def run_validate_flows_cli(
+    *arguments: str, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(VALIDATE_FLOWS_SCRIPT), *arguments],
         capture_output=True,
         text=True,
         env={**os.environ, "TZ": RUNNER_TIME_ZONE, **(env or {})},
@@ -399,6 +411,16 @@ def write_pbf(
         )
     writer.close()
     return path
+
+
+def read_flow_significance(significance: Path, matrix: str) -> pd.DataFrame:
+    """One matrix partition of `flow_significance`, as written. Row order is asserted."""
+    return pd.read_parquet(significance / f"matrix={matrix}")
+
+
+def read_null_audit(audit: Path) -> pd.DataFrame:
+    """Read `null_audit` as written. Row order is the assertion, so no sort."""
+    return pd.read_parquet(audit)
 
 
 def read_sequence_support_scan(scan: Path) -> pd.DataFrame:
