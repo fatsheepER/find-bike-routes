@@ -462,7 +462,15 @@ def test_control_arms_write_identity_chosen_rows_and_repeat_deterministically():
         ]
     )
     trips = pd.DataFrame(
-        columns=["is_valid", "unlock_x", "unlock_y", "lock_x", "lock_y"]
+        [
+            {
+                "is_valid": True,
+                "unlock_x": 1.0,
+                "unlock_y": 1.0,
+                "lock_x": 1501.0,
+                "lock_y": 1.0,
+            }
+        ]
     )
     parameters = replace(
         PARAMETERS,
@@ -504,6 +512,9 @@ def test_control_arms_write_identity_chosen_rows_and_repeat_deterministically():
     assert next(row for row in first.granularity_topk if row["cell_size_m"] == 150)[
         "jaccard_od"
     ] == 1.0
+    leiden_rows = [row for row in first.similarity if row["arm"] == LEIDEN_ARM]
+    assert sum(row["variant"].startswith("aligned:") for row in leiden_rows) == 1
+    assert sum(row["variant"] == "natural:gamma=1" for row in leiden_rows) == 1
 
 
 # --------------------------------------------------------------------------- #
@@ -1140,6 +1151,7 @@ def test_control_fixture_writes_four_sorted_tables_twice_with_narrow_parameters(
         similarity = read_partition_similarity(output / "partition_similarity")
         scan = read_granularity_scan(output / "granularity_scan")
         topk = read_granularity_topk(output / "granularity_topk")
+        funnel = read_stage_counts(output / "stage_counts_validate_partitions")
         assert list(similarity.columns) == list(SIMILARITY_COLUMNS)
         assert list(scan.columns) == list(GRANULARITY_SCAN_COLUMNS)
         assert list(topk.columns) == list(GRANULARITY_TOPK_COLUMNS)
@@ -1148,6 +1160,11 @@ def test_control_fixture_writes_four_sorted_tables_twice_with_narrow_parameters(
         )
         assert topk.equals(topk.sort_values(["cell_size_m", "k"], kind="mergesort"))
         assert scan.groupby("cell_size_m")["chosen"].sum().eq(1).all()
+        assert len(funnel) == 2
+        assert {name.split("：", 1)[0] for name in funnel["stage_name"]} == {
+            CELL_SIZE_ARM,
+            LEIDEN_ARM,
+        }
         digest = json.loads(
             (tmp_path / "artifacts" / f"control-{index}" / "digest.json").read_text(
                 encoding="utf-8"

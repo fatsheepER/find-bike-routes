@@ -925,6 +925,7 @@ def _similarity_row(
     coordinates: pd.DataFrame,
     parameters: ValidatePartitionsStageParameters,
     alignment: str,
+    comparison_variant: str | None = None,
 ) -> dict[str, object]:
     paired = paired_coordinate_elements(
         coordinates,
@@ -936,7 +937,7 @@ def _similarity_row(
     same_grid = partition.cell_size_m == parameters.cell_size_m
     return {
         "arm": partition.arm,
-        "variant": partition.variant,
+        "variant": comparison_variant or partition.variant,
         "left": partition.variant,
         "right": FROZEN_SIDE,
         "shared_days": len(clear_days_in(parameters)),
@@ -1029,6 +1030,10 @@ def build_control_arms(
     trips: pd.DataFrame,
     parameters: ValidatePartitionsStageParameters,
 ) -> ControlArmResults:
+    if parameters.alignment_target != "adopted":
+        raise ValueError(
+            f"unknown alignment target {parameters.alignment_target!r}; expected 'adopted'"
+        )
     target = len(set(frozen.values()))
     partitions: list[ControlPartition] = []
     similarity: list[dict[str, object]] = []
@@ -1104,8 +1109,6 @@ def build_control_arms(
                 left = top_pairs(alternative_od, k)
                 right = top_pairs(frozen_od, k)
                 score, _union = jaccard(left, right)
-                if alignment == "identity":
-                    score = 1.0
                 topk_rows.append(
                     {
                         "cell_size_m": size,
@@ -1142,21 +1145,32 @@ def build_control_arms(
             for seed in parameters.leiden_seeds[1:]
         ]
         partitions.extend([*scan, *seed_checks])
-        report = [selected]
         natural = next((row for row in scan if row.resolution == 1.0), None)
-        if natural is not None and natural is not selected:
-            report.append(natural)
-        report.extend(seed_checks)
-        for row in report:
-            row_alignment = (
-                alignment
-                if row is selected
-                else "natural" if row.resolution == 1.0 and row.seed == base_seed
-                else "seed-check"
+        similarity.append(
+            _similarity_row(
+                selected,
+                frozen,
+                coordinates,
+                parameters,
+                alignment,
+                f"aligned:{selected.variant}",
             )
+        )
+        if natural is not None:
             similarity.append(
-                _similarity_row(row, frozen, coordinates, parameters, row_alignment)
+                _similarity_row(
+                    natural,
+                    frozen,
+                    coordinates,
+                    parameters,
+                    "natural",
+                    f"natural:{natural.variant}",
+                )
             )
+        similarity.extend(
+            _similarity_row(row, frozen, coordinates, parameters, "seed-check")
+            for row in seed_checks
+        )
 
     return ControlArmResults(
         tuple(partitions),
@@ -1367,17 +1381,28 @@ def element_funnel_records(
     ADR-0016 — and the row says how much of it that comparison could score.
     """
     gate = parameters.funnel_stage_names[0]
+    selected: list[Mapping[str, object]] = [
+        row for row in rows if row["arm"] not in (CELL_SIZE_ARM, LEIDEN_ARM)
+    ]
+    for arm in (CELL_SIZE_ARM, LEIDEN_ARM):
+        arm_rows = [row for row in rows if row["arm"] == arm]
+        if arm_rows:
+            selected.append(min(arm_rows, key=lambda row: int(row["elements"])))
     return [
         {
             "stage_index": index,
-            "stage_name": f"{row['arm']}/{row['variant']}：{gate}",
+            "stage_name": (
+                f"{row['arm']}：{gate}"
+                if row["arm"] in (CELL_SIZE_ARM, LEIDEN_ARM)
+                else f"{row['arm']}/{row['variant']}：{gate}"
+            ),
             "unit": parameters.element_funnel_unit,
             "entered": int(total_elements),
             "kept": int(row["elements"]),
             "rejected": int(total_elements) - int(row["elements"]),
             PARTITION_COLUMN: None,
         }
-        for index, row in enumerate(rows, start=1)
+        for index, row in enumerate(selected, start=1)
     ]
 
 
@@ -1497,19 +1522,20 @@ def partition_digests(
     # reason about.
     from .runs import digest_table
 
-    entries: list[dict[str, object]] = []
-    for key in sorted(built):
-        partition = built[key]
+    def assignment_digest(assignment: Mapping[Cell, int]) -> tuple[str, int]:
         frame = pd.DataFrame(
             sorted(
                 (cell[0], cell[1], region_id)
-                for cell, region_id in partition.assignment.items()
+                for cell, region_id in assignment.items()
             ),
             columns=list(REGION_CELL_COLUMNS),
         )
-        digest, rows = digest_table(
-            frame, REGION_CELL_COLUMNS, ("cell_x", "cell_y")
-        )
+        return digest_table(frame, REGION_CELL_COLUMNS, ("cell_x", "cell_y"))
+
+    entries: list[dict[str, object]] = []
+    for key in sorted(built):
+        partition = built[key]
+        digest, rows = assignment_digest(partition.assignment)
         entries.append(
             {
                 "arm": partition.side.arm,
@@ -1524,16 +1550,7 @@ def partition_digests(
             }
         )
     for partition in sorted(controls, key=lambda row: (row.arm, row.variant)):
-        frame = pd.DataFrame(
-            sorted(
-                (cell[0], cell[1], region_id)
-                for cell, region_id in partition.assignment.items()
-            ),
-            columns=list(REGION_CELL_COLUMNS),
-        )
-        digest, rows = digest_table(
-            frame, REGION_CELL_COLUMNS, ("cell_x", "cell_y")
-        )
+        digest, rows = assignment_digest(partition.assignment)
         entries.append(
             {
                 "arm": partition.arm,
