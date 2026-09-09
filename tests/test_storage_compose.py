@@ -69,3 +69,8 @@ def test_compose_passes_credentials_by_environment_and_checks_both_extensions():
     healthcheck = " ".join(database["healthcheck"]["test"])
     assert "postgis" in healthcheck
     assert "mobilitydb" in healthcheck
+
+
+def test_shell_initializers_are_executable():
+    for script in (ROOT / "database" / "init").glob("*.sh"):
+        assert os.access(script, os.X_OK), f"{script.name} is not executable"

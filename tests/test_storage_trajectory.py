@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+import pandas as pd
 import pytest
 import shapely
 from shapely.geometry import LineString, Point
@@ -214,6 +215,24 @@ def test_interpolated_vertex_times_must_remain_strictly_increasing():
             [(0, geometry)],
             [(0, 0.0, start), (0, 10.0, start + timedelta(microseconds=1))],
         )
+
+
+def test_nanosecond_interpolation_is_quantized_before_the_database():
+    geometry = shapely.to_wkb(
+        LineString([(0, 0), (9.9999997, 0), (10, 0)])
+    )
+    start = pd.Timestamp(parquet_time())
+
+    ewkt = build_trajectory_ewkt(
+        DAY,
+        [(0, geometry)],
+        [(0, 0.0, start), (0, 10.0, start + pd.Timedelta(seconds=15))],
+    )
+
+    assert (
+        "POINT(9.9999997 0)@2020-12-21 06:00:14.999999+08:00, "
+        "POINT(10 0)@2020-12-21 06:00:15+08:00"
+    ) in ewkt
 
 
 def test_same_input_produces_the_same_ewkt_twice():

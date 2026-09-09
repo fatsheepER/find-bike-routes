@@ -642,6 +642,8 @@ def database():
     with psycopg.connect(dsn, autocommit=True) as connection:
         for path in sorted((ROOT / "database" / "init").glob("*.sql")):
             connection.execute(path.read_text(encoding="utf-8"))
+
+    with psycopg.connect(dsn, autocommit=True) as connection:
         yield connection
 
 
@@ -653,7 +655,7 @@ def empty_database(database):
     database.execute(f"TRUNCATE {tables}")
 
 
-def rows(database, query: str, parameters=()):
+def rows(database, query: str, parameters=None):
     return database.execute(query, parameters).fetchall()
 
 
@@ -709,7 +711,7 @@ def test_schema_exposes_the_required_keys_constraints_and_spatial_types(database
     primary_keys = dict(
         rows(
             database,
-            "SELECT tc.table_name, array_agg(kcu.column_name ORDER BY kcu.ordinal_position) "
+            "SELECT tc.table_name, array_agg(kcu.column_name::text ORDER BY kcu.ordinal_position) "
             "FROM information_schema.table_constraints tc "
             "JOIN information_schema.key_column_usage kcu "
             "ON (tc.constraint_catalog, tc.constraint_schema, tc.constraint_name) = "
@@ -829,7 +831,15 @@ def test_value_checks_encode_the_frozen_study_contract(database):
 
     assert all(value in checks["dataset_release"] for value in ("singleton", "sha256", "jsonb_typeof"))
     assert all(value in checks["district"] for value in ("district_id > 0", "regions > 0", "cells > 0", "area_km2 >"))
-    assert all(value in checks["region"] for value in ("region_id > 0", "region_code", "between 0", "classified_share"))
+    assert all(
+        value in checks["region"]
+        for value in (
+            "region_id > 0",
+            "region_code",
+            "classified_share >=",
+            "classified_share <=",
+        )
+    )
     assert "st_area(geometry) =" in checks["grid_cell"] and "22500" in checks["grid_cell"]
     assert all(
         value in checks["track"]
@@ -1093,6 +1103,16 @@ def test_transit_query_restricts_time_before_space_and_returns_limited_context(
     crossings = rows(empty_database, query, crossing_parameters)
     assert len(crossings) == 200
     assert {count for count, _, _ in crossings} == {201}
+    try:
+        empty_database.execute("SET enable_seqscan = off")
+        plan = rows(
+            empty_database,
+            "EXPLAIN (COSTS OFF) " + query,
+            crossing_parameters,
+        )
+    finally:
+        empty_database.execute("SET enable_seqscan = on")
+    assert "track_trajectory_gist" in "\n".join(line for line, in plan)
     context = rows(
         empty_database,
         "SELECT ST_XMin(geometry_32650), ST_XMax(geometry_32650) "

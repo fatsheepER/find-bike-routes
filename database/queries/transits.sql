@@ -10,10 +10,11 @@ WITH request AS MATERIALIZED (
             ),
             32650
         ) AS bounds,
-        tstzspan(
+        span(
             %(start_local)s::timestamp AT TIME ZONE 'Asia/Shanghai',
             %(end_local)s::timestamp AT TIME ZONE 'Asia/Shanghai',
-            '[)'
+            true,
+            false
         ) AS time_window
 ),
 windowed AS MATERIALIZED (
@@ -23,6 +24,7 @@ windowed AS MATERIALIZED (
         request.bounds
     FROM track
     CROSS JOIN request
+    WHERE track.trajectory && stbox(request.bounds, request.time_window)
 ),
 matched AS MATERIALIZED (
     SELECT track_id, windowed_trajectory

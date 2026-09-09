@@ -7,7 +7,7 @@ import json
 import math
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from itertools import groupby
 from math import hypot, isclose, isfinite
 from pathlib import Path
@@ -902,7 +902,17 @@ def build_trajectory_ewkt(
         raise ValueError("matched path piece indices must be unique")
     if set(piece_indices) != {piece_index for piece_index, _, _ in observations}:
         raise ValueError("each matched path piece requires its own observations")
-    ordered_observations = sorted(observations, key=lambda item: (item[0], item[2]))
+    ordered_observations = [
+        (
+            piece_index,
+            offset_m,
+            timestamp.to_pydatetime(warn=False)
+            if hasattr(timestamp, "to_pydatetime")
+            else timestamp,
+        )
+        for piece_index, offset_m, timestamp in observations
+    ]
+    ordered_observations.sort(key=lambda item: (item[0], item[2]))
     if any(timestamp.tzinfo is not None for _, _, timestamp in ordered_observations):
         raise ValueError("Parquet timestamps must be timezone-naive UTC instants")
     if any(
@@ -978,8 +988,9 @@ def build_trajectory_ewkt(
             )
             for offset, timestamp in anchors
         ]
+        previous_time = anchors[0][1]
         instants = [
-            _instant(geometry.interpolate(anchors[0][0]).coords[0], anchors[0][1])
+            _instant(geometry.interpolate(anchors[0][0]).coords[0], previous_time)
         ]
         vertex_index = 1
         for (start_offset, start_time), (end_offset, end_time) in zip(
@@ -992,16 +1003,21 @@ def build_trajectory_ewkt(
                     end_offset - start_offset
                 )
                 timestamp = start_time + (end_time - start_time) * fraction
-                if not start_time < timestamp < end_time:
+                # Keep road vertices representable at PostgreSQL's microsecond precision.
+                timestamp = min(timestamp, end_time - timedelta(microseconds=1))
+                timestamp = max(timestamp, previous_time + timedelta(microseconds=1))
+                if not previous_time < timestamp < end_time:
                     raise ValueError(
                         f"piece {piece_index} interpolated vertex time is not "
                         "strictly increasing"
                     )
                 instants.append(_instant(geometry.coords[vertex_index], timestamp))
+                previous_time = timestamp
                 vertex_index += 1
             instants.append(
                 _instant(geometry.interpolate(end_offset).coords[0], end_time)
             )
+            previous_time = end_time
         sequences.append(f"[{', '.join(instants)}]")
     return f"SRID=32650;{{{', '.join(sequences)}}}"
 
