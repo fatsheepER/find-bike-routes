@@ -32,6 +32,7 @@ build-backend = "uv_build"
 dev = [
     # Lets the tests read the pipeline's Parquet output without a second JVM.
     "pyarrow>=18.0.0",
+    "psycopg[binary]>=3.2.10",
     "pytest>=9.1.1",
 ]
 
