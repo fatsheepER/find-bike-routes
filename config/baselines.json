@@ -1889,7 +1889,7 @@
             "partitions": {"sha256": "53f696f7522665b4fa4049278087665ec03869a77056608598354f4f2ed2e7c4", "rows": 187030},
             "partition_similarity": {"sha256": "4b9ab94ec403d19be1b12a8b19c84048c9b69774198f7f4a1a6308157b4db0f7", "rows": 26},
             "granularity_scan": {"sha256": "cbc94f3a878c12045ee0941d74afea6d8b00c892e742ccbfd277fdffd1e8ba62", "rows": 29},
-            "granularity_topk": {"sha256": "fa31dcbf7b48ce2d7a3b698854c47ce1da0e3d1433f834153c425db13ab1cdc3", "rows": 6},
+            "granularity_topk": {"sha256": "fa31dcbf7b48ce2d7a3b698854c47ce1da0e3d1433f834153c425db13ab1cdc3", "rows": 6, "valid": false, "reason": "不同格边长的 region_id 独立重编号，未建立空间对应关系"},
             "stage_counts_validate_partitions": {"sha256": "e15293b728ea3c6985940c0d4e3c8b5523efdbafde1767741f918e24587e64db", "rows": 20}
           }
         }
@@ -1932,10 +1932,11 @@
           "natural_gamma_1": {"regions": 33, "ami_points": 0.775456, "ecs_points": 0.280372, "excess_ami_points": -0.035452}
         },
         "cell_sizes": [
-          {"cell_size_m": 150, "markov_time": 1.25, "alignment": "identity", "capped": false, "regions": 151, "median_width_m": 719.374728, "ami_points": 1.0, "excess_ami_points": 0.189092, "top50_jaccard_od": 1.0, "top200_jaccard_od": 1.0},
-          {"cell_size_m": 200, "markov_time": 0.5, "alignment": "aligned", "capped": false, "regions": 160, "median_width_m": 721.110255, "ami_points": 0.834569, "excess_ami_points": 0.023661, "top50_jaccard_od": 0.123596, "top200_jaccard_od": 0.089918},
-          {"cell_size_m": 300, "markov_time": 0.75, "alignment": "aligned", "capped": false, "regions": 146, "median_width_m": 848.528137, "ami_points": 0.853477, "excess_ami_points": 0.042569, "top50_jaccard_od": 0.075269, "top200_jaccard_od": 0.089918}
+          {"cell_size_m": 150, "markov_time": 1.25, "alignment": "identity", "capped": false, "regions": 151, "median_width_m": 719.374728, "ami_points": 1.0, "excess_ami_points": 0.189092},
+          {"cell_size_m": 200, "markov_time": 0.5, "alignment": "aligned", "capped": false, "regions": 160, "median_width_m": 721.110255, "ami_points": 0.834569, "excess_ami_points": 0.023661},
+          {"cell_size_m": 300, "markov_time": 0.75, "alignment": "aligned", "capped": false, "regions": 146, "median_width_m": 848.528137, "ami_points": 0.853477, "excess_ami_points": 0.042569}
         ],
+        "granularity_topk_invalid": "不同格边长的 region_id 独立重编号且未建立空间对应关系；granularity_topk 只保留作审计痕迹，不进入报告或结论。",
         "candidate_partition_count": 63,
         "candidate_partition_digests": {
           "fold|days=2020-12-21": "a4e86ca942336e865de16d4ed3c50ff49704a2970e5a3e703630a4691f35c1fa",
@@ -2154,7 +2155,6 @@
         "rain-included ami_points 为 0.937537，高于四折量级；不让 12-23 参与冻结划分没有改变区域结论。",
         "Leiden γ=8 已到扫描上限且只有 111 区，因此主档为 capped；其 ami_points 与 ecs_points 仍与四折同量级。",
         "200 米与 300 米 ami_points 都低于 150 米恒等行，但 300 米高于 200 米，且 300 米中位宽度更大；预注册的单调下降与宽度对齐方向没有完整出现。",
-        "格边长 Top-K 只有 200 米出现 K=50 高于 K=200；300 米方向相反。",
         "显著流对不预设条数；晴天稳定集为 flow_od 738 对、flow_channel 204 对。",
         "晴天守门后的对数与流量份额和 spec 参考范围一致；雨天 flow_od 只覆盖 81.82% 非对角流量，挡掉 18.18%，超过预期的 11%。",
         "晴天两两 Spearman 为 flow_od 0.7604 到 0.7765、flow_channel 0.9611 到 0.9698；周一与周五各只有一个样本。",
