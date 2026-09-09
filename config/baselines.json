@@ -1840,6 +1840,328 @@
       "region_cells_digest": "d84a0485dfcffeda6fdad52e5472df38f4c4e9be01649cc8c5143f8605f486ef",
       "district_labels_sha256": "eb61916e26afd32a4c9ddbd94abaa592054671b6e62a515917e196511bd78afa",
       "note": "序列库与模式集是本实现在冻结 151 区上运行得到的 recorded 观测，不是独立 baseline：notebook §6.8 的 9,617 条序列、498 条模式、387 条连续建立在 12-21 的 141 区单日划分上，区域号不对应，差异同时来自划分与阈值，两组数不可比。报告引用这些数时必须这么标注。"
+    },
+    "validation": {
+      "note": "本节是两个全量验证阶段在冻结 151 区上的实现回声，不是独立 baseline。唯一的独立参照是两个流零模型的闭式期望与方差，其断言保存在测试中。结果按预注册方向解释，未为贴合方向而更改参数。",
+      "region_cells_digest": "d84a0485dfcffeda6fdad52e5472df38f4c4e9be01649cc8c5143f8605f486ef",
+      "data_contract_lock_sha256": "1c37c6ddf9b250e736abccd9c78298604677d27b6e2e8a572ade5ea46caad585",
+      "runs": {
+        "validate_flows": {
+          "run_id": "20260909-acceptance-validate-flows",
+          "dates": [
+            "2020-12-21",
+            "2020-12-22",
+            "2020-12-23",
+            "2020-12-24",
+            "2020-12-25"
+          ],
+          "parameters": {
+            "reps": 100,
+            "null_seed": 42,
+            "min_observed": 5,
+            "fdr_q": 0.05,
+            "audit_min_null_sd": 1.0,
+            "sequence_relative_floor": 0.003
+          },
+          "tables": {
+            "flow_significance": {"sha256": "412ed37f1bf92d789779f576bd27e35f29e2a55fcbf1b32473a631e5c3844635", "rows": 19727},
+            "null_audit": {"sha256": "60a564d406a517ec0bb2aea5ee04a2095c67b0029026f899aac554ec0f9eeebb", "rows": 10},
+            "flow_consistency": {"sha256": "0a2723c481c73a9be04292bbfd261e6294a86f906e1a6bb04be9f435ef1cd5f7", "rows": 155},
+            "stage_counts_validate_flows": {"sha256": "6b42fe3dda0fd8d2a22274a69af7619b5d476a3fca5805f5138f3f89bf698865", "rows": 30}
+          }
+        },
+        "validate_partitions": {
+          "run_id": "20260909-acceptance-validate-partitions",
+          "clear_days": [
+            "2020-12-21",
+            "2020-12-22",
+            "2020-12-24",
+            "2020-12-25"
+          ],
+          "dates_are_default": true,
+          "seeds": {
+            "infomap_seed": 42,
+            "num_trials": 5,
+            "lattice_null_seed": 7,
+            "leiden_seeds": [42, 7, 2020, 1234]
+          },
+          "tables": {
+            "partitions": {"sha256": "53f696f7522665b4fa4049278087665ec03869a77056608598354f4f2ed2e7c4", "rows": 187030},
+            "partition_similarity": {"sha256": "4b9ab94ec403d19be1b12a8b19c84048c9b69774198f7f4a1a6308157b4db0f7", "rows": 26},
+            "granularity_scan": {"sha256": "cbc94f3a878c12045ee0941d74afea6d8b00c892e742ccbfd277fdffd1e8ba62", "rows": 29},
+            "granularity_topk": {"sha256": "fa31dcbf7b48ce2d7a3b698854c47ce1da0e3d1433f834153c425db13ab1cdc3", "rows": 6},
+            "stage_counts_validate_partitions": {"sha256": "e15293b728ea3c6985940c0d4e3c8b5523efdbafde1767741f918e24587e64db", "rows": 20}
+          }
+        }
+      },
+      "partitions": {
+        "folds": [
+          {"holdout": "2020-12-21", "shared_days": 0, "ami_points": 0.862002, "ecs_points": 0.521173, "null_ami_points": 0.803651, "excess_ami_points": 0.058351},
+          {"holdout": "2020-12-22", "shared_days": 0, "ami_points": 0.878542, "ecs_points": 0.577199, "null_ami_points": 0.808059, "excess_ami_points": 0.070483},
+          {"holdout": "2020-12-24", "shared_days": 0, "ami_points": 0.892234, "ecs_points": 0.615669, "null_ami_points": 0.821029, "excess_ami_points": 0.071205},
+          {"holdout": "2020-12-25", "shared_days": 0, "ami_points": 0.873901, "ecs_points": 0.566421, "null_ami_points": 0.810893, "excess_ami_points": 0.063008}
+        ],
+        "fold_2v2": [
+          {"split": "2020-12-21+2020-12-22|2020-12-24+2020-12-25", "shared_days": 0, "ami_points": 0.90425, "excess_ami_points": 0.093342},
+          {"split": "2020-12-21+2020-12-24|2020-12-22+2020-12-25", "shared_days": 0, "ami_points": 0.882238, "excess_ami_points": 0.07133},
+          {"split": "2020-12-21+2020-12-25|2020-12-22+2020-12-24", "shared_days": 0, "ami_points": 0.898071, "excess_ami_points": 0.087163}
+        ],
+        "fold_3v3": [
+          {"pair": "2020-12-21|2020-12-22", "shared_days": 2, "ami_points": 0.91977, "excess_ami_points": 0.108862},
+          {"pair": "2020-12-21|2020-12-24", "shared_days": 2, "ami_points": 0.924695, "excess_ami_points": 0.113787},
+          {"pair": "2020-12-21|2020-12-25", "shared_days": 2, "ami_points": 0.900277, "excess_ami_points": 0.089369},
+          {"pair": "2020-12-22|2020-12-24", "shared_days": 2, "ami_points": 0.918121, "excess_ami_points": 0.107213},
+          {"pair": "2020-12-22|2020-12-25", "shared_days": 2, "ami_points": 0.893343, "excess_ami_points": 0.082435},
+          {"pair": "2020-12-24|2020-12-25", "shared_days": 2, "ami_points": 0.894951, "excess_ami_points": 0.084043}
+        ],
+        "rain_included": {
+          "regions": 154,
+          "ami_points": 0.937537,
+          "ecs_points": 0.746858,
+          "excess_ami_points": 0.126629
+        },
+        "leiden": {
+          "main": {"resolution": 8.0, "seed": 42, "alignment": "capped", "regions": 111, "ami_points": 0.875446, "ecs_points": 0.557106, "excess_ami_points": 0.064538},
+          "seed_check": [
+            {"seed": 42, "regions": 111, "ami_points": 0.875446},
+            {"seed": 7, "regions": 114, "ami_points": 0.869576},
+            {"seed": 2020, "regions": 115, "ami_points": 0.861243},
+            {"seed": 1234, "regions": 118, "ami_points": 0.870894}
+          ],
+          "seed_range": {"regions": 7, "ami_points": 0.014203},
+          "natural_gamma_1": {"regions": 33, "ami_points": 0.775456, "ecs_points": 0.280372, "excess_ami_points": -0.035452}
+        },
+        "cell_sizes": [
+          {"cell_size_m": 150, "markov_time": 1.25, "alignment": "identity", "capped": false, "regions": 151, "median_width_m": 719.374728, "ami_points": 1.0, "excess_ami_points": 0.189092, "top50_jaccard_od": 1.0, "top200_jaccard_od": 1.0},
+          {"cell_size_m": 200, "markov_time": 0.5, "alignment": "aligned", "capped": false, "regions": 160, "median_width_m": 721.110255, "ami_points": 0.834569, "excess_ami_points": 0.023661, "top50_jaccard_od": 0.123596, "top200_jaccard_od": 0.089918},
+          {"cell_size_m": 300, "markov_time": 0.75, "alignment": "aligned", "capped": false, "regions": 146, "median_width_m": 848.528137, "ami_points": 0.853477, "excess_ami_points": 0.042569, "top50_jaccard_od": 0.075269, "top200_jaccard_od": 0.089918}
+        ],
+        "candidate_partition_count": 63,
+        "candidate_partition_digests": {
+          "fold|days=2020-12-21": "a4e86ca942336e865de16d4ed3c50ff49704a2970e5a3e703630a4691f35c1fa",
+          "fold-2v2|days=2020-12-21+2020-12-22": "3616bfabe9c314e856f8479253e91a144875e75ac73460902ff87ffc4dbf3c2a",
+          "rain-included|days=2020-12-21+2020-12-22+2020-12-23+2020-12-24+2020-12-25": "4137d1ed741b8b2274d2e855440b1f1064db988308bff2e1d14be2bcf4b1b22c",
+          "fold|days=2020-12-21+2020-12-22+2020-12-24": "0edf2b1688b9612069a6b6220e66d9e0641a68d1414a0e63f528fc9ca151da33",
+          "fold|days=2020-12-21+2020-12-22+2020-12-25": "01b2c9de2adf721b2438adf5ab454728c9091c5d9c8189e8da4ceb239ac119af",
+          "fold-2v2|days=2020-12-21+2020-12-24": "5b73b185fd4dc98e7a97dd67b66dbd0467703202579cbe7b343bca5d5ca494da",
+          "fold|days=2020-12-21+2020-12-24+2020-12-25": "64c06b6a542f63166249e02faeafcfc82740aff471400d88fc369d980bf6cc55",
+          "fold-2v2|days=2020-12-21+2020-12-25": "8a90a31ebe0e84f9e8211606f10a851ac28b21bab8516f714e00d5343c6fa91d",
+          "fold|days=2020-12-22": "c391734583f11281bfbcce6320d37cf85697a48e17c3e1222c94a4124622b053",
+          "fold-2v2|days=2020-12-22+2020-12-24": "71903e6e73b3e4ae86166f024260c40243504921a3902848e844a4d412e62774",
+          "fold|days=2020-12-22+2020-12-24+2020-12-25": "dcac9907af2a716c72ad31e536b4a25c0d0f4d8dbdf851b414829215ab0bf5e8",
+          "fold-2v2|days=2020-12-22+2020-12-25": "f1734c267b12931ec363a5a937fa9b58e4655f4eccb979ff0b11b0f0de77bd8d",
+          "fold|days=2020-12-24": "330534234b98ea9e38bde561fbf3a94aeff96c3594a91b39536cd70817eb5314",
+          "fold-2v2|days=2020-12-24+2020-12-25": "e1ec13a47f6ea2d16407d205f423e4cb80853782aba7c011730837d82b328ebe",
+          "fold|days=2020-12-25": "d62eb8e88db72e5d141a007b0279078c3de4677a10ae19f835bb8100a34466ef",
+          "fold-null|null-days=2020-12-21": "366572812472ec0d4d92441fb9725e273f4c8856558a9ef91792cc06eac6ec88",
+          "fold-null|null-days=2020-12-21+2020-12-22+2020-12-24": "efd12aad555ed3950966c5a9f2bd5fbceba68ba8474a31576f4cf2d6d1362f5d",
+          "fold-null|null-days=2020-12-21+2020-12-22+2020-12-25": "b660d706090f2515568acc4b08cef05b43c85d43a31224b717f31cbae0573f9b",
+          "fold-null|null-days=2020-12-21+2020-12-24+2020-12-25": "ee8c0c0db12666620bce59e3029a241a4ede811006bc48ea919d9377a04eb2ba",
+          "fold-null|null-days=2020-12-22": "fb919c7ea9bbc4522ac7368ff82c55b37da9a317914dd5f0dab0ee7abecfeda4",
+          "fold-null|null-days=2020-12-22+2020-12-24+2020-12-25": "fb36d7b31fb448320333a3c2795bcb80b003110c1dcb1076a2737ee17953d0b2",
+          "fold-null|null-days=2020-12-24": "237ab5405fa5511485b5dd4a6f79485e5629a7ed1eee4ee00a95c3f7a77260bd",
+          "fold-null|null-days=2020-12-25": "48eaa6df2e8ced8b6f2273b278f27799ae6427b6379679a8f644fc7b551f1b3c",
+          "cell-size|s=200,markov-time=0.5": "95bf82820324c156436585d50b87c3b8254691aa739c4bf208ab9f8545422906",
+          "cell-size|s=200,markov-time=0.75": "1b7fcbcaa84b01be41b6d2aae2d51e02ef538934903dc8207c1b01853f003280",
+          "cell-size|s=200,markov-time=1": "39ff208a5f167af5f5919d7124f8efae1620cb37f9a4350de547a064a299cc25",
+          "cell-size|s=200,markov-time=1.25": "d19e807ce0130f613f8375c2cbfe9d48fe37769854ada8007ef0532b2c53a94e",
+          "cell-size|s=200,markov-time=1.5": "3df20c7f354f9424321fa0fd2c62219e65abb63abf0d3688bbe1b5d7b378b4eb",
+          "cell-size|s=200,markov-time=1.75": "a32fffd55eff690336c9efd6b02950192d3c47f823afa7819adbff91a434f2e0",
+          "cell-size|s=200,markov-time=12": "144a2e979c10cafa1abb3d90b2fdf81cd5611659278633e3b21810dd0af099af",
+          "cell-size|s=200,markov-time=2": "7842dc3641790d1cb5f1eb3c08bd231b9350cd1fcb7a2232e233dc6d320318d7",
+          "cell-size|s=200,markov-time=2.5": "6ac2c104c72319e43c7efe297a5935c10113f82d6573d47221ba5748514157f3",
+          "cell-size|s=200,markov-time=3": "98fecbba1b2adeddc7878d3ad536c6c5dd3c677f73d7b2117f49e9f9aa511e33",
+          "cell-size|s=200,markov-time=4": "c77262fd89c71430a3970fe0dc6d55b18698ee54581c0841ba5c92642181a17e",
+          "cell-size|s=200,markov-time=5": "257b8cb7c6e6510e62fa7ee759bffd048864905ac3fadd0b82198d10b20cfd0c",
+          "cell-size|s=200,markov-time=6": "f7421ab19145140f90e08b2116cff74c65b869b7eadcf7af1e69679177a0977c",
+          "cell-size|s=200,markov-time=8": "d33c2a8b236ad8c904acaa0e78d653c0c0fe3636211de7f6d42941e151e31c68",
+          "cell-size|s=300,markov-time=0.5": "94d1bbcc70696853367ad458aedb94b7f7b967463a5a722946f4bb8949517951",
+          "cell-size|s=300,markov-time=0.75": "44cc42b73c84311fd42df0f25cea2eeb58193b892d3fb4e7bb87a5e28de06786",
+          "cell-size|s=300,markov-time=1": "68865e8faed96e9fe05c9005e2957cb130704f3b691b8201a515fc6f715ea943",
+          "cell-size|s=300,markov-time=1.25": "a24aedd1e926f3cfd1253003cd6c94f553711446ac058ef54087728c0b350c87",
+          "cell-size|s=300,markov-time=1.5": "086ec07f59a08e9edadf6a43237d5e6b2f7a75ecb3ae638c0d0f87c3f148b22f",
+          "cell-size|s=300,markov-time=1.75": "09e56c550b8023304fbd2e2354fdf68f5e95b24f0dd22e2d0e3b5e93f9656571",
+          "cell-size|s=300,markov-time=12": "da9a8ead6ad9a2153a1f6f61063d2fb11564d6a824acb17855415f40b1d9df7d",
+          "cell-size|s=300,markov-time=2": "6066960412ec999ab75dfd1385a8ad15d4540a9cf19150652b6199af4523467a",
+          "cell-size|s=300,markov-time=2.5": "a576cd52b21e84ba875abcc0bec0a2c16076429f815a73bf944a5d7171a91ea2",
+          "cell-size|s=300,markov-time=3": "3e8953fc95cce1db931f6a17e77494c66d21c59b3d38a6205ef458e4f93b779f",
+          "cell-size|s=300,markov-time=4": "48b678b56793f1f11e38c69cb1e4df00d91eec317a05536a07007d1e817db285",
+          "cell-size|s=300,markov-time=5": "63ae446b2d984fa1c2030a397f4e035afbc4940f27f1bf3d724ea281c0f3d854",
+          "cell-size|s=300,markov-time=6": "d3ff20b0fb02b22676e3e595136fecc2490a3ed699c9aa0913433c1dc6a2dcf4",
+          "cell-size|s=300,markov-time=8": "ea4d0d1241bb1962698ba42473bf5959043e116bd9ffbf340ea6d391d6f64216",
+          "leiden|gamma=0.5": "a497f19be42b385f06cae5ca1ef007bfc63ce2ce3da6c2397ea967cac85282db",
+          "leiden|gamma=0.75": "ca38f3298e2cdfff3a10bb3157941090a7f13161f2a5e4c8fe4a0a41aaaa677a",
+          "leiden|gamma=1": "f05de14e3a81bf6a079956204b7f5ea16ffc8227543a54d6eaa8ba390b91019f",
+          "leiden|gamma=1.5": "2ec1de4d574a6d6bf4d52a6ebfefdc61aed21ad19902f086c000aac236195d51",
+          "leiden|gamma=2": "d6170865c65ec3cd1fb8dfe85962d7e6d5be604486083078302a518581400534",
+          "leiden|gamma=3": "bd71236fb57c04541e06739e9ab69b26c013970f3bc40e92de12bb0b2b98dcec",
+          "leiden|gamma=4": "1109241daf0f1668d500850816d8c5b9e108a0afc94bdab814836599b6c13717",
+          "leiden|gamma=6": "3ff9560ee5b922049b756a78f6db9282c79757e03a63b4c7680a0591d1b520b9",
+          "leiden|gamma=8": "232d25ab392e154c5be69c5351174f36226ae9e1aaae69b848b214d8041e397d",
+          "leiden|gamma=8,seed=1234": "e25fccb3ee109f2fa01a78d3841917e9cd79471a747358a20cf01c5151092535",
+          "leiden|gamma=8,seed=2020": "ff62336de5e6e6cb24eb27edb6dbb71458c5a41f1c689e070b087e188a6334b5",
+          "leiden|gamma=8,seed=7": "aa364ea880a7c4490bee90bf521db404a030441f843f53ef4079140c2a32811c"
+        }
+      },
+      "flows": {
+        "daily": {
+          "flow_od": {
+            "2020-12-21": {"off_diagonal_pairs": 3188, "kept_pairs": 1198, "gated_out_pairs": 1990, "kept_pair_share": 0.375784, "kept_flow_share": 0.901348, "significant_pairs": 939},
+            "2020-12-22": {"off_diagonal_pairs": 3356, "kept_pairs": 1251, "gated_out_pairs": 2105, "kept_pair_share": 0.372765, "kept_flow_share": 0.902438, "significant_pairs": 955},
+            "2020-12-23": {"off_diagonal_pairs": 2023, "kept_pairs": 653, "gated_out_pairs": 1370, "kept_pair_share": 0.322788, "kept_flow_share": 0.818222, "significant_pairs": 608},
+            "2020-12-24": {"off_diagonal_pairs": 3189, "kept_pairs": 1178, "gated_out_pairs": 2011, "kept_pair_share": 0.369395, "kept_flow_share": 0.897703, "significant_pairs": 941},
+            "2020-12-25": {"off_diagonal_pairs": 3124, "kept_pairs": 1151, "gated_out_pairs": 1973, "kept_pair_share": 0.368438, "kept_flow_share": 0.893029, "significant_pairs": 923}
+          },
+          "flow_channel": {
+            "2020-12-21": {"off_diagonal_pairs": 640, "kept_pairs": 513, "gated_out_pairs": 127, "kept_pair_share": 0.801563, "kept_flow_share": 0.983653, "significant_pairs": 257},
+            "2020-12-22": {"off_diagonal_pairs": 647, "kept_pairs": 513, "gated_out_pairs": 134, "kept_pair_share": 0.79289, "kept_flow_share": 0.982659, "significant_pairs": 260},
+            "2020-12-23": {"off_diagonal_pairs": 581, "kept_pairs": 353, "gated_out_pairs": 228, "kept_pair_share": 0.607573, "kept_flow_share": 0.91523, "significant_pairs": 135},
+            "2020-12-24": {"off_diagonal_pairs": 663, "kept_pairs": 562, "gated_out_pairs": 101, "kept_pair_share": 0.847662, "kept_flow_share": 0.991174, "significant_pairs": 318},
+            "2020-12-25": {"off_diagonal_pairs": 650, "kept_pairs": 510, "gated_out_pairs": 140, "kept_pair_share": 0.784615, "kept_flow_share": 0.981708, "significant_pairs": 246}
+          }
+        },
+        "clear_days_stable": {
+          "flow_od": {
+            "significant_pairs": 738,
+            "top_pairs": [
+              {"from_region": 18, "from_code": "曾厝垵-1", "to_region": 53, "to_code": "曾厝垵-3", "observed": 201, "z": 88.715471},
+              {"from_region": 10, "from_code": "殿前-1", "to_region": 43, "to_code": "殿前-2", "observed": 120, "z": 81.460512},
+              {"from_region": 109, "from_code": "殿前-4", "to_region": 10, "to_code": "殿前-1", "observed": 271, "z": 79.821545},
+              {"from_region": 79, "from_code": "五通-3", "to_region": 3, "to_code": "五通-1", "observed": 244, "z": 76.298572},
+              {"from_region": 63, "from_code": "观音山-4", "to_region": 60, "to_code": "观音山-3", "observed": 1027, "z": 76.282834},
+              {"from_region": 84, "from_code": "环岛干道-2", "to_region": 30, "to_code": "环岛干道-1", "observed": 1939, "z": 66.247325},
+              {"from_region": 107, "from_code": "金山-6", "to_region": 28, "to_code": "金山-1", "observed": 308, "z": 64.184275},
+              {"from_region": 131, "from_code": "火炬北路-4", "to_region": 62, "to_code": "塘边-1", "observed": 372, "z": 63.825178},
+              {"from_region": 47, "from_code": "枋钟路-4", "to_region": 82, "to_code": "枋钟路-5", "observed": 913, "z": 60.155118},
+              {"from_region": 30, "from_code": "环岛干道-1", "to_region": 95, "to_code": "环岛干道-4", "observed": 575, "z": 58.672998}
+            ]
+          },
+          "flow_channel": {
+            "significant_pairs": 204,
+            "top_pairs": [
+              {"from_region": 46, "from_code": "五通-2", "to_region": 3, "to_code": "五通-1", "observed": 114, "z": 21.996308},
+              {"from_region": 18, "from_code": "曾厝垵-1", "to_region": 32, "to_code": "曾厝垵-2", "observed": 67, "z": 20.825154},
+              {"from_region": 22, "from_code": "高崎-1", "to_region": 136, "to_code": "高崎-7", "observed": 63, "z": 19.128967},
+              {"from_region": 53, "from_code": "曾厝垵-3", "to_region": 135, "to_code": "曾厝垵-6", "observed": 65, "z": 19.043281},
+              {"from_region": 77, "from_code": "湖边水库-1", "to_region": 142, "to_code": "湖边水库-2", "observed": 133, "z": 17.673565},
+              {"from_region": 10, "from_code": "殿前-1", "to_region": 43, "to_code": "殿前-2", "observed": 27, "z": 17.436361},
+              {"from_region": 7, "from_code": "环岛东路/南路-1", "to_region": 97, "to_code": "环岛东路/南路-3", "observed": 45, "z": 17.021588},
+              {"from_region": 109, "from_code": "殿前-4", "to_region": 10, "to_code": "殿前-1", "observed": 67, "z": 16.83161},
+              {"from_region": 10, "from_code": "殿前-1", "to_region": 109, "to_code": "殿前-4", "observed": 56, "z": 16.673164},
+              {"from_region": 92, "from_code": "殿前-3", "to_region": 10, "to_code": "殿前-1", "observed": 39, "z": 15.680885}
+            ]
+          }
+        },
+        "cross_day": {
+          "flow_od": {
+            "pairwise_spearman": {"min": 0.7604, "max": 0.7765, "mean": 0.770117},
+            "pairwise_top50_jaccard": {"min": 0.724138, "max": 0.851852, "mean": 0.77081},
+            "pairwise_top200_jaccard": {"min": 0.818182, "max": 0.860465, "mean": 0.843461}
+          },
+          "flow_channel": {
+            "pairwise_spearman": {"min": 0.9611, "max": 0.9698, "mean": 0.964683},
+            "pairwise_top50_jaccard": {"min": 0.754386, "max": 0.886792, "mean": 0.797339},
+            "pairwise_top200_jaccard": {"min": 0.809955, "max": 0.860465, "mean": 0.830815}
+          },
+          "weekday_note": "周一与周五各只有一个样本，只描述，不外推。",
+          "pairs": [
+            {"matrix": "flow_channel", "left": "2020-12-21", "right": "2020-12-22", "spearman": 0.9611, "top50_jaccard": 0.785714, "top200_jaccard": 0.826484},
+            {"matrix": "flow_channel", "left": "2020-12-21", "right": "2020-12-24", "spearman": 0.9667, "top50_jaccard": 0.886792, "top200_jaccard": 0.818182},
+            {"matrix": "flow_channel", "left": "2020-12-21", "right": "2020-12-25", "spearman": 0.9615, "top50_jaccard": 0.785714, "top200_jaccard": 0.843318},
+            {"matrix": "flow_channel", "left": "2020-12-21", "right": "clear-days", "spearman": 0.9846, "top50_jaccard": 0.923077, "top200_jaccard": 0.886792},
+            {"matrix": "flow_channel", "left": "2020-12-22", "right": "2020-12-24", "spearman": 0.9667, "top50_jaccard": 0.754386, "top200_jaccard": 0.826484},
+            {"matrix": "flow_channel", "left": "2020-12-22", "right": "2020-12-25", "spearman": 0.9623, "top50_jaccard": 0.785714, "top200_jaccard": 0.809955},
+            {"matrix": "flow_channel", "left": "2020-12-22", "right": "clear-days", "spearman": 0.985, "top50_jaccard": 0.818182, "top200_jaccard": 0.869159},
+            {"matrix": "flow_channel", "left": "2020-12-24", "right": "2020-12-25", "spearman": 0.9698, "top50_jaccard": 0.785714, "top200_jaccard": 0.860465},
+            {"matrix": "flow_channel", "left": "2020-12-24", "right": "clear-days", "spearman": 0.9916, "top50_jaccard": 0.923077, "top200_jaccard": 0.913876},
+            {"matrix": "flow_channel", "left": "2020-12-25", "right": "clear-days", "spearman": 0.9857, "top50_jaccard": 0.818182, "top200_jaccard": 0.904762},
+            {"matrix": "flow_od", "left": "2020-12-21", "right": "2020-12-22", "spearman": 0.774, "top50_jaccard": 0.724138, "top200_jaccard": 0.860465},
+            {"matrix": "flow_od", "left": "2020-12-21", "right": "2020-12-24", "spearman": 0.7715, "top50_jaccard": 0.754386, "top200_jaccard": 0.826484},
+            {"matrix": "flow_od", "left": "2020-12-21", "right": "2020-12-25", "spearman": 0.7604, "top50_jaccard": 0.785714, "top200_jaccard": 0.818182},
+            {"matrix": "flow_od", "left": "2020-12-21", "right": "clear-days", "spearman": 0.8961, "top50_jaccard": 0.785714, "top200_jaccard": 0.904762},
+            {"matrix": "flow_od", "left": "2020-12-22", "right": "2020-12-24", "spearman": 0.7765, "top50_jaccard": 0.754386, "top200_jaccard": 0.843318},
+            {"matrix": "flow_od", "left": "2020-12-22", "right": "2020-12-25", "spearman": 0.7621, "top50_jaccard": 0.754386, "top200_jaccard": 0.851852},
+            {"matrix": "flow_od", "left": "2020-12-22", "right": "clear-days", "spearman": 0.9013, "top50_jaccard": 0.785714, "top200_jaccard": 0.913876},
+            {"matrix": "flow_od", "left": "2020-12-24", "right": "2020-12-25", "spearman": 0.7762, "top50_jaccard": 0.851852, "top200_jaccard": 0.860465},
+            {"matrix": "flow_od", "left": "2020-12-24", "right": "clear-days", "spearman": 0.9031, "top50_jaccard": 0.851852, "top200_jaccard": 0.904762},
+            {"matrix": "flow_od", "left": "2020-12-25", "right": "clear-days", "spearman": 0.8946, "top50_jaccard": 0.851852, "top200_jaccard": 0.886792}
+          ]
+        }
+      },
+      "rain_day": {
+          "date": "2020-12-23",
+          "exposure_normalised_total_ratio": {
+            "flow_od_all": 1.0,
+            "flow_channel_all": 0.968172,
+            "flow_od_less_than_1_km": 0.987443,
+            "flow_od_1_to_3_km": 1.051898,
+            "flow_od_at_least_3_km": 0.686865
+          },
+          "band_ratio_spread": 0.401694,
+          "band_ratio_max_deviation": {"distance_band": "≥ 3 km", "value": 0.244153},
+          "off_diagonal_share": {
+            "flow_od_spearman": 0.7556,
+            "flow_od_cosine": 0.963476,
+            "flow_channel_spearman": 0.9257,
+            "flow_channel_cosine": 0.969027
+          },
+          "point_retention_rate": 0.714798,
+          "unassigned_gap_cuts": 8,
+          "tracks_with_unassigned_gap_cuts": 6,
+          "unlock_fallback_share": 1.84,
+          "lock_fallback_share": 0.98,
+          "note": "12-23 的点留存率只有 71.48%，无区域段切断 8 次、涉及 6 条轨迹，订单回落解锁 1.84%、上锁 0.98%。曝光归一后总体出行流为晴天均值的 1.0000、通道流为 0.9682，但 ≥3 km 出行流仅为 0.6869；因此总量下降不能全归因于出行行为，同时长距离结构存在额外下降。"
+        },
+        "sequences": {
+          "relative_support_floors": {"2020-12-21": 30, "2020-12-22": 33, "2020-12-23": 11, "2020-12-24": 51, "2020-12-25": 32, "clear-days": 144},
+          "pairwise_pattern_jaccard": {"min": 0.582626, "max": 0.733333, "mean": 0.657699},
+          "pairwise_pattern_jaccard_relative_floor": {"min": 0.754513, "max": 0.802158, "mean": 0.781413},
+          "pairwise_contiguous_top50_jaccard": {"min": 0.754386, "max": 0.818182, "mean": 0.780873},
+          "daily_pattern_coverage": {"2020-12-21": 1.0, "2020-12-22": 1.0, "2020-12-23": 1.0, "2020-12-24": 1.0, "2020-12-25": 1.0},
+          "daily_pattern_coverage_relative_floor": {"2020-12-21": 0.910156, "2020-12-22": 0.925311, "2020-12-23": 0.815261, "2020-12-24": 0.955102, "2020-12-25": 0.93913},
+          "daily_contiguous_top50_coverage": {"2020-12-21": 0.96, "2020-12-22": 0.92, "2020-12-23": 0.82, "2020-12-24": 0.94, "2020-12-25": 0.9},
+          "pairwise": [
+            {"left": "2020-12-21", "right": "2020-12-22", "pattern_jaccard": 0.694765, "pattern_jaccard_relative_floor": 0.775, "contiguous_top50_jaccard": 0.818182},
+            {"left": "2020-12-21", "right": "2020-12-24", "pattern_jaccard": 0.592544, "pattern_jaccard_relative_floor": 0.802158, "contiguous_top50_jaccard": 0.818182},
+            {"left": "2020-12-21", "right": "2020-12-25", "pattern_jaccard": 0.730589, "pattern_jaccard_relative_floor": 0.754513, "contiguous_top50_jaccard": 0.754386},
+            {"left": "2020-12-22", "right": "2020-12-24", "pattern_jaccard": 0.612338, "pattern_jaccard_relative_floor": 0.78022, "contiguous_top50_jaccard": 0.754386},
+            {"left": "2020-12-22", "right": "2020-12-25", "pattern_jaccard": 0.733333, "pattern_jaccard_relative_floor": 0.790875, "contiguous_top50_jaccard": 0.754386},
+            {"left": "2020-12-24", "right": "2020-12-25", "pattern_jaccard": 0.582626, "pattern_jaccard_relative_floor": 0.785714, "contiguous_top50_jaccard": 0.785714}
+          ],
+          "null_model": null,
+          "null_model_note": "不配零模型：随机化序列库后长模式必然消失，结论预先已知，不构成证据。"
+        },
+      "null_audit": {
+          "models": {"flow_od": "端点重排零模型", "flow_channel": "支撑内强度零模型"},
+          "tolerances": {"max_mean_deviation": "< 0.5", "max_sd_deviation": "< 0.5", "flow_od_margin_deviation": "== 0", "flow_channel_margin_deviation": "0 < value < 1"},
+          "all_within_tolerance": true,
+          "rows": [
+            {"matrix": "flow_channel", "scope": "2020-12-21", "null_model": "支撑内强度零模型", "max_mean_deviation": 0.3355, "max_sd_deviation": 0.2584, "margin_deviation": 0.5294, "audit_cells": 530},
+            {"matrix": "flow_channel", "scope": "2020-12-22", "null_model": "支撑内强度零模型", "max_mean_deviation": 0.2816, "max_sd_deviation": 0.2412, "margin_deviation": 0.5256, "audit_cells": 543},
+            {"matrix": "flow_channel", "scope": "2020-12-23", "null_model": "支撑内强度零模型", "max_mean_deviation": 0.3045, "max_sd_deviation": 0.22, "margin_deviation": 0.5509, "audit_cells": 448},
+            {"matrix": "flow_channel", "scope": "2020-12-24", "null_model": "支撑内强度零模型", "max_mean_deviation": 0.3366, "max_sd_deviation": 0.2718, "margin_deviation": 0.5412, "audit_cells": 569},
+            {"matrix": "flow_channel", "scope": "2020-12-25", "null_model": "支撑内强度零模型", "max_mean_deviation": 0.3194, "max_sd_deviation": 0.2706, "margin_deviation": 0.5309, "audit_cells": 531},
+            {"matrix": "flow_od", "scope": "2020-12-21", "null_model": "端点重排零模型", "max_mean_deviation": 0.3692, "max_sd_deviation": 0.3616, "margin_deviation": 0.0, "audit_cells": 9844},
+            {"matrix": "flow_od", "scope": "2020-12-22", "null_model": "端点重排零模型", "max_mean_deviation": 0.4166, "max_sd_deviation": 0.3026, "margin_deviation": 0.0, "audit_cells": 10122},
+            {"matrix": "flow_od", "scope": "2020-12-23", "null_model": "端点重排零模型", "max_mean_deviation": 0.3608, "max_sd_deviation": 0.3257, "margin_deviation": 0.0, "audit_cells": 5024},
+            {"matrix": "flow_od", "scope": "2020-12-24", "null_model": "端点重排零模型", "max_mean_deviation": 0.3769, "max_sd_deviation": 0.3365, "margin_deviation": 0.0, "audit_cells": 9580},
+            {"matrix": "flow_od", "scope": "2020-12-25", "null_model": "端点重排零模型", "max_mean_deviation": 0.3996, "max_sd_deviation": 0.3171, "margin_deviation": 0.0, "audit_cells": 9352}
+          ]
+        },
+      "preregistered_interpretation": [
+        "四折 excess_ami_points 全为正，边界包含超出格网骨架的流量结构。",
+        "四折 ami_points 均值 0.876670，仅比 fold-2v2 与 fold-3v3 均值低 0.018183 与 0.031856；曝光差异有影响，但没有形成大差距。",
+        "rain-included ami_points 为 0.937537，高于四折量级；不让 12-23 参与冻结划分没有改变区域结论。",
+        "Leiden γ=8 已到扫描上限且只有 111 区，因此主档为 capped；其 ami_points 与 ecs_points 仍与四折同量级。",
+        "200 米与 300 米 ami_points 都低于 150 米恒等行，但 300 米高于 200 米，且 300 米中位宽度更大；预注册的单调下降与宽度对齐方向没有完整出现。",
+        "格边长 Top-K 只有 200 米出现 K=50 高于 K=200；300 米方向相反。",
+        "显著流对不预设条数；晴天稳定集为 flow_od 738 对、flow_channel 204 对。",
+        "晴天守门后的对数与流量份额和 spec 参考范围一致；雨天 flow_od 只覆盖 81.82% 非对角流量，挡掉 18.18%，超过预期的 11%。",
+        "晴天两两 Spearman 为 flow_od 0.7604 到 0.7765、flow_channel 0.9611 到 0.9698；周一与周五各只有一个样本。",
+        "雨天总量按曝光归一后接近晴天，但 ≥3 km 出行流仅为 0.686865，三档不是等比缩水。",
+        "统一相对门槛将晴天模式 Jaccard 从 0.582626 到 0.733333 提高到 0.754513 到 0.802158；Top-50 连续模式重合不变。",
+        "null_audit 的均值与标准差偏差均小于 0.5，flow_od margin 恒为 0，flow_channel margin 位于 0 与 1 之间；十行全部满足测试容差。"
+      ]
     }
   },
   "totals": {
