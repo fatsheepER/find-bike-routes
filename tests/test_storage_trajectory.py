@@ -148,6 +148,23 @@ def test_repeated_offset_keeps_the_stationary_interval():
     )
 
 
+def test_roundoff_at_a_repeated_offset_keeps_the_stationary_interval():
+    geometry = shapely.to_wkb(LineString([(0, 0), (10, 0)]))
+    observations = [
+        (0, 0.0, parquet_time()),
+        (0, 5.0, parquet_time(second=1)),
+        (0, 5.0 - 1e-13, parquet_time(second=2)),
+        (0, 10.0, parquet_time(second=3)),
+    ]
+
+    assert build_trajectory_ewkt(DAY, [(0, geometry)], observations) == (
+        "SRID=32650;{[POINT(0 0)@2020-12-21 06:00:00+08:00, "
+        "POINT(5 0)@2020-12-21 06:00:01+08:00, "
+        "POINT(5 0)@2020-12-21 06:00:02+08:00, "
+        "POINT(10 0)@2020-12-21 06:00:03+08:00]}"
+    )
+
+
 @pytest.mark.parametrize(
     "observations",
     [
