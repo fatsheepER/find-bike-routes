@@ -1,0 +1,93 @@
+{
+  "note": "Frozen by hand from notebooks/trajectory_analysis.py. Do not re-derive: the notebook's `sample(random_state=42)` depends on pandas RNG stability across versions, which is exactly the dependency this file removes. scripts/freeze_data_contract.py only verifies this list against the source file; it never re-selects.",
+  "source_date": "2020-12-21",
+  "source_file": "data/staging/trajectory/trajectory-data-20201221.csv",
+  "fixture_file": "tests/fixtures/regression-sample-20201221.csv",
+  "provenance": {
+    "notebook": "notebooks/trajectory_analysis.py",
+    "verified_with": "pandas 3.0.5 / numpy 2.5.2",
+    "selection": {
+      "known_examples": ["BICYCLE_8697", "BICYCLE_8600", "BICYCLE_1"],
+      "high_anomaly_count": 8,
+      "high_anomaly_sort_key": ["source_invalid_connections", "proposed_tracks", "points"],
+      "high_anomaly_sort_order": "descending",
+      "random_control_count": 9,
+      "random_control_min_points": 20,
+      "random_state": 42,
+      "batch_size": 20
+    },
+    "split_rules": [
+      "time does not increase (gap_seconds <= 0)",
+      "gap_seconds > 120",
+      "step_speed_mps > 12",
+      "step_distance_m > 1000"
+    ],
+    "split_rule_order": "by source_row within BICYCLE_ID, not by globally sorted time",
+    "distance_metric_note": "The eight high-anomaly bicycles are identical, and identically ordered, under haversine distance (notebooks/trajectory_analysis.py) and under EPSG:32650 planar distance (notebooks/single_day_pipeline.py, project-plan.md §3.2). Freezing this list is therefore unaffected by that projection change."
+  },
+  "totals": {
+    "bicycles": 20,
+    "points": 4460,
+    "source_bicycles": 9514,
+    "source_points": 542386,
+    "share_of_source_points": 0.0082
+  },
+  "expected_split": {
+    "note": "Baseline for the Spark track-splitting ticket. Computed from the four split_rules above and the six hard-filter rules; scripts/freeze_data_contract.py deliberately does not recompute these, so the rules live in one place only.",
+    "tracks": 297,
+    "tracks_with_at_least_2_points": 209,
+    "tracks_with_at_least_3_points": 176,
+    "single_point_tracks": 88,
+    "valid_tracks": 120,
+    "valid_points": 3215,
+    "bicycle_8697_tracks": 14,
+    "direction_regression_case": "BICYCLE_821_T4",
+    "funnel": [
+      {"stage": "切分产出", "tracks_entered": 297, "tracks_kept": 297, "points_entered": 4460, "points_kept": 4460},
+      {"stage": "点数 ≥ 3", "tracks_entered": 297, "tracks_kept": 176, "points_entered": 4460, "points_kept": 4306},
+      {"stage": "60s < 时长 < 3600s", "tracks_entered": 176, "tracks_kept": 147, "points_entered": 4306, "points_kept": 3896},
+      {"stage": "点全在岛内 +100m", "tracks_entered": 147, "tracks_kept": 146, "points_entered": 3896, "points_kept": 3869},
+      {"stage": "移动范围 ≥ 150m", "tracks_entered": 146, "tracks_kept": 123, "points_entered": 3869, "points_kept": 3477},
+      {"stage": "慢点占比 ≤ 60%", "tracks_entered": 123, "tracks_kept": 120, "points_entered": 3477, "points_kept": 3215},
+      {"stage": "平均速度 ≤ 7 m/s", "tracks_entered": 120, "tracks_kept": 120, "points_entered": 3215, "points_kept": 3215}
+    ]
+  },
+  "expected_match": {
+    "note": "Baseline for the Spark map-matching ticket. The last four hard-filter rules; scripts/freeze_data_contract.py deliberately does not recompute these. Parent spec's 3,936 edges / 120 pieces belong to the 115-track remainder after these rules; all 120 entering tracks produce 4,090 edges / 135 pieces.",
+    "entering_tracks": 120,
+    "entering_points": 3215,
+    "unmatched_points": 72,
+    "match_edges": 4090,
+    "match_pieces": 135,
+    "valid_tracks": 115,
+    "valid_points": 3014,
+    "funnel": [
+      {"stage": "匹配率 ≥ 80%", "tracks_entered": 120, "tracks_kept": 116, "points_entered": 3215, "points_kept": 3020},
+      {"stage": "匹配长度 ≥ 100m", "tracks_entered": 116, "tracks_kept": 116, "points_entered": 3020, "points_kept": 3020},
+      {"stage": "推断段比例 ≤ 30%", "tracks_entered": 116, "tracks_kept": 115, "points_entered": 3020, "points_kept": 3014},
+      {"stage": "匹配路径在岛内", "tracks_entered": 115, "tracks_kept": 115, "points_entered": 3014, "points_kept": 3014}
+    ]
+  },
+  "bicycles": [
+    {"bicycle_id": "BICYCLE_8697", "selection_reason": "known example", "points": 233},
+    {"bicycle_id": "BICYCLE_8600", "selection_reason": "known example", "points": 296},
+    {"bicycle_id": "BICYCLE_1", "selection_reason": "known example", "points": 24},
+    {"bicycle_id": "BICYCLE_7763", "selection_reason": "high anomaly", "points": 562},
+    {"bicycle_id": "BICYCLE_8880", "selection_reason": "high anomaly", "points": 396},
+    {"bicycle_id": "BICYCLE_8644", "selection_reason": "high anomaly", "points": 405},
+    {"bicycle_id": "BICYCLE_8394", "selection_reason": "high anomaly", "points": 156},
+    {"bicycle_id": "BICYCLE_9306", "selection_reason": "high anomaly", "points": 469},
+    {"bicycle_id": "BICYCLE_9483", "selection_reason": "high anomaly", "points": 595},
+    {"bicycle_id": "BICYCLE_7174", "selection_reason": "high anomaly", "points": 219},
+    {"bicycle_id": "BICYCLE_9250", "selection_reason": "high anomaly", "points": 465},
+    {"bicycle_id": "BICYCLE_6934", "selection_reason": "random control", "points": 62},
+    {"bicycle_id": "BICYCLE_5722", "selection_reason": "random control", "points": 67},
+    {"bicycle_id": "BICYCLE_7728", "selection_reason": "random control", "points": 43},
+    {"bicycle_id": "BICYCLE_427", "selection_reason": "random control", "points": 32},
+    {"bicycle_id": "BICYCLE_5210", "selection_reason": "random control", "points": 51},
+    {"bicycle_id": "BICYCLE_821", "selection_reason": "random control", "points": 178},
+    {"bicycle_id": "BICYCLE_7037", "selection_reason": "random control", "points": 107},
+    {"bicycle_id": "BICYCLE_132", "selection_reason": "random control", "points": 32},
+    {"bicycle_id": "BICYCLE_8046", "selection_reason": "random control", "points": 68}
+  ]
+}

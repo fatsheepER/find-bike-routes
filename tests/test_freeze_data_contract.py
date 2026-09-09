@@ -1,0 +1,423 @@
+"""CLI-level tests for scripts/freeze_data_contract.py.
+
+Every input is built inside tmp_path, so these tests never touch data/ and run
+in a clean clone. Assertions stay on the observable surface: exit codes, the
+files the CLI writes, and the paths and values named in its output.
+"""
+
+import csv
+import hashlib
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import osmium.io
+import osmium.osm.mutable
+import pandas as pd
+
+SCRIPT = Path(__file__).parents[1] / "scripts" / "freeze_data_contract.py"
+
+BOUNDARY = {
+    "type": "Feature",
+    "properties": {
+        "osm_type": "relation",
+        "osm_id": 14251728,
+        "osm_version": 7,
+        "name": "厦门岛",
+        "place": "island",
+        "type": "multipolygon",
+    },
+    "geometry": {
+        "type": "MultiPolygon",
+        "coordinates": [[[[118.10, 24.48], [118.20, 24.48], [118.20, 24.58], [118.10, 24.58], [118.10, 24.48]]]],
+    },
+}
+
+STAGING_ROWS = [
+    ["source_row", "BICYCLE_ID", "LOCATING_TIME", "LATITUDE", "LONGITUDE"],
+    ["2", "BICYCLE_1", " 06:00:00", "24.48", "118.10"],
+    ["3", "", " 06:00:30", "24.49", "118.11"],
+    ["4", "", " 06:01:00", "24.50", "118.12"],
+    ["5", "BICYCLE_2", " 06:02:00", "24.51", "118.13"],
+    ["6", "", " 06:02:30", "24.52", "118.14"],
+    ["7", "BICYCLE_3", " 06:03:00", "24.53", "118.15"],
+    ["8", "", " 06:03:30", "24.54", "118.16"],
+]
+
+WEATHER_ROWS = [
+    ["TIME", "TEMP", "COCO"],
+    ["2020-12-20 00:00:00", "14", "4"],
+    ["2020-12-20 01:00:00", "14", "4"],
+    ["2020-12-20 02:00:00", "13", "9"],
+]
+
+
+def sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def write_csv(path: Path, rows: list[list[str]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as stream:
+        csv.writer(stream, lineterminator="\n").writerows(rows)
+
+
+def write_pbf(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    header = osmium.io.Header()
+    header.set("osmosis_replication_timestamp", "2026-09-01T20:20:50Z")
+    header.set("osmosis_replication_sequence_number", "772")
+    header.set("osmosis_replication_base_url", "https://example.invalid/updates")
+    writer = osmium.SimpleWriter(str(path), header=header)
+    writer.add_node(osmium.osm.mutable.Node(id=1, location=(118.15, 24.50), version=1))
+    writer.close()
+
+
+def build_project(root: Path, sample_bicycles: list[dict] | None = None) -> Path:
+    bicycles = sample_bicycles or [
+        {"bicycle_id": "BICYCLE_1", "selection_reason": "known example", "points": 3},
+        {"bicycle_id": "BICYCLE_3", "selection_reason": "random control", "points": 2},
+    ]
+    (root / "config").mkdir(parents=True, exist_ok=True)
+    (root / "config" / "xiamen-island.geojson").write_text(
+        json.dumps(BOUNDARY, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    (root / "config" / "regression-sample.json").write_text(
+        json.dumps(
+            {
+                "source_date": "2020-12-21",
+                "source_file": "data/staging/trajectory/trajectory-data-20201221.csv",
+                "fixture_file": "tests/fixtures/regression-sample-20201221.csv",
+                "provenance": {"notebook": "notebooks/trajectory_analysis.py"},
+                "totals": {
+                    "bicycles": len(bicycles),
+                    "points": sum(entry["points"] for entry in bicycles),
+                },
+                "bicycles": bicycles,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    write_csv(root / "data/staging/trajectory/trajectory-data-20201221.csv", STAGING_ROWS)
+    write_csv(root / "data/raw/weather/weather-data.csv", WEATHER_ROWS)
+    write_pbf(root / "data/raw/tiny-region.osm.pbf")
+    (root / "tests" / "fixtures").mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"segment_id": [0], "length_m": [1.0]}).to_parquet(
+        root / "tests" / "fixtures" / "network_segments.parquet", index=False
+    )
+    (root / "uv.lock").write_text("# tiny lock\n", encoding="utf-8")
+    return root
+
+
+def run(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), "--project-root", str(root), *args],
+        capture_output=True,
+        text=True,
+    )
+
+
+def read_lock(root: Path) -> dict:
+    return json.loads((root / "config" / "data-contract.lock.json").read_text(encoding="utf-8"))
+
+
+def entries_by_path(lock: dict) -> dict[str, dict]:
+    return {entry["path"]: entry for entry in lock["entries"]}
+
+
+def test_default_mode_writes_a_lock_file_covering_every_contract_input(tmp_path):
+    root = build_project(tmp_path)
+
+    result = run(root)
+
+    assert result.returncode == 0, result.stderr
+    lock = read_lock(root)
+    assert lock["note"].startswith("Generated by scripts/freeze_data_contract.py")
+    assert [entry["path"] for entry in lock["entries"]] == sorted(
+        entry["path"] for entry in lock["entries"]
+    )
+    entries = entries_by_path(lock)
+    for entry in entries.values():
+        assert len(entry["sha256"]) == 64
+        assert entry["bytes"] > 0
+
+    staging = entries["data/staging/trajectory/trajectory-data-20201221.csv"]
+    assert staging["role"] == "staging"
+    assert staging["data_rows"] == 7
+    assert staging["header"] == STAGING_ROWS[0]
+
+    weather = entries["data/raw/weather/weather-data.csv"]
+    assert weather["role"] == "raw"
+    assert weather["data_rows"] == 3
+
+    pbf = entries["data/raw/tiny-region.osm.pbf"]
+    assert pbf["role"] == "osm_pbf"
+    assert pbf["osmosis_replication_timestamp"] == "2026-09-01T20:20:50Z"
+    assert pbf["osmosis_replication_sequence_number"] == "772"
+
+    boundary = entries["config/xiamen-island.geojson"]
+    assert boundary["role"] == "boundary"
+    assert boundary["osm_id"] == 14251728
+    assert boundary["osm_version"] == 7
+    assert boundary["source_pbf_sha256"] == sha256(root / "data/raw/tiny-region.osm.pbf")
+
+    parquet = entries["tests/fixtures/network_segments.parquet"]
+    assert parquet["role"] == "fixture"
+    assert parquet["data_rows"] == 1
+    assert parquet["columns"] == ["segment_id", "length_m"]
+
+
+def test_lock_file_is_byte_identical_when_rerun_on_the_same_inputs(tmp_path):
+    root = build_project(tmp_path)
+    lock_path = root / "config" / "data-contract.lock.json"
+
+    assert run(root).returncode == 0
+    first = lock_path.read_bytes()
+    assert run(root).returncode == 0
+
+    assert lock_path.read_bytes() == first
+
+
+def test_check_passes_on_unmodified_inputs(tmp_path):
+    root = build_project(tmp_path)
+    assert run(root).returncode == 0
+
+    result = run(root, "--check")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "passed" in result.stdout
+
+
+def test_check_names_the_file_and_both_hashes_when_a_byte_changes(tmp_path):
+    root = build_project(tmp_path)
+    assert run(root).returncode == 0
+    staging = root / "data/staging/trajectory/trajectory-data-20201221.csv"
+    recorded_sha256 = sha256(staging)
+    staging.write_text(staging.read_text(encoding="utf-8").replace("24.48", "24.49"), encoding="utf-8")
+
+    result = run(root, "--check")
+
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "data/staging/trajectory/trajectory-data-20201221.csv" in output
+    assert recorded_sha256 in output
+    assert sha256(staging) in output
+
+
+def test_check_reports_a_deleted_input_as_missing_rather_than_mismatched(tmp_path):
+    root = build_project(tmp_path)
+    assert run(root).returncode == 0
+    (root / "data/raw/weather/weather-data.csv").unlink()
+
+    result = run(root, "--check")
+
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "MISSING" in output
+    assert "data/raw/weather/weather-data.csv" in output
+    assert "CHANGED" not in output
+
+
+def test_extract_fixture_cuts_only_the_frozen_bicycles_and_leaves_the_source_untouched(tmp_path):
+    root = build_project(tmp_path)
+    staging = root / "data/staging/trajectory/trajectory-data-20201221.csv"
+    before = sha256(staging)
+
+    result = run(root, "--extract-fixture")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    fixture = root / "tests/fixtures/regression-sample-20201221.csv"
+    with fixture.open(encoding="utf-8", newline="") as stream:
+        rows = list(csv.reader(stream))
+    assert rows == [STAGING_ROWS[0], *STAGING_ROWS[1:4], *STAGING_ROWS[6:8]]
+    assert [row[0] for row in rows[1:]] == sorted(row[0] for row in rows[1:])
+    assert fixture.read_bytes().endswith(b"\n")
+    assert b"\r" not in fixture.read_bytes()
+    assert sha256(staging) == before
+
+
+def test_a_bicycle_absent_from_the_source_fails_both_check_and_extraction(tmp_path):
+    root = build_project(
+        tmp_path,
+        sample_bicycles=[
+            {"bicycle_id": "BICYCLE_1", "selection_reason": "known example", "points": 3},
+            {"bicycle_id": "BICYCLE_404", "selection_reason": "random control", "points": 2},
+        ],
+    )
+
+    extraction = run(root, "--extract-fixture")
+    assert run(root).returncode == 0
+    check = run(root, "--check")
+
+    for result in (extraction, check):
+        output = result.stdout + result.stderr
+        assert result.returncode != 0, output
+        assert "BICYCLE_404" in output
+    assert not (root / "tests/fixtures/regression-sample-20201221.csv").exists()
+
+
+def test_a_wrong_point_count_reports_both_the_frozen_and_the_actual_number(tmp_path):
+    root = build_project(
+        tmp_path,
+        sample_bicycles=[
+            {"bicycle_id": "BICYCLE_1", "selection_reason": "known example", "points": 99},
+        ],
+    )
+
+    result = run(root, "--extract-fixture")
+
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "BICYCLE_1" in output
+    assert "99" in output
+    assert "3" in output
+
+
+def test_check_still_passes_without_the_pbf_when_it_is_skipped(tmp_path):
+    root = build_project(tmp_path)
+    assert run(root).returncode == 0
+    (root / "data/raw/tiny-region.osm.pbf").unlink()
+
+    assert run(root, "--check").returncode != 0
+    result = run(root, "--check", "--skip-pbf")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_only_restricts_the_check_to_the_named_roles(tmp_path):
+    root = build_project(tmp_path)
+    assert run(root).returncode == 0
+    (root / "data/raw/tiny-region.osm.pbf").unlink()
+    (root / "data/raw/weather/weather-data.csv").unlink()
+
+    result = run(root, "--check", "--only", "staging", "--only", "boundary")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "2 entries verified" in result.stdout
+
+
+def test_retired_electronic_fence_files_are_neither_locked_nor_reported(tmp_path):
+    """ADR-0011 took the fence data out of the project; the files may still be on disk."""
+    root = build_project(tmp_path)
+    write_csv(root / "data/raw/electronic-fence/STATION.csv", [["FENCE_ID"], ["1"]])
+    write_csv(
+        root / "data/staging/electronic-fence/station.csv",
+        [["source_row", "FENCE_ID"], ["2", "1"]],
+    )
+
+    assert run(root).returncode == 0
+    paths = set(entries_by_path(read_lock(root)))
+    assert not [path for path in paths if "electronic-fence" in path]
+
+    result = run(root, "--check")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "electronic-fence" not in result.stderr
+
+
+def add_converted_workbook(root: Path, destination_data_rows: int = 2) -> Path:
+    """A raw Excel workbook wearing a .csv suffix, its staging CSV, and the manifest."""
+    from openpyxl import Workbook
+
+    source = root / "data/raw/order/order data.csv"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    workbook = Workbook()
+    worksheet = workbook.active
+    assert worksheet is not None
+    worksheet.append(["BICYCLE_ID", "LOCK_STATUS"])
+    for index in range(destination_data_rows):
+        worksheet.append([f"BICYCLE_{index}", "1"])
+    workbook.save(source)
+
+    destination = root / "data/staging/order/order-data.csv"
+    write_csv(
+        destination,
+        [["source_row", "BICYCLE_ID", "LOCK_STATUS"]]
+        + [[str(index + 2), f"BICYCLE_{index}", "1"] for index in range(destination_data_rows)],
+    )
+
+    manifest = root / "data/staging/conversion-manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "raw_data_modified": False,
+                "file_count": 1,
+                "files": [
+                    {
+                        "source": "data/raw/order/order data.csv",
+                        "destination": "data/staging/order/order-data.csv",
+                        "data_rows": destination_data_rows,
+                        "source_sha256": sha256(source),
+                        "destination_sha256": sha256(destination),
+                    }
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return manifest
+
+
+def test_row_counts_of_raw_workbooks_are_absorbed_from_the_conversion_manifest(tmp_path):
+    root = build_project(tmp_path)
+    add_converted_workbook(root, destination_data_rows=5)
+
+    result = run(root)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    entries = entries_by_path(read_lock(root))
+    assert entries["data/raw/order/order data.csv"]["data_rows"] == 5
+    assert entries["data/staging/conversion-manifest.json"]["role"] == "config"
+
+
+def test_a_manifest_that_disagrees_with_the_files_is_reported(tmp_path):
+    root = build_project(tmp_path)
+    manifest = add_converted_workbook(root)
+    record = json.loads(manifest.read_text(encoding="utf-8"))
+    stale_sha256 = "0" * 64
+    record["files"][0]["destination_sha256"] = stale_sha256
+    manifest.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+
+    result = run(root)
+
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "data/staging/order/order-data.csv" in output
+    assert stale_sha256 in output
+    entries = entries_by_path(read_lock(root))
+    assert entries["data/staging/order/order-data.csv"]["sha256"] == sha256(
+        root / "data/staging/order/order-data.csv"
+    )
+
+
+def test_an_hourly_raw_table_records_the_period_it_covers(tmp_path):
+    root = build_project(tmp_path)
+
+    assert run(root).returncode == 0
+
+    weather = entries_by_path(read_lock(root))["data/raw/weather/weather-data.csv"]
+    assert weather["time_range"] == {
+        "first": "2020-12-20 00:00:00",
+        "last": "2020-12-20 02:00:00",
+    }
+
+
+def test_partial_role_selection_is_refused_outside_check_mode(tmp_path):
+    root = build_project(tmp_path)
+    assert run(root).returncode == 0
+    lock_path = root / "config" / "data-contract.lock.json"
+    complete = lock_path.read_bytes()
+
+    for partial in (["--skip-pbf"], ["--only", "staging"]):
+        result = run(root, *partial)
+
+        output = result.stdout + result.stderr
+        assert result.returncode != 0, output
+        assert "--check" in output
+        assert lock_path.read_bytes() == complete

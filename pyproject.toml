@@ -4,20 +4,39 @@ version = "0.1.0"
 requires-python = ">=3.13,<3.14"
 dependencies = [
     "folium>=0.20.0",
+    "igraph>=1.0.0",
+    "infomap>=2.15.1",
     "ipykernel>=7.3.0",
     "jupyterlab>=4.6.3",
     "jupytext>=1.19.5",
+    "leidenalg>=0.12.0",
+    "matplotlib>=3.11.1",
     "networkx>=3.4",
     "numpy>=2.5.2",
     "openpyxl>=3.1.5",
     "osmium>=4.0",
     "pandas>=3.0.5",
     "pandas-stubs~=3.0.5",
+    "pyarrow>=18.0.0",
+    "pyproj>=3.7.2",
     "pyspark==4.2.0",
+    "scikit-learn>=1.9.0",
     "shapely>=2.0",
 ]
 
+[build-system]
+requires = ["uv_build>=0.12.9,<0.13.0"]
+build-backend = "uv_build"
+
 [dependency-groups]
 dev = [
+    # Lets the tests read the pipeline's Parquet output without a second JVM.
+    "pyarrow>=18.0.0",
     "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "spark: starts a local SparkSession and needs a JDK; exclude with -m 'not spark'",
 ]

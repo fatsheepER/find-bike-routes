@@ -1,0 +1,2184 @@
+{
+  "note": "Section names mark evidence status. baselines holds 12-21 and the network — numbers that can falsify the implementation. recorded holds the other four days' split/match counts, all five days' assign-regions (freeze echo), the four-day freeze, and five-day order-trip totals. 12-21 split counts are from an independent pandas reproduction, verified against the notebook's 772-track remainder and project-plan §3.1's 2,849,243 points. 12-21 match counts are a port-fidelity check against the notebook matcher, not cross-validation. After the five-day run the 12-21 match table was corrected on two points already seen on the fixture: match_edges counts every entering track (the notebook's 542,220 was the valid-track remainder), and two extra tracks pass inferred-share because degenerate pieces are dropped before the share is computed, as the spec requires. 12-21 order-trips 49,328 valid trips and 742.3333 m median straight distance match the notebook. 12-21 grid-flow three counts stay on the notebook values with ±0.1% tolerance; cells_with_1_track is 237 (notebook 238) because two extra valid tracks change that observation — later runs must hit 237. 12-21 single-day region counts live under baselines.days.2020-12-21.regions (AMI is observation-only). The four-day freeze and five-day assign-regions have no independent counterpart. Fixture expectations live in config/regression-sample.json. Network counts are from the island-wide OSM extraction (notebooks/single_day_pipeline.py), frozen after scripts/extract_bike_network.py. The 2026-09-08 full-data acceptance adds OSM context, frozen-region context, five-day region profiles, and clear-day aggregate observations to recorded; these are implementation echoes, not independent baselines. The same day's region-sequences acceptance adds five-day sequence libraries and six mined scopes to recorded; these too are implementation echoes on the frozen 151-region partition, cross-validated against a pure-Python PrefixSpan rather than against the notebook's incomparable 141-region numbers.",
+  "baselines": {
+    "days": {
+      "2020-12-21": {
+        "raw_points": 542386,
+        "bicycles": 9514,
+        "tracks": 27933,
+        "single_point_tracks": 4374,
+        "valid_tracks": 15527,
+        "valid_points": 427134,
+        "funnel": [
+          {
+            "stage": "切分产出",
+            "tracks_entered": 27933,
+            "tracks_kept": 27933,
+            "points_entered": 542386,
+            "points_kept": 542386
+          },
+          {
+            "stage": "点数 ≥ 3",
+            "tracks_entered": 27933,
+            "tracks_kept": 21328,
+            "points_entered": 542386,
+            "points_kept": 533550
+          },
+          {
+            "stage": "60s < 时长 < 3600s",
+            "tracks_entered": 21328,
+            "tracks_kept": 19139,
+            "points_entered": 533550,
+            "points_kept": 507371
+          },
+          {
+            "stage": "点全在岛内 +100m",
+            "tracks_entered": 19139,
+            "tracks_kept": 17687,
+            "points_entered": 507371,
+            "points_kept": 475634
+          },
+          {
+            "stage": "移动范围 ≥ 150m",
+            "tracks_entered": 17687,
+            "tracks_kept": 15860,
+            "points_entered": 475634,
+            "points_kept": 453744
+          },
+          {
+            "stage": "慢点占比 ≤ 60%",
+            "tracks_entered": 15860,
+            "tracks_kept": 15528,
+            "points_entered": 453744,
+            "points_kept": 427140
+          },
+          {
+            "stage": "平均速度 ≤ 7 m/s",
+            "tracks_entered": 15528,
+            "tracks_kept": 15527,
+            "points_entered": 427140,
+            "points_kept": 427134
+          }
+        ],
+        "match": {
+          "entering_tracks": 15527,
+          "entering_points": 427134,
+          "unmatched_points": 8053,
+          "match_edges": 560260,
+          "valid_tracks": 14757,
+          "valid_points": 409598,
+          "valid_pieces": 16413,
+          "funnel": [
+            {
+              "stage": "匹配率 ≥ 80%",
+              "tracks_entered": 15527,
+              "tracks_kept": 15148,
+              "points_entered": 427134,
+              "points_kept": 415128
+            },
+            {
+              "stage": "匹配长度 ≥ 100m",
+              "tracks_entered": 15148,
+              "tracks_kept": 15141,
+              "points_entered": 415128,
+              "points_kept": 415065
+            },
+            {
+              "stage": "推断段比例 ≤ 30%",
+              "tracks_entered": 15141,
+              "tracks_kept": 14757,
+              "points_entered": 415065,
+              "points_kept": 409598
+            },
+            {
+              "stage": "匹配路径在岛内",
+              "tracks_entered": 14757,
+              "tracks_kept": 14757,
+              "points_entered": 409598,
+              "points_kept": 409598
+            }
+          ],
+          "point_match_rate": 0.9916,
+          "snap_distance_median_m": 10.6442,
+          "snap_distance_p90_m": 27.2971,
+          "snap_distance_p95_m": 33.6865,
+          "contraflow_point_rate": 0.0837,
+          "tracks_with_path_breaks": 663,
+          "matched_length_median_m": 935.4436,
+          "inferred_share_mean": 0.0504
+        },
+        "grid_flow": {
+          "covered_cells": {
+            "value": 3587,
+            "tolerance": 0.001
+          },
+          "directed_links": {
+            "value": 8714,
+            "tolerance": 0.001
+          },
+          "total_weight": {
+            "value": 146141,
+            "tolerance": 0.001
+          },
+          "median_link_weight": 8,
+          "max_link_weight": 336,
+          "cells_with_1_track": 237,
+          "cells_without_link": 4,
+          "cells_with_1_track_notebook": 238
+        },
+        "order_trips": {
+          "paired": 50826,
+          "duration_kept": 49406,
+          "valid": 49328,
+          "straight_distance_median_m": 742.3333,
+          "funnel": [
+            {
+              "stage": "配对",
+              "entered": 50826,
+              "kept": 50826,
+              "rejected": 0
+            },
+            {
+              "stage": "时长 60–3,600 秒",
+              "entered": 50826,
+              "kept": 49406,
+              "rejected": 1420
+            },
+            {
+              "stage": "两端在岛 +100 米",
+              "entered": 49406,
+              "kept": 49328,
+              "rejected": 78
+            }
+          ]
+        },
+        "regions": {
+          "ami_vs_notebook": 1.0,
+          "small_merged": {
+            "notebook": 126,
+            "actual": 126
+          },
+          "cells_filled": {
+            "notebook": 0,
+            "actual": 0
+          },
+          "regions": {
+            "notebook": 141,
+            "actual": 141
+          },
+          "districts": {
+            "notebook": 35,
+            "actual": 35
+          },
+          "median_width_m": {
+            "notebook": 719,
+            "actual": 719.3747
+          },
+          "district_median_area_km2": {
+            "notebook": 2.272,
+            "actual": 2.2725
+          },
+          "analysis_cells": {
+            "notebook": 3583,
+            "actual": 3583
+          },
+          "analysis_holes": {
+            "notebook": 33,
+            "actual": 33
+          },
+          "display_holes": {
+            "notebook": 0,
+            "actual": 0
+          },
+          "fill_rounds": {
+            "notebook": 9,
+            "actual": 9
+          },
+          "protected_blocks_km2": {
+            "notebook": [
+              24.19,
+              4.91,
+              2.07
+            ],
+            "actual": [
+              24.1875,
+              4.905,
+              2.07
+            ]
+          },
+          "unlock_fallback_share": {
+            "notebook": 2.12,
+            "actual": 2.12
+          },
+          "lock_fallback_share": {
+            "notebook": 1.05,
+            "actual": 1.05
+          },
+          "channel_pairs": {
+            "notebook": 590,
+            "actual": 590
+          },
+          "channel_total": {
+            "notebook": 15229,
+            "actual": 15233
+          },
+          "od_self_loop_share": {
+            "notebook": 0.305,
+            "actual": 0.2958
+          },
+          "excess_ami_at_1_25": {
+            "notebook": 0.119,
+            "actual": null,
+            "note": "单日扫描没有两两 AMI，excess_ami 为空；notebook 的 0.119 来自单日半分"
+          },
+          "infomap_communities": {
+            "notebook": 267,
+            "actual": 267
+          }
+        }
+      }
+    },
+    "network": {
+      "candidate_ways": 5335,
+      "physical_segments": 12359,
+      "directed_edges": 24718,
+      "contraflow_states": 5657,
+      "graph_nodes": 8751,
+      "length_km": 1761.8
+    }
+  },
+  "recorded": {
+    "days": {
+      "2020-12-21": {
+        "assign_regions": {
+          "tracks_with_visits": 14757,
+          "candidate_visits": 34645,
+          "kept_visits": 32979,
+          "unassigned_gap_cuts": 0,
+          "tracks_with_unassigned_gap_cuts": 0,
+          "unlock_fallback_share": 1.58,
+          "lock_fallback_share": 0.81
+        },
+        "region_profiles": {
+          "hourly_order_events": [
+            {
+              "hour": 6,
+              "unlocks": 3929,
+              "locks": 2975,
+              "net_inflow": -954
+            },
+            {
+              "hour": 7,
+              "unlocks": 16320,
+              "locks": 14148,
+              "net_inflow": -2172
+            },
+            {
+              "hour": 8,
+              "unlocks": 22054,
+              "locks": 23110,
+              "net_inflow": 1056
+            },
+            {
+              "hour": 9,
+              "unlocks": 7025,
+              "locks": 9095,
+              "net_inflow": 2070
+            }
+          ],
+          "tracks_with_visits": 14757,
+          "tracks_with_transit_regions": 4168,
+          "flows": {
+            "channel_pairs": 640,
+            "channel_total": 16333,
+            "od_total": 49328,
+            "od_self_loop_share": 0.29,
+            "track_od_pairs": 1938,
+            "track_od_flow_od_spearman": 0.8379,
+            "shared_pairs": 1802
+          },
+          "core_full_pi_r": {
+            "spearman": 0.9723,
+            "regions": 149
+          },
+          "net_inflow_context_correlations": {
+            "pearson_area": 0.212,
+            "spearman_area": 0.2113,
+            "pearson_poi": 0.2923,
+            "spearman_poi": 0.2039,
+            "regions_area": 146,
+            "regions_poi": 106
+          }
+        },
+        "region_sequences": {
+          "sequences": 9921,
+          "valid_tracks": 14757,
+          "contributing_tracks": 9601,
+          "sequences_per_track": 1.0333,
+          "length_median": 2.0,
+          "length_p90": 4.0,
+          "length_max": 28,
+          "length_ge5": 611,
+          "min_support_count": 10,
+          "threshold_bound_by": "floor",
+          "spark_min_support": 0.0009575647616167725,
+          "patterns": 931,
+          "patterns_by_length": {
+            "2": 639,
+            "3": 238,
+            "4": 41,
+            "5": 11,
+            "6": 2
+          },
+          "pattern_length_max": 6,
+          "contiguous_patterns": 592,
+          "run_id": "20260908-acceptance-region-sequences"
+        }
+      },
+      "2020-12-22": {
+        "raw_points": 586562,
+        "bicycles": 10354,
+        "tracks": 31752,
+        "single_point_tracks": 5245,
+        "valid_tracks": 16821,
+        "valid_points": 459188,
+        "funnel": [
+          {
+            "stage": "切分产出",
+            "tracks_entered": 31752,
+            "tracks_kept": 31752,
+            "points_entered": 586562,
+            "points_kept": 586562
+          },
+          {
+            "stage": "点数 ≥ 3",
+            "tracks_entered": 31752,
+            "tracks_kept": 23374,
+            "points_entered": 586562,
+            "points_kept": 575051
+          },
+          {
+            "stage": "60s < 时长 < 3600s",
+            "tracks_entered": 23374,
+            "tracks_kept": 20930,
+            "points_entered": 575051,
+            "points_kept": 543755
+          },
+          {
+            "stage": "点全在岛内 +100m",
+            "tracks_entered": 20930,
+            "tracks_kept": 19136,
+            "points_entered": 543755,
+            "points_kept": 505628
+          },
+          {
+            "stage": "移动范围 ≥ 150m",
+            "tracks_entered": 19136,
+            "tracks_kept": 17157,
+            "points_entered": 505628,
+            "points_kept": 483587
+          },
+          {
+            "stage": "慢点占比 ≤ 60%",
+            "tracks_entered": 17157,
+            "tracks_kept": 16824,
+            "points_entered": 483587,
+            "points_kept": 459212
+          },
+          {
+            "stage": "平均速度 ≤ 7 m/s",
+            "tracks_entered": 16824,
+            "tracks_kept": 16821,
+            "points_entered": 459212,
+            "points_kept": 459188
+          }
+        ],
+        "match": {
+          "entering_tracks": 16821,
+          "entering_points": 459188,
+          "unmatched_points": 7722,
+          "match_edges": 602050,
+          "valid_tracks": 16019,
+          "valid_points": 442557,
+          "valid_pieces": 17744,
+          "funnel": [
+            {
+              "stage": "匹配率 ≥ 80%",
+              "tracks_entered": 16821,
+              "tracks_kept": 16417,
+              "points_entered": 459188,
+              "points_kept": 448133
+            },
+            {
+              "stage": "匹配长度 ≥ 100m",
+              "tracks_entered": 16417,
+              "tracks_kept": 16412,
+              "points_entered": 448133,
+              "points_kept": 448100
+            },
+            {
+              "stage": "推断段比例 ≤ 30%",
+              "tracks_entered": 16412,
+              "tracks_kept": 16019,
+              "points_entered": 448100,
+              "points_kept": 442557
+            },
+            {
+              "stage": "匹配路径在岛内",
+              "tracks_entered": 16019,
+              "tracks_kept": 16019,
+              "points_entered": 442557,
+              "points_kept": 442557
+            }
+          ],
+          "point_match_rate": 0.9921,
+          "snap_distance_median_m": 10.6807,
+          "snap_distance_p90_m": 27.2049,
+          "snap_distance_p95_m": 33.601,
+          "contraflow_point_rate": 0.0841,
+          "tracks_with_path_breaks": 689,
+          "matched_length_median_m": 915.8478,
+          "inferred_share_mean": 0.0499
+        },
+        "order_trips": {
+          "paired": 53575,
+          "duration_kept": 52176,
+          "valid": 52109,
+          "funnel": [
+            {
+              "stage": "配对",
+              "entered": 53575,
+              "kept": 53575,
+              "rejected": 0
+            },
+            {
+              "stage": "时长 60–3,600 秒",
+              "entered": 53575,
+              "kept": 52176,
+              "rejected": 1399
+            },
+            {
+              "stage": "两端在岛 +100 米",
+              "entered": 52176,
+              "kept": 52109,
+              "rejected": 67
+            }
+          ]
+        },
+        "grid_flow": {
+          "covered_cells": 3679,
+          "directed_links": 8919,
+          "total_weight": 157306,
+          "median_link_weight": 8,
+          "max_link_weight": 397,
+          "cells_with_1_track": 268,
+          "cells_without_link": 5
+        },
+        "assign_regions": {
+          "tracks_with_visits": 16019,
+          "candidate_visits": 37350,
+          "kept_visits": 35582,
+          "unassigned_gap_cuts": 0,
+          "tracks_with_unassigned_gap_cuts": 0,
+          "unlock_fallback_share": 1.57,
+          "lock_fallback_share": 0.78
+        },
+        "region_profiles": {
+          "hourly_order_events": [
+            {
+              "hour": 6,
+              "unlocks": 4039,
+              "locks": 3084,
+              "net_inflow": -955
+            },
+            {
+              "hour": 7,
+              "unlocks": 16850,
+              "locks": 14551,
+              "net_inflow": -2299
+            },
+            {
+              "hour": 8,
+              "unlocks": 23639,
+              "locks": 24570,
+              "net_inflow": 931
+            },
+            {
+              "hour": 9,
+              "unlocks": 7581,
+              "locks": 9904,
+              "net_inflow": 2323
+            }
+          ],
+          "tracks_with_visits": 16019,
+          "tracks_with_transit_regions": 4453,
+          "flows": {
+            "channel_pairs": 647,
+            "channel_total": 17646,
+            "od_total": 52109,
+            "od_self_loop_share": 0.2836,
+            "track_od_pairs": 2010,
+            "track_od_flow_od_spearman": 0.8385,
+            "shared_pairs": 1853
+          },
+          "core_full_pi_r": {
+            "spearman": 0.9753,
+            "regions": 151
+          },
+          "net_inflow_context_correlations": {
+            "pearson_area": 0.2159,
+            "spearman_area": 0.2218,
+            "pearson_poi": 0.2902,
+            "spearman_poi": 0.2028,
+            "regions_area": 146,
+            "regions_poi": 106
+          }
+        },
+        "region_sequences": {
+          "sequences": 10729,
+          "valid_tracks": 16019,
+          "contributing_tracks": 10418,
+          "sequences_per_track": 1.0299,
+          "length_median": 2.0,
+          "length_p90": 4.0,
+          "length_max": 12,
+          "length_ge5": 677,
+          "min_support_count": 10,
+          "threshold_bound_by": "floor",
+          "spark_min_support": 0.0008854506477770529,
+          "patterns": 979,
+          "patterns_by_length": {
+            "2": 680,
+            "3": 267,
+            "4": 31,
+            "5": 1
+          },
+          "pattern_length_max": 5,
+          "contiguous_patterns": 630,
+          "run_id": "20260908-acceptance-region-sequences"
+        }
+      },
+      "2020-12-23": {
+        "raw_points": 213733,
+        "bicycles": 4821,
+        "tracks": 11357,
+        "single_point_tracks": 1850,
+        "valid_tracks": 5686,
+        "valid_points": 152776,
+        "funnel": [
+          {
+            "stage": "切分产出",
+            "tracks_entered": 11357,
+            "tracks_kept": 11357,
+            "points_entered": 213733,
+            "points_kept": 213733
+          },
+          {
+            "stage": "点数 ≥ 3",
+            "tracks_entered": 11357,
+            "tracks_kept": 8436,
+            "points_entered": 213733,
+            "points_kept": 209741
+          },
+          {
+            "stage": "60s < 时长 < 3600s",
+            "tracks_entered": 8436,
+            "tracks_kept": 7519,
+            "points_entered": 209741,
+            "points_kept": 195487
+          },
+          {
+            "stage": "点全在岛内 +100m",
+            "tracks_entered": 7519,
+            "tracks_kept": 6572,
+            "points_entered": 195487,
+            "points_kept": 172717
+          },
+          {
+            "stage": "移动范围 ≥ 150m",
+            "tracks_entered": 6572,
+            "tracks_kept": 5807,
+            "points_entered": 172717,
+            "points_kept": 162580
+          },
+          {
+            "stage": "慢点占比 ≤ 60%",
+            "tracks_entered": 5807,
+            "tracks_kept": 5686,
+            "points_entered": 162580,
+            "points_kept": 152776
+          },
+          {
+            "stage": "平均速度 ≤ 7 m/s",
+            "tracks_entered": 5686,
+            "tracks_kept": 5686,
+            "points_entered": 152776,
+            "points_kept": 152776
+          }
+        ],
+        "match": {
+          "entering_tracks": 5686,
+          "entering_points": 152776,
+          "unmatched_points": 2700,
+          "match_edges": 198217,
+          "valid_tracks": 5372,
+          "valid_points": 146933,
+          "valid_pieces": 6017,
+          "funnel": [
+            {
+              "stage": "匹配率 ≥ 80%",
+              "tracks_entered": 5686,
+              "tracks_kept": 5529,
+              "points_entered": 152776,
+              "points_kept": 149046
+            },
+            {
+              "stage": "匹配长度 ≥ 100m",
+              "tracks_entered": 5529,
+              "tracks_kept": 5526,
+              "points_entered": 149046,
+              "points_kept": 149019
+            },
+            {
+              "stage": "推断段比例 ≤ 30%",
+              "tracks_entered": 5526,
+              "tracks_kept": 5372,
+              "points_entered": 149019,
+              "points_kept": 146933
+            },
+            {
+              "stage": "匹配路径在岛内",
+              "tracks_entered": 5372,
+              "tracks_kept": 5372,
+              "points_entered": 146933,
+              "points_kept": 146933
+            }
+          ],
+          "point_match_rate": 0.9915,
+          "snap_distance_median_m": 10.8001,
+          "snap_distance_p90_m": 27.6425,
+          "snap_distance_p95_m": 34.0892,
+          "contraflow_point_rate": 0.0871,
+          "tracks_with_path_breaks": 267,
+          "matched_length_median_m": 931.9993,
+          "inferred_share_mean": 0.0499
+        },
+        "order_trips": {
+          "paired": 19005,
+          "duration_kept": 18512,
+          "valid": 18493,
+          "funnel": [
+            {
+              "stage": "配对",
+              "entered": 19005,
+              "kept": 19005,
+              "rejected": 0
+            },
+            {
+              "stage": "时长 60–3,600 秒",
+              "entered": 19005,
+              "kept": 18512,
+              "rejected": 493
+            },
+            {
+              "stage": "两端在岛 +100 米",
+              "entered": 18512,
+              "kept": 18493,
+              "rejected": 19
+            }
+          ]
+        },
+        "grid_flow": {
+          "covered_cells": 3274,
+          "directed_links": 7077,
+          "total_weight": 50677,
+          "median_link_weight": 4,
+          "max_link_weight": 131,
+          "cells_with_1_track": 509,
+          "cells_without_link": 7
+        },
+        "assign_regions": {
+          "tracks_with_visits": 5372,
+          "candidate_visits": 12452,
+          "kept_visits": 11835,
+          "unassigned_gap_cuts": 8,
+          "tracks_with_unassigned_gap_cuts": 6,
+          "unlock_fallback_share": 1.84,
+          "lock_fallback_share": 0.98
+        },
+        "region_profiles": {
+          "hourly_order_events": [
+            {
+              "hour": 6,
+              "unlocks": 1896,
+              "locks": 1490,
+              "net_inflow": -406
+            },
+            {
+              "hour": 7,
+              "unlocks": 6311,
+              "locks": 5213,
+              "net_inflow": -1098
+            },
+            {
+              "hour": 8,
+              "unlocks": 8471,
+              "locks": 9320,
+              "net_inflow": 849
+            },
+            {
+              "hour": 9,
+              "unlocks": 1815,
+              "locks": 2470,
+              "net_inflow": 655
+            }
+          ],
+          "tracks_with_visits": 5372,
+          "tracks_with_transit_regions": 1449,
+          "flows": {
+            "channel_pairs": 581,
+            "channel_total": 5686,
+            "od_total": 18493,
+            "od_self_loop_share": 0.273,
+            "track_od_pairs": 1171,
+            "track_od_flow_od_spearman": 0.7998,
+            "shared_pairs": 1096
+          },
+          "core_full_pi_r": {
+            "spearman": 0.955,
+            "regions": 148
+          },
+          "net_inflow_context_correlations": {
+            "pearson_area": 0.1753,
+            "spearman_area": 0.2115,
+            "pearson_poi": 0.3264,
+            "spearman_poi": 0.2154,
+            "regions_area": 146,
+            "regions_poi": 106
+          }
+        },
+        "region_sequences": {
+          "sequences": 3583,
+          "valid_tracks": 5372,
+          "contributing_tracks": 3479,
+          "sequences_per_track": 1.0299,
+          "length_median": 2.0,
+          "length_p90": 4.0,
+          "length_max": 40,
+          "length_ge5": 191,
+          "min_support_count": 10,
+          "threshold_bound_by": "floor",
+          "spark_min_support": 0.0026514094334356684,
+          "patterns": 291,
+          "patterns_by_length": {
+            "2": 256,
+            "3": 32,
+            "4": 3
+          },
+          "pattern_length_max": 4,
+          "contiguous_patterns": 225,
+          "run_id": "20260908-acceptance-region-sequences"
+        }
+      },
+      "2020-12-24": {
+        "raw_points": 932469,
+        "bicycles": 14394,
+        "tracks": 50839,
+        "single_point_tracks": 8312,
+        "valid_tracks": 26654,
+        "valid_points": 724178,
+        "funnel": [
+          {
+            "stage": "切分产出",
+            "tracks_entered": 50839,
+            "tracks_kept": 50839,
+            "points_entered": 932469,
+            "points_kept": 932469
+          },
+          {
+            "stage": "点数 ≥ 3",
+            "tracks_entered": 50839,
+            "tracks_kept": 37437,
+            "points_entered": 932469,
+            "points_kept": 913977
+          },
+          {
+            "stage": "60s < 时长 < 3600s",
+            "tracks_entered": 37437,
+            "tracks_kept": 33264,
+            "points_entered": 913977,
+            "points_kept": 863797
+          },
+          {
+            "stage": "点全在岛内 +100m",
+            "tracks_entered": 33264,
+            "tracks_kept": 30382,
+            "points_entered": 863797,
+            "points_kept": 801395
+          },
+          {
+            "stage": "移动范围 ≥ 150m",
+            "tracks_entered": 30382,
+            "tracks_kept": 27228,
+            "points_entered": 801395,
+            "points_kept": 766426
+          },
+          {
+            "stage": "慢点占比 ≤ 60%",
+            "tracks_entered": 27228,
+            "tracks_kept": 26661,
+            "points_entered": 766426,
+            "points_kept": 724219
+          },
+          {
+            "stage": "平均速度 ≤ 7 m/s",
+            "tracks_entered": 26661,
+            "tracks_kept": 26654,
+            "points_entered": 724219,
+            "points_kept": 724178
+          }
+        ],
+        "match": {
+          "entering_tracks": 26654,
+          "entering_points": 724178,
+          "unmatched_points": 12784,
+          "match_edges": 949275,
+          "valid_tracks": 25291,
+          "valid_points": 694477,
+          "valid_pieces": 28125,
+          "funnel": [
+            {
+              "stage": "匹配率 ≥ 80%",
+              "tracks_entered": 26654,
+              "tracks_kept": 26009,
+              "points_entered": 724178,
+              "points_kept": 704912
+            },
+            {
+              "stage": "匹配长度 ≥ 100m",
+              "tracks_entered": 26009,
+              "tracks_kept": 26000,
+              "points_entered": 704912,
+              "points_kept": 704846
+            },
+            {
+              "stage": "推断段比例 ≤ 30%",
+              "tracks_entered": 26000,
+              "tracks_kept": 25291,
+              "points_entered": 704846,
+              "points_kept": 694477
+            },
+            {
+              "stage": "匹配路径在岛内",
+              "tracks_entered": 25291,
+              "tracks_kept": 25291,
+              "points_entered": 694477,
+              "points_kept": 694477
+            }
+          ],
+          "point_match_rate": 0.9918,
+          "snap_distance_median_m": 10.7135,
+          "snap_distance_p90_m": 27.5105,
+          "snap_distance_p95_m": 33.9871,
+          "contraflow_point_rate": 0.0856,
+          "tracks_with_path_breaks": 1119,
+          "matched_length_median_m": 916.2586,
+          "inferred_share_mean": 0.0507
+        },
+        "order_trips": {
+          "paired": 48891,
+          "duration_kept": 47566,
+          "valid": 47503,
+          "funnel": [
+            {
+              "stage": "配对",
+              "entered": 48891,
+              "kept": 48891,
+              "rejected": 0
+            },
+            {
+              "stage": "时长 60–3,600 秒",
+              "entered": 48891,
+              "kept": 47566,
+              "rejected": 1325
+            },
+            {
+              "stage": "两端在岛 +100 米",
+              "entered": 47566,
+              "kept": 47503,
+              "rejected": 63
+            }
+          ]
+        },
+        "grid_flow": {
+          "covered_cells": 3770,
+          "directed_links": 9415,
+          "total_weight": 245949,
+          "median_link_weight": 11,
+          "max_link_weight": 570,
+          "cells_with_1_track": 213,
+          "cells_without_link": 3
+        },
+        "assign_regions": {
+          "tracks_with_visits": 25291,
+          "candidate_visits": 58714,
+          "kept_visits": 55767,
+          "unassigned_gap_cuts": 0,
+          "tracks_with_unassigned_gap_cuts": 0,
+          "unlock_fallback_share": 1.65,
+          "lock_fallback_share": 0.79
+        },
+        "region_profiles": {
+          "hourly_order_events": [
+            {
+              "hour": 6,
+              "unlocks": 3454,
+              "locks": 2624,
+              "net_inflow": -830
+            },
+            {
+              "hour": 7,
+              "unlocks": 14689,
+              "locks": 12632,
+              "net_inflow": -2057
+            },
+            {
+              "hour": 8,
+              "unlocks": 22105,
+              "locks": 22668,
+              "net_inflow": 563
+            },
+            {
+              "hour": 9,
+              "unlocks": 7255,
+              "locks": 9579,
+              "net_inflow": 2324
+            }
+          ],
+          "tracks_with_visits": 25291,
+          "tracks_with_transit_regions": 6872,
+          "flows": {
+            "channel_pairs": 663,
+            "channel_total": 27305,
+            "od_total": 47503,
+            "od_self_loop_share": 0.2732,
+            "track_od_pairs": 2282,
+            "track_od_flow_od_spearman": 0.8462,
+            "shared_pairs": 2035
+          },
+          "core_full_pi_r": {
+            "spearman": 0.9615,
+            "regions": 151
+          },
+          "net_inflow_context_correlations": {
+            "pearson_area": 0.2081,
+            "spearman_area": 0.2185,
+            "pearson_poi": 0.3012,
+            "spearman_poi": 0.212,
+            "regions_area": 146,
+            "regions_poi": 106
+          }
+        },
+        "region_sequences": {
+          "sequences": 16779,
+          "valid_tracks": 25291,
+          "contributing_tracks": 16270,
+          "sequences_per_track": 1.0313,
+          "length_median": 2.0,
+          "length_p90": 4.0,
+          "length_max": 14,
+          "length_ge5": 1063,
+          "min_support_count": 10,
+          "threshold_bound_by": "floor",
+          "spark_min_support": 0.0005661839203766613,
+          "patterns": 1504,
+          "patterns_by_length": {
+            "2": 866,
+            "3": 524,
+            "4": 101,
+            "5": 12,
+            "6": 1
+          },
+          "pattern_length_max": 6,
+          "contiguous_patterns": 837,
+          "run_id": "20260908-acceptance-region-sequences"
+        }
+      },
+      "2020-12-25": {
+        "raw_points": 574093,
+        "bicycles": 10030,
+        "tracks": 31206,
+        "single_point_tracks": 5348,
+        "valid_tracks": 16347,
+        "valid_points": 443396,
+        "funnel": [
+          {
+            "stage": "切分产出",
+            "tracks_entered": 31206,
+            "tracks_kept": 31206,
+            "points_entered": 574093,
+            "points_kept": 574093
+          },
+          {
+            "stage": "点数 ≥ 3",
+            "tracks_entered": 31206,
+            "tracks_kept": 22822,
+            "points_entered": 574093,
+            "points_kept": 562673
+          },
+          {
+            "stage": "60s < 时长 < 3600s",
+            "tracks_entered": 22822,
+            "tracks_kept": 20305,
+            "points_entered": 562673,
+            "points_kept": 527141
+          },
+          {
+            "stage": "点全在岛内 +100m",
+            "tracks_entered": 20305,
+            "tracks_kept": 18666,
+            "points_entered": 527141,
+            "points_kept": 492378
+          },
+          {
+            "stage": "移动范围 ≥ 150m",
+            "tracks_entered": 18666,
+            "tracks_kept": 16717,
+            "points_entered": 492378,
+            "points_kept": 471479
+          },
+          {
+            "stage": "慢点占比 ≤ 60%",
+            "tracks_entered": 16717,
+            "tracks_kept": 16351,
+            "points_entered": 471479,
+            "points_kept": 443420
+          },
+          {
+            "stage": "平均速度 ≤ 7 m/s",
+            "tracks_entered": 16351,
+            "tracks_kept": 16347,
+            "points_entered": 443420,
+            "points_kept": 443396
+          }
+        ],
+        "match": {
+          "entering_tracks": 16347,
+          "entering_points": 443396,
+          "unmatched_points": 7572,
+          "match_edges": 581542,
+          "valid_tracks": 15519,
+          "valid_points": 426261,
+          "valid_pieces": 17260,
+          "funnel": [
+            {
+              "stage": "匹配率 ≥ 80%",
+              "tracks_entered": 16347,
+              "tracks_kept": 15953,
+              "points_entered": 443396,
+              "points_kept": 432576
+            },
+            {
+              "stage": "匹配长度 ≥ 100m",
+              "tracks_entered": 15953,
+              "tracks_kept": 15946,
+              "points_entered": 432576,
+              "points_kept": 432517
+            },
+            {
+              "stage": "推断段比例 ≤ 30%",
+              "tracks_entered": 15946,
+              "tracks_kept": 15519,
+              "points_entered": 432517,
+              "points_kept": 426261
+            },
+            {
+              "stage": "匹配路径在岛内",
+              "tracks_entered": 15519,
+              "tracks_kept": 15519,
+              "points_entered": 426261,
+              "points_kept": 426261
+            }
+          ],
+          "point_match_rate": 0.9921,
+          "snap_distance_median_m": 10.6577,
+          "snap_distance_p90_m": 27.1062,
+          "snap_distance_p95_m": 33.4174,
+          "contraflow_point_rate": 0.083,
+          "tracks_with_path_breaks": 684,
+          "matched_length_median_m": 908.7517,
+          "inferred_share_mean": 0.0506
+        },
+        "order_trips": {
+          "paired": 48378,
+          "duration_kept": 44970,
+          "valid": 44922,
+          "funnel": [
+            {
+              "stage": "配对",
+              "entered": 48378,
+              "kept": 48378,
+              "rejected": 0
+            },
+            {
+              "stage": "时长 60–3,600 秒",
+              "entered": 48378,
+              "kept": 44970,
+              "rejected": 3408
+            },
+            {
+              "stage": "两端在岛 +100 米",
+              "entered": 44970,
+              "kept": 44922,
+              "rejected": 48
+            }
+          ]
+        },
+        "grid_flow": {
+          "covered_cells": 3666,
+          "directed_links": 8804,
+          "total_weight": 150449,
+          "median_link_weight": 8,
+          "max_link_weight": 358,
+          "cells_with_1_track": 331,
+          "cells_without_link": 6
+        },
+        "assign_regions": {
+          "tracks_with_visits": 15519,
+          "candidate_visits": 36050,
+          "kept_visits": 34313,
+          "unassigned_gap_cuts": 0,
+          "tracks_with_unassigned_gap_cuts": 0,
+          "unlock_fallback_share": 1.71,
+          "lock_fallback_share": 0.88
+        },
+        "region_profiles": {
+          "hourly_order_events": [
+            {
+              "hour": 6,
+              "unlocks": 3701,
+              "locks": 2781,
+              "net_inflow": -920
+            },
+            {
+              "hour": 7,
+              "unlocks": 14962,
+              "locks": 13196,
+              "net_inflow": -1766
+            },
+            {
+              "hour": 8,
+              "unlocks": 19419,
+              "locks": 20005,
+              "net_inflow": 586
+            },
+            {
+              "hour": 9,
+              "unlocks": 6840,
+              "locks": 8940,
+              "net_inflow": 2100
+            }
+          ],
+          "tracks_with_visits": 15519,
+          "tracks_with_transit_regions": 4220,
+          "flows": {
+            "channel_pairs": 650,
+            "channel_total": 16838,
+            "od_total": 44922,
+            "od_self_loop_share": 0.2777,
+            "track_od_pairs": 1947,
+            "track_od_flow_od_spearman": 0.8215,
+            "shared_pairs": 1730
+          },
+          "core_full_pi_r": {
+            "spearman": 0.9893,
+            "regions": 150
+          },
+          "net_inflow_context_correlations": {
+            "pearson_area": 0.2182,
+            "spearman_area": 0.224,
+            "pearson_poi": 0.297,
+            "spearman_poi": 0.216,
+            "regions_area": 146,
+            "regions_poi": 106
+          }
+        },
+        "region_sequences": {
+          "sequences": 10374,
+          "valid_tracks": 15519,
+          "contributing_tracks": 10046,
+          "sequences_per_track": 1.0326,
+          "length_median": 2.0,
+          "length_p90": 4.0,
+          "length_max": 18,
+          "length_ge5": 618,
+          "min_support_count": 10,
+          "threshold_bound_by": "floor",
+          "spark_min_support": 0.0009157509157509158,
+          "patterns": 919,
+          "patterns_by_length": {
+            "2": 650,
+            "3": 241,
+            "4": 27,
+            "5": 1
+          },
+          "pattern_length_max": 5,
+          "contiguous_patterns": 599,
+          "run_id": "20260908-acceptance-region-sequences"
+        }
+      }
+    },
+    "rain_day": {
+      "date": "2020-12-23",
+      "point_match_rate": 0.9915,
+      "snap_distance_median_m": 10.8001,
+      "snap_distance_p90_m": 27.6425,
+      "snap_distance_p95_m": 34.0892,
+      "note": "第 2 步已发现该日点留存率 71.5%，差异集中在「点全在岛内 +100m」。匹配阶段点匹配率 0.9915（其余四天 0.9916 到 0.9921），吸附距离中位 10.8001 米（其余四天 10.6442 到 10.7135）。套回冻结划分后切断 8 次、6 条轨迹，订单回落解锁 1.84%、上锁 0.98%（晴天切断为 0，回落约 1.6%/0.8%）。三条一并写入雨天对照的偏差声明，不能把雨天流量下降记到出行行为账上。",
+      "unassigned_gap_cuts": 8,
+      "tracks_with_unassigned_gap_cuts": 6,
+      "unlock_fallback_share": 1.84,
+      "lock_fallback_share": 0.98,
+      "region_profiles": {
+        "schemas_match_clear_days": true,
+        "rows": {
+          "region_metrics": 604,
+          "region_transit_core": 151,
+          "flow_od": 5423,
+          "flow_channel": 1495,
+          "flow_track_od": 2157
+        },
+        "od_total": 18493,
+        "clear_day_mean_od_total": 48465.5,
+        "od_total_ratio_to_clear_day_mean": 0.3816,
+        "channel_total": 5686,
+        "clear_day_mean_channel_total": 19530.5,
+        "channel_total_ratio_to_clear_day_mean": 0.2911,
+        "tracks_with_visits": 5372,
+        "clear_day_mean_tracks_with_visits": 17896.5,
+        "tracks_with_visits_ratio_to_clear_day_mean": 0.3002,
+        "od_self_loop_share": 0.273,
+        "clear_day_mean_od_self_loop_share": 0.2811,
+        "note": "12-23 的五张画像与流表与晴天同 schema，可直接供第 7 步读取。出行流、通道流与有进入轨迹分别只有晴天日均的 38.16%、29.11% 与 30.02%；结合上游点留存与无区域段偏差，不能把降幅全归因于出行行为。"
+      },
+      "region_sequences": {
+        "schemas_match_clear_days": true,
+        "rows": {
+          "sequence_patterns": 291
+        },
+        "sequences": 3583,
+        "clear_day_mean_sequences": 11950.75,
+        "sequences_ratio_to_clear_day_mean": 0.2998,
+        "valid_tracks": 5372,
+        "clear_day_mean_valid_tracks": 17896.5,
+        "patterns": 291,
+        "clear_day_mean_daily_patterns": 1083.25,
+        "patterns_ratio_to_clear_day_mean": 0.2686,
+        "contiguous_patterns": 225,
+        "clear_day_mean_daily_contiguous_patterns": 664.5,
+        "contiguous_patterns_ratio_to_clear_day_mean": 0.3386,
+        "pattern_length_max": 4,
+        "clear_day_daily_pattern_length_max": [
+          6,
+          5,
+          6,
+          5
+        ],
+        "length_max": 40,
+        "patterns_also_in_clear_days_merged": 291,
+        "all_steps_adjacent": 260,
+        "note": "12-23 的 `sequence_patterns` 与晴天逐日同 schema、同 scope 列形状，可直接供第 7 步读取。门槛与逐日晴天同为绝对下限 10，所以模式条数可比：291 条只有晴天日均 1,083.25 条的 26.86%，最长模式 4 段（晴天逐日 5–6 段）；291 条全部也出现在晴天集合并的 2,874 条里。序列条数 3,583 是晴天日均的 29.98%，与上游点留存与无区域段偏差同量级，跨天重合率本身留给第 7 步。"
+      }
+    },
+    "acceptance": {
+      "point_match_rate": 0.9919,
+      "snap_distance_median_m": 10.688,
+      "point_match_rate_min": 0.9,
+      "snap_distance_median_m_max": 20.0
+    },
+    "regions": {
+      "regions": 151,
+      "districts": 37,
+      "analysis": {
+        "cells": 3943,
+        "island_coverage": 0.6066,
+        "holes": 40
+      },
+      "display": {
+        "cells": 5352,
+        "island_coverage": 0.8234,
+        "holes": 0,
+        "fill_rounds": 6,
+        "protected_blocks_km2": [
+          15.3,
+          6.6375,
+          3.9375
+        ]
+      },
+      "region_cells": {
+        "sha256": "d84a0485dfcffeda6fdad52e5472df38f4c4e9be01649cc8c5143f8605f486ef",
+        "rows": 3943
+      },
+      "markov_scan": [
+        {
+          "markov_time": 0.5,
+          "regions": 131,
+          "excess_ami": 0.2262,
+          "pairwise_ami": 0.7802,
+          "note": "全网格 excess_ami 最高，落在细端而不是平台"
+        },
+        {
+          "markov_time": 1.0,
+          "regions": 147,
+          "excess_ami": 0.1709,
+          "od_self_loop_share": 0.3093,
+          "channel_total": 72550
+        },
+        {
+          "markov_time": 1.25,
+          "regions": 151,
+          "excess_ami": 0.1592,
+          "od_self_loop_share": 0.2749,
+          "channel_total": 78122,
+          "pairwise_ami": 0.7922,
+          "note": "平台内区域数最多；excess_ami 低于 1.0，种子对照未翻转，保持 1.25"
+        },
+        {
+          "markov_time": 1.5,
+          "regions": 145,
+          "excess_ami": 0.1552,
+          "od_self_loop_share": 0.2814,
+          "channel_total": 74919
+        }
+      ],
+      "seed_check": [
+        {
+          "seed": 42,
+          "markov_time": 1.0,
+          "regions": 147,
+          "od_self_loop_share": 0.3093,
+          "channel_total": 72550
+        },
+        {
+          "seed": 42,
+          "markov_time": 1.25,
+          "regions": 151,
+          "od_self_loop_share": 0.2749,
+          "channel_total": 78122
+        },
+        {
+          "seed": 42,
+          "markov_time": 1.5,
+          "regions": 145,
+          "od_self_loop_share": 0.2814,
+          "channel_total": 74919
+        },
+        {
+          "seed": 7,
+          "markov_time": 1.0,
+          "regions": 140,
+          "od_self_loop_share": 0.311,
+          "channel_total": 72253
+        },
+        {
+          "seed": 7,
+          "markov_time": 1.25,
+          "regions": 152,
+          "od_self_loop_share": 0.2772,
+          "channel_total": 77270
+        },
+        {
+          "seed": 7,
+          "markov_time": 1.5,
+          "regions": 149,
+          "od_self_loop_share": 0.2811,
+          "channel_total": 76960
+        },
+        {
+          "seed": 2020,
+          "markov_time": 1.0,
+          "regions": 145,
+          "od_self_loop_share": 0.2979,
+          "channel_total": 74149
+        },
+        {
+          "seed": 2020,
+          "markov_time": 1.25,
+          "regions": 154,
+          "od_self_loop_share": 0.2763,
+          "channel_total": 76210
+        },
+        {
+          "seed": 2020,
+          "markov_time": 1.5,
+          "regions": 149,
+          "od_self_loop_share": 0.2763,
+          "channel_total": 75914
+        },
+        {
+          "seed": 1234,
+          "markov_time": 1.0,
+          "regions": 146,
+          "od_self_loop_share": 0.3051,
+          "channel_total": 72863
+        },
+        {
+          "seed": 1234,
+          "markov_time": 1.25,
+          "regions": 147,
+          "od_self_loop_share": 0.3053,
+          "channel_total": 73831
+        },
+        {
+          "seed": 1234,
+          "markov_time": 1.5,
+          "regions": 148,
+          "od_self_loop_share": 0.2907,
+          "channel_total": 74798
+        }
+      ],
+      "note": "四天冻结没有独立对照，是这次运行自己的回声。"
+    },
+    "order_trips": {
+      "paired": 220675,
+      "duration_kept": 212630,
+      "valid": 212355,
+      "note": "五天合计，是这次运行的回声。12-21 单日有效行程与中位距离在 baselines，可对照 notebook。"
+    },
+    "osm_context": {
+      "categories": {
+        "education": {
+          "points": 9,
+          "areas": 300,
+          "area_m2": 3733056.1
+        },
+        "transport": {
+          "points": 143,
+          "areas": 56,
+          "area_m2": 459216.4
+        },
+        "bus_stop": {
+          "points": 501,
+          "areas": 0,
+          "area_m2": 0.0
+        },
+        "employment": {
+          "points": 648,
+          "areas": 555,
+          "area_m2": 9070281.9
+        },
+        "residential": {
+          "points": 46,
+          "areas": 1905,
+          "area_m2": 14556671.2
+        }
+      },
+      "point_features": 1347,
+      "area_features": 2816,
+      "area_m2": 27819225.6,
+      "area_km2": 27.819,
+      "run_id": "20260908-acceptance-extract-osm-context"
+    },
+    "region_context": {
+      "regions": 151,
+      "classified_area_km2": 20.92,
+      "regions_without_classified_area": 5,
+      "area_features": 2816,
+      "area_features_meeting_regions": 2462,
+      "point_features": 1347,
+      "point_features_dropped": 88,
+      "point_features_dropped_share": 0.0653,
+      "region_cells_digest": "d84a0485dfcffeda6fdad52e5472df38f4c4e9be01649cc8c5143f8605f486ef",
+      "run_id": "20260908-acceptance-region-context"
+    },
+    "region_profiles": {
+      "run_id": "20260908-acceptance-region-profiles",
+      "clear_day_dates": [
+        "2020-12-21",
+        "2020-12-22",
+        "2020-12-24",
+        "2020-12-25"
+      ],
+      "clear_day_mean_net_inflow_context_correlations": {
+        "pearson_area": 0.2146,
+        "spearman_area": 0.2183,
+        "pearson_poi": 0.2968,
+        "spearman_poi": 0.2068,
+        "regions_area": 146,
+        "regions_poi": 106
+      },
+      "clear_day_flow_checks": {
+        "channel_total_minus_region_links": 0,
+        "od_self_loop_share_minus_markov_scan_1_25": 0.0063911442
+      },
+      "note": "画像、流表与相关系数是本实现基于冻结 151 区运行得到的 recorded 观测，不是独立 baseline。自环旁证的非零差来自口径差异：markov_scan 不回落区域外端点，flow_od 使用 assign-regions 的最近区域回落。"
+    },
+    "region_sequences": {
+      "run_id": "20260908-acceptance-region-sequences",
+      "scope": "clear-days",
+      "clear_day_dates": [
+        "2020-12-21",
+        "2020-12-22",
+        "2020-12-24",
+        "2020-12-25"
+      ],
+      "sequences": 47803,
+      "valid_tracks": 71586,
+      "contributing_tracks": 46335,
+      "sequences_per_track": 1.0317,
+      "length_median": 2.0,
+      "length_p90": 4.0,
+      "length_max": 28,
+      "length_ge5": 2969,
+      "min_support_count": 14,
+      "threshold_bound_by": "relative",
+      "spark_min_support": 0.00028240905382507375,
+      "patterns": 2874,
+      "patterns_by_length": {
+        "2": 1259,
+        "3": 1234,
+        "4": 313,
+        "5": 57,
+        "6": 10,
+        "7": 1
+      },
+      "pattern_length_max": 7,
+      "contiguous_patterns": 1360,
+      "support_scan": [
+        {
+          "min_support": 0.0002,
+          "min_support_count": 14,
+          "spark_min_support": 0.00028240905382507375,
+          "sequences": 47803,
+          "valid_tracks": 71586,
+          "patterns_ge2": 2874,
+          "len2": 1259,
+          "len3": 1234,
+          "len4": 313,
+          "len_ge5": 68,
+          "contiguous_ge2": 1360
+        },
+        {
+          "min_support": 0.0005,
+          "min_support_count": 36,
+          "spark_min_support": 0.0007426312156140828,
+          "sequences": 47803,
+          "valid_tracks": 71586,
+          "patterns_ge2": 1127,
+          "len2": 739,
+          "len3": 329,
+          "len4": 50,
+          "len_ge5": 9,
+          "contiguous_ge2": 687
+        },
+        {
+          "min_support": 0.001,
+          "min_support_count": 72,
+          "spark_min_support": 0.0014957220258142794,
+          "sequences": 47803,
+          "valid_tracks": 71586,
+          "patterns_ge2": 560,
+          "len2": 460,
+          "len3": 96,
+          "len4": 4,
+          "len_ge5": 0,
+          "contiguous_ge2": 403
+        },
+        {
+          "min_support": 0.002,
+          "min_support_count": 143,
+          "spark_min_support": 0.002980984457042445,
+          "sequences": 47803,
+          "valid_tracks": 71586,
+          "patterns_ge2": 247,
+          "len2": 229,
+          "len3": 18,
+          "len4": 0,
+          "len_ge5": 0,
+          "contiguous_ge2": 202
+        },
+        {
+          "min_support": 0.005,
+          "min_support_count": 358,
+          "spark_min_support": 0.007478610129071397,
+          "sequences": 47803,
+          "valid_tracks": 71586,
+          "patterns_ge2": 51,
+          "len2": 50,
+          "len3": 1,
+          "len4": 0,
+          "len_ge5": 0,
+          "contiguous_ge2": 40
+        },
+        {
+          "min_support": 0.01,
+          "min_support_count": 716,
+          "spark_min_support": 0.014967679852728908,
+          "sequences": 47803,
+          "valid_tracks": 71586,
+          "patterns_ge2": 5,
+          "len2": 5,
+          "len3": 0,
+          "len4": 0,
+          "len_ge5": 0,
+          "contiguous_ge2": 4
+        }
+      ],
+      "top_contiguous_patterns": [
+        {
+          "region_codes": [
+            "岭兜-2",
+            "岭兜-3",
+            "岭兜-4"
+          ],
+          "pattern": [
+            72,
+            149,
+            150
+          ],
+          "support": 334,
+          "contiguous_support": 334,
+          "support_h06": 0,
+          "support_h07": 13,
+          "support_h08": 292,
+          "support_h09": 29
+        },
+        {
+          "region_codes": [
+            "岭兜-3",
+            "岭兜-4",
+            "观音山-2"
+          ],
+          "pattern": [
+            149,
+            150,
+            16
+          ],
+          "support": 358,
+          "contiguous_support": 330,
+          "support_h06": 2,
+          "support_h07": 13,
+          "support_h08": 281,
+          "support_h09": 62
+        },
+        {
+          "region_codes": [
+            "岭兜-3",
+            "观音山-4",
+            "观音山-3"
+          ],
+          "pattern": [
+            149,
+            63,
+            60
+          ],
+          "support": 241,
+          "contiguous_support": 238,
+          "support_h06": 9,
+          "support_h07": 31,
+          "support_h08": 135,
+          "support_h09": 66
+        },
+        {
+          "region_codes": [
+            "岭兜-2",
+            "岭兜-3",
+            "观音山-4"
+          ],
+          "pattern": [
+            72,
+            149,
+            63
+          ],
+          "support": 207,
+          "contiguous_support": 206,
+          "support_h06": 16,
+          "support_h07": 39,
+          "support_h08": 135,
+          "support_h09": 17
+        },
+        {
+          "region_codes": [
+            "莲前-1",
+            "岭兜-3",
+            "岭兜-4"
+          ],
+          "pattern": [
+            5,
+            149,
+            150
+          ],
+          "support": 200,
+          "contiguous_support": 186,
+          "support_h06": 0,
+          "support_h07": 20,
+          "support_h08": 154,
+          "support_h09": 26
+        },
+        {
+          "region_codes": [
+            "金尚-1",
+            "岭兜-2",
+            "岭兜-3"
+          ],
+          "pattern": [
+            12,
+            72,
+            149
+          ],
+          "support": 170,
+          "contiguous_support": 168,
+          "support_h06": 8,
+          "support_h07": 30,
+          "support_h08": 123,
+          "support_h09": 9
+        },
+        {
+          "region_codes": [
+            "将军祠-2",
+            "嘉禾园-2",
+            "嘉禾园-1"
+          ],
+          "pattern": [
+            137,
+            145,
+            14
+          ],
+          "support": 172,
+          "contiguous_support": 163,
+          "support_h06": 18,
+          "support_h07": 89,
+          "support_h08": 47,
+          "support_h09": 18
+        },
+        {
+          "region_codes": [
+            "岭兜-1",
+            "岭兜-4",
+            "观音山-2"
+          ],
+          "pattern": [
+            56,
+            150,
+            16
+          ],
+          "support": 166,
+          "contiguous_support": 157,
+          "support_h06": 5,
+          "support_h07": 7,
+          "support_h08": 126,
+          "support_h09": 28
+        },
+        {
+          "region_codes": [
+            "育秀-2",
+            "育秀-3",
+            "育秀-4"
+          ],
+          "pattern": [
+            40,
+            103,
+            139
+          ],
+          "support": 151,
+          "contiguous_support": 151,
+          "support_h06": 15,
+          "support_h07": 37,
+          "support_h08": 73,
+          "support_h09": 26
+        },
+        {
+          "region_codes": [
+            "莲前-3",
+            "莲前-1",
+            "岭兜-3"
+          ],
+          "pattern": [
+            49,
+            5,
+            149
+          ],
+          "support": 153,
+          "contiguous_support": 150,
+          "support_h06": 3,
+          "support_h07": 14,
+          "support_h08": 117,
+          "support_h09": 19
+        }
+      ],
+      "flow_channel_contrast": {
+        "shared_pairs": 580,
+        "length2_contiguous_patterns": 1259,
+        "channel_pairs": 682,
+        "spearman": 1.0,
+        "median_relative_diff": 0.0,
+        "contiguous_support_total": 77580,
+        "channel_tracks_total": 77520,
+        "aggregate_relative_diff": 0.0008,
+        "pairs_equal": 532,
+        "max_relative_diff": 0.0682,
+        "pairs_below_channel": 0,
+        "channel_pairs_at_or_above_threshold": 556,
+        "channel_pairs_at_or_above_threshold_missing_from_patterns": 0,
+        "note": "长度 2 连续模式支持度按序列条数计，通道流按轨迹去重计，因此前者恒 ≥ 后者（580 对里 0 对低于通道流）。ADR-0013 预估的约 3% 是整个序列库的膨胀（47,803 条序列来自 46,335 条轨迹），只有当同一条轨迹的多条序列含同一个有向区域对时才落到区域对上；切段点是 piece 边界与无区域段，两侧通常不重复同一个相邻转移，所以对级差额只有 0.08%（合计 77,580 对 77,520，532 / 580 对完全相等，单对最大 +6.82%）。这是比预期更小的差，不是口径错位：556 个 tracks ≥ 14 的通道流区域对全部出现在挖出的长度 2 模式里。"
+      },
+      "prefixspan_cross_check": {
+        "oracle": "tests/reference_prefixspan.py",
+        "sequences": 47803,
+        "min_support_count": 14,
+        "max_pattern_length": 10,
+        "patterns_ge2_reference": 2874,
+        "patterns_ge2_product": 2874,
+        "patterns_length1_reference": 149,
+        "reference_only": 0,
+        "product_only": 0,
+        "support_disagreements": 0,
+        "brute_force_recounted": 2874,
+        "brute_force_disagreements": 0,
+        "note": "纯 Python PrefixSpan 在晴天集全部 47,803 条真实序列上按同一门槛重挖，模式集合与每条支持度与 MLlib 完全相同；2,874 条的支持度另用朴素子序列计数逐条重算，同样全部一致。长度 1 的 149 条按口径不物化。"
+      },
+      "region_cells_digest": "d84a0485dfcffeda6fdad52e5472df38f4c4e9be01649cc8c5143f8605f486ef",
+      "district_labels_sha256": "eb61916e26afd32a4c9ddbd94abaa592054671b6e62a515917e196511bd78afa",
+      "note": "序列库与模式集是本实现在冻结 151 区上运行得到的 recorded 观测，不是独立 baseline：notebook §6.8 的 9,617 条序列、498 条模式、387 条连续建立在 12-21 的 141 区单日划分上，区域号不对应，差异同时来自划分与阈值，两组数不可比。报告引用这些数时必须这么标注。"
+    },
+    "validation": {
+      "note": "本节是两个全量验证阶段在冻结 151 区上的实现回声，不是独立 baseline。唯一的独立参照是两个流零模型的闭式期望与方差，其断言保存在测试中。结果按预注册方向解释，未为贴合方向而更改参数。",
+      "region_cells_digest": "d84a0485dfcffeda6fdad52e5472df38f4c4e9be01649cc8c5143f8605f486ef",
+      "data_contract_lock_sha256": "1c37c6ddf9b250e736abccd9c78298604677d27b6e2e8a572ade5ea46caad585",
+      "runs": {
+        "validate_flows": {
+          "run_id": "20260909-acceptance-validate-flows",
+          "dates": [
+            "2020-12-21",
+            "2020-12-22",
+            "2020-12-23",
+            "2020-12-24",
+            "2020-12-25"
+          ],
+          "parameters": {
+            "reps": 100,
+            "null_seed": 42,
+            "min_observed": 5,
+            "fdr_q": 0.05,
+            "audit_min_null_sd": 1.0,
+            "sequence_relative_floor": 0.003
+          },
+          "tables": {
+            "flow_significance": {"sha256": "412ed37f1bf92d789779f576bd27e35f29e2a55fcbf1b32473a631e5c3844635", "rows": 19727},
+            "null_audit": {"sha256": "60a564d406a517ec0bb2aea5ee04a2095c67b0029026f899aac554ec0f9eeebb", "rows": 10},
+            "flow_consistency": {"sha256": "0a2723c481c73a9be04292bbfd261e6294a86f906e1a6bb04be9f435ef1cd5f7", "rows": 155},
+            "stage_counts_validate_flows": {"sha256": "6b42fe3dda0fd8d2a22274a69af7619b5d476a3fca5805f5138f3f89bf698865", "rows": 30}
+          }
+        },
+        "validate_partitions": {
+          "run_id": "20260909-acceptance-validate-partitions",
+          "clear_days": [
+            "2020-12-21",
+            "2020-12-22",
+            "2020-12-24",
+            "2020-12-25"
+          ],
+          "dates_are_default": true,
+          "seeds": {
+            "infomap_seed": 42,
+            "num_trials": 5,
+            "lattice_null_seed": 7,
+            "leiden_seeds": [42, 7, 2020, 1234]
+          },
+          "tables": {
+            "partitions": {"sha256": "53f696f7522665b4fa4049278087665ec03869a77056608598354f4f2ed2e7c4", "rows": 187030},
+            "partition_similarity": {"sha256": "4b9ab94ec403d19be1b12a8b19c84048c9b69774198f7f4a1a6308157b4db0f7", "rows": 26},
+            "granularity_scan": {"sha256": "cbc94f3a878c12045ee0941d74afea6d8b00c892e742ccbfd277fdffd1e8ba62", "rows": 29},
+            "granularity_topk": {"sha256": "fa31dcbf7b48ce2d7a3b698854c47ce1da0e3d1433f834153c425db13ab1cdc3", "rows": 6, "valid": false, "reason": "不同格边长的 region_id 独立重编号，未建立空间对应关系"},
+            "stage_counts_validate_partitions": {"sha256": "e15293b728ea3c6985940c0d4e3c8b5523efdbafde1767741f918e24587e64db", "rows": 20}
+          }
+        }
+      },
+      "partitions": {
+        "folds": [
+          {"holdout": "2020-12-21", "shared_days": 0, "ami_points": 0.862002, "ecs_points": 0.521173, "null_ami_points": 0.803651, "excess_ami_points": 0.058351},
+          {"holdout": "2020-12-22", "shared_days": 0, "ami_points": 0.878542, "ecs_points": 0.577199, "null_ami_points": 0.808059, "excess_ami_points": 0.070483},
+          {"holdout": "2020-12-24", "shared_days": 0, "ami_points": 0.892234, "ecs_points": 0.615669, "null_ami_points": 0.821029, "excess_ami_points": 0.071205},
+          {"holdout": "2020-12-25", "shared_days": 0, "ami_points": 0.873901, "ecs_points": 0.566421, "null_ami_points": 0.810893, "excess_ami_points": 0.063008}
+        ],
+        "fold_2v2": [
+          {"split": "2020-12-21+2020-12-22|2020-12-24+2020-12-25", "shared_days": 0, "ami_points": 0.90425, "excess_ami_points": 0.093342},
+          {"split": "2020-12-21+2020-12-24|2020-12-22+2020-12-25", "shared_days": 0, "ami_points": 0.882238, "excess_ami_points": 0.07133},
+          {"split": "2020-12-21+2020-12-25|2020-12-22+2020-12-24", "shared_days": 0, "ami_points": 0.898071, "excess_ami_points": 0.087163}
+        ],
+        "fold_3v3": [
+          {"pair": "2020-12-21|2020-12-22", "shared_days": 2, "ami_points": 0.91977, "excess_ami_points": 0.108862},
+          {"pair": "2020-12-21|2020-12-24", "shared_days": 2, "ami_points": 0.924695, "excess_ami_points": 0.113787},
+          {"pair": "2020-12-21|2020-12-25", "shared_days": 2, "ami_points": 0.900277, "excess_ami_points": 0.089369},
+          {"pair": "2020-12-22|2020-12-24", "shared_days": 2, "ami_points": 0.918121, "excess_ami_points": 0.107213},
+          {"pair": "2020-12-22|2020-12-25", "shared_days": 2, "ami_points": 0.893343, "excess_ami_points": 0.082435},
+          {"pair": "2020-12-24|2020-12-25", "shared_days": 2, "ami_points": 0.894951, "excess_ami_points": 0.084043}
+        ],
+        "rain_included": {
+          "regions": 154,
+          "ami_points": 0.937537,
+          "ecs_points": 0.746858,
+          "excess_ami_points": 0.126629
+        },
+        "leiden": {
+          "main": {"resolution": 8.0, "seed": 42, "alignment": "capped", "regions": 111, "ami_points": 0.875446, "ecs_points": 0.557106, "excess_ami_points": 0.064538},
+          "seed_check": [
+            {"seed": 42, "regions": 111, "ami_points": 0.875446},
+            {"seed": 7, "regions": 114, "ami_points": 0.869576},
+            {"seed": 2020, "regions": 115, "ami_points": 0.861243},
+            {"seed": 1234, "regions": 118, "ami_points": 0.870894}
+          ],
+          "seed_range": {"regions": 7, "ami_points": 0.014203},
+          "natural_gamma_1": {"regions": 33, "ami_points": 0.775456, "ecs_points": 0.280372, "excess_ami_points": -0.035452}
+        },
+        "cell_sizes": [
+          {"cell_size_m": 150, "markov_time": 1.25, "alignment": "identity", "capped": false, "regions": 151, "median_width_m": 719.374728, "ami_points": 1.0, "excess_ami_points": 0.189092},
+          {"cell_size_m": 200, "markov_time": 0.5, "alignment": "aligned", "capped": false, "regions": 160, "median_width_m": 721.110255, "ami_points": 0.834569, "excess_ami_points": 0.023661},
+          {"cell_size_m": 300, "markov_time": 0.75, "alignment": "aligned", "capped": false, "regions": 146, "median_width_m": 848.528137, "ami_points": 0.853477, "excess_ami_points": 0.042569}
+        ],
+        "granularity_topk_invalid": "不同格边长的 region_id 独立重编号且未建立空间对应关系；granularity_topk 只保留作审计痕迹，不进入报告或结论。",
+        "candidate_partition_count": 63,
+        "candidate_partition_digests": {
+          "fold|days=2020-12-21": "a4e86ca942336e865de16d4ed3c50ff49704a2970e5a3e703630a4691f35c1fa",
+          "fold-2v2|days=2020-12-21+2020-12-22": "3616bfabe9c314e856f8479253e91a144875e75ac73460902ff87ffc4dbf3c2a",
+          "rain-included|days=2020-12-21+2020-12-22+2020-12-23+2020-12-24+2020-12-25": "4137d1ed741b8b2274d2e855440b1f1064db988308bff2e1d14be2bcf4b1b22c",
+          "fold|days=2020-12-21+2020-12-22+2020-12-24": "0edf2b1688b9612069a6b6220e66d9e0641a68d1414a0e63f528fc9ca151da33",
+          "fold|days=2020-12-21+2020-12-22+2020-12-25": "01b2c9de2adf721b2438adf5ab454728c9091c5d9c8189e8da4ceb239ac119af",
+          "fold-2v2|days=2020-12-21+2020-12-24": "5b73b185fd4dc98e7a97dd67b66dbd0467703202579cbe7b343bca5d5ca494da",
+          "fold|days=2020-12-21+2020-12-24+2020-12-25": "64c06b6a542f63166249e02faeafcfc82740aff471400d88fc369d980bf6cc55",
+          "fold-2v2|days=2020-12-21+2020-12-25": "8a90a31ebe0e84f9e8211606f10a851ac28b21bab8516f714e00d5343c6fa91d",
+          "fold|days=2020-12-22": "c391734583f11281bfbcce6320d37cf85697a48e17c3e1222c94a4124622b053",
+          "fold-2v2|days=2020-12-22+2020-12-24": "71903e6e73b3e4ae86166f024260c40243504921a3902848e844a4d412e62774",
+          "fold|days=2020-12-22+2020-12-24+2020-12-25": "dcac9907af2a716c72ad31e536b4a25c0d0f4d8dbdf851b414829215ab0bf5e8",
+          "fold-2v2|days=2020-12-22+2020-12-25": "f1734c267b12931ec363a5a937fa9b58e4655f4eccb979ff0b11b0f0de77bd8d",
+          "fold|days=2020-12-24": "330534234b98ea9e38bde561fbf3a94aeff96c3594a91b39536cd70817eb5314",
+          "fold-2v2|days=2020-12-24+2020-12-25": "e1ec13a47f6ea2d16407d205f423e4cb80853782aba7c011730837d82b328ebe",
+          "fold|days=2020-12-25": "d62eb8e88db72e5d141a007b0279078c3de4677a10ae19f835bb8100a34466ef",
+          "fold-null|null-days=2020-12-21": "366572812472ec0d4d92441fb9725e273f4c8856558a9ef91792cc06eac6ec88",
+          "fold-null|null-days=2020-12-21+2020-12-22+2020-12-24": "efd12aad555ed3950966c5a9f2bd5fbceba68ba8474a31576f4cf2d6d1362f5d",
+          "fold-null|null-days=2020-12-21+2020-12-22+2020-12-25": "b660d706090f2515568acc4b08cef05b43c85d43a31224b717f31cbae0573f9b",
+          "fold-null|null-days=2020-12-21+2020-12-24+2020-12-25": "ee8c0c0db12666620bce59e3029a241a4ede811006bc48ea919d9377a04eb2ba",
+          "fold-null|null-days=2020-12-22": "fb919c7ea9bbc4522ac7368ff82c55b37da9a317914dd5f0dab0ee7abecfeda4",
+          "fold-null|null-days=2020-12-22+2020-12-24+2020-12-25": "fb36d7b31fb448320333a3c2795bcb80b003110c1dcb1076a2737ee17953d0b2",
+          "fold-null|null-days=2020-12-24": "237ab5405fa5511485b5dd4a6f79485e5629a7ed1eee4ee00a95c3f7a77260bd",
+          "fold-null|null-days=2020-12-25": "48eaa6df2e8ced8b6f2273b278f27799ae6427b6379679a8f644fc7b551f1b3c",
+          "cell-size|s=200,markov-time=0.5": "95bf82820324c156436585d50b87c3b8254691aa739c4bf208ab9f8545422906",
+          "cell-size|s=200,markov-time=0.75": "1b7fcbcaa84b01be41b6d2aae2d51e02ef538934903dc8207c1b01853f003280",
+          "cell-size|s=200,markov-time=1": "39ff208a5f167af5f5919d7124f8efae1620cb37f9a4350de547a064a299cc25",
+          "cell-size|s=200,markov-time=1.25": "d19e807ce0130f613f8375c2cbfe9d48fe37769854ada8007ef0532b2c53a94e",
+          "cell-size|s=200,markov-time=1.5": "3df20c7f354f9424321fa0fd2c62219e65abb63abf0d3688bbe1b5d7b378b4eb",
+          "cell-size|s=200,markov-time=1.75": "a32fffd55eff690336c9efd6b02950192d3c47f823afa7819adbff91a434f2e0",
+          "cell-size|s=200,markov-time=12": "144a2e979c10cafa1abb3d90b2fdf81cd5611659278633e3b21810dd0af099af",
+          "cell-size|s=200,markov-time=2": "7842dc3641790d1cb5f1eb3c08bd231b9350cd1fcb7a2232e233dc6d320318d7",
+          "cell-size|s=200,markov-time=2.5": "6ac2c104c72319e43c7efe297a5935c10113f82d6573d47221ba5748514157f3",
+          "cell-size|s=200,markov-time=3": "98fecbba1b2adeddc7878d3ad536c6c5dd3c677f73d7b2117f49e9f9aa511e33",
+          "cell-size|s=200,markov-time=4": "c77262fd89c71430a3970fe0dc6d55b18698ee54581c0841ba5c92642181a17e",
+          "cell-size|s=200,markov-time=5": "257b8cb7c6e6510e62fa7ee759bffd048864905ac3fadd0b82198d10b20cfd0c",
+          "cell-size|s=200,markov-time=6": "f7421ab19145140f90e08b2116cff74c65b869b7eadcf7af1e69679177a0977c",
+          "cell-size|s=200,markov-time=8": "d33c2a8b236ad8c904acaa0e78d653c0c0fe3636211de7f6d42941e151e31c68",
+          "cell-size|s=300,markov-time=0.5": "94d1bbcc70696853367ad458aedb94b7f7b967463a5a722946f4bb8949517951",
+          "cell-size|s=300,markov-time=0.75": "44cc42b73c84311fd42df0f25cea2eeb58193b892d3fb4e7bb87a5e28de06786",
+          "cell-size|s=300,markov-time=1": "68865e8faed96e9fe05c9005e2957cb130704f3b691b8201a515fc6f715ea943",
+          "cell-size|s=300,markov-time=1.25": "a24aedd1e926f3cfd1253003cd6c94f553711446ac058ef54087728c0b350c87",
+          "cell-size|s=300,markov-time=1.5": "086ec07f59a08e9edadf6a43237d5e6b2f7a75ecb3ae638c0d0f87c3f148b22f",
+          "cell-size|s=300,markov-time=1.75": "09e56c550b8023304fbd2e2354fdf68f5e95b24f0dd22e2d0e3b5e93f9656571",
+          "cell-size|s=300,markov-time=12": "da9a8ead6ad9a2153a1f6f61063d2fb11564d6a824acb17855415f40b1d9df7d",
+          "cell-size|s=300,markov-time=2": "6066960412ec999ab75dfd1385a8ad15d4540a9cf19150652b6199af4523467a",
+          "cell-size|s=300,markov-time=2.5": "a576cd52b21e84ba875abcc0bec0a2c16076429f815a73bf944a5d7171a91ea2",
+          "cell-size|s=300,markov-time=3": "3e8953fc95cce1db931f6a17e77494c66d21c59b3d38a6205ef458e4f93b779f",
+          "cell-size|s=300,markov-time=4": "48b678b56793f1f11e38c69cb1e4df00d91eec317a05536a07007d1e817db285",
+          "cell-size|s=300,markov-time=5": "63ae446b2d984fa1c2030a397f4e035afbc4940f27f1bf3d724ea281c0f3d854",
+          "cell-size|s=300,markov-time=6": "d3ff20b0fb02b22676e3e595136fecc2490a3ed699c9aa0913433c1dc6a2dcf4",
+          "cell-size|s=300,markov-time=8": "ea4d0d1241bb1962698ba42473bf5959043e116bd9ffbf340ea6d391d6f64216",
+          "leiden|gamma=0.5": "a497f19be42b385f06cae5ca1ef007bfc63ce2ce3da6c2397ea967cac85282db",
+          "leiden|gamma=0.75": "ca38f3298e2cdfff3a10bb3157941090a7f13161f2a5e4c8fe4a0a41aaaa677a",
+          "leiden|gamma=1": "f05de14e3a81bf6a079956204b7f5ea16ffc8227543a54d6eaa8ba390b91019f",
+          "leiden|gamma=1.5": "2ec1de4d574a6d6bf4d52a6ebfefdc61aed21ad19902f086c000aac236195d51",
+          "leiden|gamma=2": "d6170865c65ec3cd1fb8dfe85962d7e6d5be604486083078302a518581400534",
+          "leiden|gamma=3": "bd71236fb57c04541e06739e9ab69b26c013970f3bc40e92de12bb0b2b98dcec",
+          "leiden|gamma=4": "1109241daf0f1668d500850816d8c5b9e108a0afc94bdab814836599b6c13717",
+          "leiden|gamma=6": "3ff9560ee5b922049b756a78f6db9282c79757e03a63b4c7680a0591d1b520b9",
+          "leiden|gamma=8": "232d25ab392e154c5be69c5351174f36226ae9e1aaae69b848b214d8041e397d",
+          "leiden|gamma=8,seed=1234": "e25fccb3ee109f2fa01a78d3841917e9cd79471a747358a20cf01c5151092535",
+          "leiden|gamma=8,seed=2020": "ff62336de5e6e6cb24eb27edb6dbb71458c5a41f1c689e070b087e188a6334b5",
+          "leiden|gamma=8,seed=7": "aa364ea880a7c4490bee90bf521db404a030441f843f53ef4079140c2a32811c"
+        }
+      },
+      "flows": {
+        "daily": {
+          "flow_od": {
+            "2020-12-21": {"off_diagonal_pairs": 3188, "kept_pairs": 1198, "gated_out_pairs": 1990, "kept_pair_share": 0.375784, "kept_flow_share": 0.901348, "significant_pairs": 939},
+            "2020-12-22": {"off_diagonal_pairs": 3356, "kept_pairs": 1251, "gated_out_pairs": 2105, "kept_pair_share": 0.372765, "kept_flow_share": 0.902438, "significant_pairs": 955},
+            "2020-12-23": {"off_diagonal_pairs": 2023, "kept_pairs": 653, "gated_out_pairs": 1370, "kept_pair_share": 0.322788, "kept_flow_share": 0.818222, "significant_pairs": 608},
+            "2020-12-24": {"off_diagonal_pairs": 3189, "kept_pairs": 1178, "gated_out_pairs": 2011, "kept_pair_share": 0.369395, "kept_flow_share": 0.897703, "significant_pairs": 941},
+            "2020-12-25": {"off_diagonal_pairs": 3124, "kept_pairs": 1151, "gated_out_pairs": 1973, "kept_pair_share": 0.368438, "kept_flow_share": 0.893029, "significant_pairs": 923}
+          },
+          "flow_channel": {
+            "2020-12-21": {"off_diagonal_pairs": 640, "kept_pairs": 513, "gated_out_pairs": 127, "kept_pair_share": 0.801563, "kept_flow_share": 0.983653, "significant_pairs": 257},
+            "2020-12-22": {"off_diagonal_pairs": 647, "kept_pairs": 513, "gated_out_pairs": 134, "kept_pair_share": 0.79289, "kept_flow_share": 0.982659, "significant_pairs": 260},
+            "2020-12-23": {"off_diagonal_pairs": 581, "kept_pairs": 353, "gated_out_pairs": 228, "kept_pair_share": 0.607573, "kept_flow_share": 0.91523, "significant_pairs": 135},
+            "2020-12-24": {"off_diagonal_pairs": 663, "kept_pairs": 562, "gated_out_pairs": 101, "kept_pair_share": 0.847662, "kept_flow_share": 0.991174, "significant_pairs": 318},
+            "2020-12-25": {"off_diagonal_pairs": 650, "kept_pairs": 510, "gated_out_pairs": 140, "kept_pair_share": 0.784615, "kept_flow_share": 0.981708, "significant_pairs": 246}
+          }
+        },
+        "clear_days_stable": {
+          "flow_od": {
+            "significant_pairs": 738,
+            "top_pairs": [
+              {"from_region": 18, "from_code": "曾厝垵-1", "to_region": 53, "to_code": "曾厝垵-3", "observed": 201, "z": 88.715471},
+              {"from_region": 10, "from_code": "殿前-1", "to_region": 43, "to_code": "殿前-2", "observed": 120, "z": 81.460512},
+              {"from_region": 109, "from_code": "殿前-4", "to_region": 10, "to_code": "殿前-1", "observed": 271, "z": 79.821545},
+              {"from_region": 79, "from_code": "五通-3", "to_region": 3, "to_code": "五通-1", "observed": 244, "z": 76.298572},
+              {"from_region": 63, "from_code": "观音山-4", "to_region": 60, "to_code": "观音山-3", "observed": 1027, "z": 76.282834},
+              {"from_region": 84, "from_code": "环岛干道-2", "to_region": 30, "to_code": "环岛干道-1", "observed": 1939, "z": 66.247325},
+              {"from_region": 107, "from_code": "金山-6", "to_region": 28, "to_code": "金山-1", "observed": 308, "z": 64.184275},
+              {"from_region": 131, "from_code": "火炬北路-4", "to_region": 62, "to_code": "塘边-1", "observed": 372, "z": 63.825178},
+              {"from_region": 47, "from_code": "枋钟路-4", "to_region": 82, "to_code": "枋钟路-5", "observed": 913, "z": 60.155118},
+              {"from_region": 30, "from_code": "环岛干道-1", "to_region": 95, "to_code": "环岛干道-4", "observed": 575, "z": 58.672998}
+            ]
+          },
+          "flow_channel": {
+            "significant_pairs": 204,
+            "top_pairs": [
+              {"from_region": 46, "from_code": "五通-2", "to_region": 3, "to_code": "五通-1", "observed": 114, "z": 21.996308},
+              {"from_region": 18, "from_code": "曾厝垵-1", "to_region": 32, "to_code": "曾厝垵-2", "observed": 67, "z": 20.825154},
+              {"from_region": 22, "from_code": "高崎-1", "to_region": 136, "to_code": "高崎-7", "observed": 63, "z": 19.128967},
+              {"from_region": 53, "from_code": "曾厝垵-3", "to_region": 135, "to_code": "曾厝垵-6", "observed": 65, "z": 19.043281},
+              {"from_region": 77, "from_code": "湖边水库-1", "to_region": 142, "to_code": "湖边水库-2", "observed": 133, "z": 17.673565},
+              {"from_region": 10, "from_code": "殿前-1", "to_region": 43, "to_code": "殿前-2", "observed": 27, "z": 17.436361},
+              {"from_region": 7, "from_code": "环岛东路/南路-1", "to_region": 97, "to_code": "环岛东路/南路-3", "observed": 45, "z": 17.021588},
+              {"from_region": 109, "from_code": "殿前-4", "to_region": 10, "to_code": "殿前-1", "observed": 67, "z": 16.83161},
+              {"from_region": 10, "from_code": "殿前-1", "to_region": 109, "to_code": "殿前-4", "observed": 56, "z": 16.673164},
+              {"from_region": 92, "from_code": "殿前-3", "to_region": 10, "to_code": "殿前-1", "observed": 39, "z": 15.680885}
+            ]
+          }
+        },
+        "cross_day": {
+          "flow_od": {
+            "pairwise_spearman": {"min": 0.7604, "max": 0.7765, "mean": 0.770117},
+            "pairwise_top50_jaccard": {"min": 0.724138, "max": 0.851852, "mean": 0.77081},
+            "pairwise_top200_jaccard": {"min": 0.818182, "max": 0.860465, "mean": 0.843461}
+          },
+          "flow_channel": {
+            "pairwise_spearman": {"min": 0.9611, "max": 0.9698, "mean": 0.964683},
+            "pairwise_top50_jaccard": {"min": 0.754386, "max": 0.886792, "mean": 0.797339},
+            "pairwise_top200_jaccard": {"min": 0.809955, "max": 0.860465, "mean": 0.830815}
+          },
+          "weekday_note": "周一与周五各只有一个样本，只描述，不外推。",
+          "pairs": [
+            {"matrix": "flow_channel", "left": "2020-12-21", "right": "2020-12-22", "spearman": 0.9611, "top50_jaccard": 0.785714, "top200_jaccard": 0.826484},
+            {"matrix": "flow_channel", "left": "2020-12-21", "right": "2020-12-24", "spearman": 0.9667, "top50_jaccard": 0.886792, "top200_jaccard": 0.818182},
+            {"matrix": "flow_channel", "left": "2020-12-21", "right": "2020-12-25", "spearman": 0.9615, "top50_jaccard": 0.785714, "top200_jaccard": 0.843318},
+            {"matrix": "flow_channel", "left": "2020-12-21", "right": "clear-days", "spearman": 0.9846, "top50_jaccard": 0.923077, "top200_jaccard": 0.886792},
+            {"matrix": "flow_channel", "left": "2020-12-22", "right": "2020-12-24", "spearman": 0.9667, "top50_jaccard": 0.754386, "top200_jaccard": 0.826484},
+            {"matrix": "flow_channel", "left": "2020-12-22", "right": "2020-12-25", "spearman": 0.9623, "top50_jaccard": 0.785714, "top200_jaccard": 0.809955},
+            {"matrix": "flow_channel", "left": "2020-12-22", "right": "clear-days", "spearman": 0.985, "top50_jaccard": 0.818182, "top200_jaccard": 0.869159},
+            {"matrix": "flow_channel", "left": "2020-12-24", "right": "2020-12-25", "spearman": 0.9698, "top50_jaccard": 0.785714, "top200_jaccard": 0.860465},
+            {"matrix": "flow_channel", "left": "2020-12-24", "right": "clear-days", "spearman": 0.9916, "top50_jaccard": 0.923077, "top200_jaccard": 0.913876},
+            {"matrix": "flow_channel", "left": "2020-12-25", "right": "clear-days", "spearman": 0.9857, "top50_jaccard": 0.818182, "top200_jaccard": 0.904762},
+            {"matrix": "flow_od", "left": "2020-12-21", "right": "2020-12-22", "spearman": 0.774, "top50_jaccard": 0.724138, "top200_jaccard": 0.860465},
+            {"matrix": "flow_od", "left": "2020-12-21", "right": "2020-12-24", "spearman": 0.7715, "top50_jaccard": 0.754386, "top200_jaccard": 0.826484},
+            {"matrix": "flow_od", "left": "2020-12-21", "right": "2020-12-25", "spearman": 0.7604, "top50_jaccard": 0.785714, "top200_jaccard": 0.818182},
+            {"matrix": "flow_od", "left": "2020-12-21", "right": "clear-days", "spearman": 0.8961, "top50_jaccard": 0.785714, "top200_jaccard": 0.904762},
+            {"matrix": "flow_od", "left": "2020-12-22", "right": "2020-12-24", "spearman": 0.7765, "top50_jaccard": 0.754386, "top200_jaccard": 0.843318},
+            {"matrix": "flow_od", "left": "2020-12-22", "right": "2020-12-25", "spearman": 0.7621, "top50_jaccard": 0.754386, "top200_jaccard": 0.851852},
+            {"matrix": "flow_od", "left": "2020-12-22", "right": "clear-days", "spearman": 0.9013, "top50_jaccard": 0.785714, "top200_jaccard": 0.913876},
+            {"matrix": "flow_od", "left": "2020-12-24", "right": "2020-12-25", "spearman": 0.7762, "top50_jaccard": 0.851852, "top200_jaccard": 0.860465},
+            {"matrix": "flow_od", "left": "2020-12-24", "right": "clear-days", "spearman": 0.9031, "top50_jaccard": 0.851852, "top200_jaccard": 0.904762},
+            {"matrix": "flow_od", "left": "2020-12-25", "right": "clear-days", "spearman": 0.8946, "top50_jaccard": 0.851852, "top200_jaccard": 0.886792}
+          ]
+        }
+      },
+      "rain_day": {
+          "date": "2020-12-23",
+          "exposure_normalised_total_ratio": {
+            "flow_od_all": 1.0,
+            "flow_channel_all": 0.968172,
+            "flow_od_less_than_1_km": 0.987443,
+            "flow_od_1_to_3_km": 1.051898,
+            "flow_od_at_least_3_km": 0.686865
+          },
+          "band_ratio_spread": 0.401694,
+          "band_ratio_max_deviation": {"distance_band": "≥ 3 km", "value": 0.244153},
+          "off_diagonal_share": {
+            "flow_od_spearman": 0.7556,
+            "flow_od_cosine": 0.963476,
+            "flow_channel_spearman": 0.9257,
+            "flow_channel_cosine": 0.969027
+          },
+          "point_retention_rate": 0.714798,
+          "unassigned_gap_cuts": 8,
+          "tracks_with_unassigned_gap_cuts": 6,
+          "unlock_fallback_share": 1.84,
+          "lock_fallback_share": 0.98,
+          "note": "12-23 的点留存率只有 71.48%，无区域段切断 8 次、涉及 6 条轨迹，订单回落解锁 1.84%、上锁 0.98%。曝光归一后总体出行流为晴天均值的 1.0000、通道流为 0.9682，但 ≥3 km 出行流仅为 0.6869；因此总量下降不能全归因于出行行为，同时长距离结构存在额外下降。"
+        },
+        "sequences": {
+          "relative_support_floors": {"2020-12-21": 30, "2020-12-22": 33, "2020-12-23": 11, "2020-12-24": 51, "2020-12-25": 32, "clear-days": 144},
+          "pairwise_pattern_jaccard": {"min": 0.582626, "max": 0.733333, "mean": 0.657699},
+          "pairwise_pattern_jaccard_relative_floor": {"min": 0.754513, "max": 0.802158, "mean": 0.781413},
+          "pairwise_contiguous_top50_jaccard": {"min": 0.754386, "max": 0.818182, "mean": 0.780873},
+          "daily_pattern_coverage": {"2020-12-21": 1.0, "2020-12-22": 1.0, "2020-12-23": 1.0, "2020-12-24": 1.0, "2020-12-25": 1.0},
+          "daily_pattern_coverage_relative_floor": {"2020-12-21": 0.910156, "2020-12-22": 0.925311, "2020-12-23": 0.815261, "2020-12-24": 0.955102, "2020-12-25": 0.93913},
+          "daily_contiguous_top50_coverage": {"2020-12-21": 0.96, "2020-12-22": 0.92, "2020-12-23": 0.82, "2020-12-24": 0.94, "2020-12-25": 0.9},
+          "pairwise": [
+            {"left": "2020-12-21", "right": "2020-12-22", "pattern_jaccard": 0.694765, "pattern_jaccard_relative_floor": 0.775, "contiguous_top50_jaccard": 0.818182},
+            {"left": "2020-12-21", "right": "2020-12-24", "pattern_jaccard": 0.592544, "pattern_jaccard_relative_floor": 0.802158, "contiguous_top50_jaccard": 0.818182},
+            {"left": "2020-12-21", "right": "2020-12-25", "pattern_jaccard": 0.730589, "pattern_jaccard_relative_floor": 0.754513, "contiguous_top50_jaccard": 0.754386},
+            {"left": "2020-12-22", "right": "2020-12-24", "pattern_jaccard": 0.612338, "pattern_jaccard_relative_floor": 0.78022, "contiguous_top50_jaccard": 0.754386},
+            {"left": "2020-12-22", "right": "2020-12-25", "pattern_jaccard": 0.733333, "pattern_jaccard_relative_floor": 0.790875, "contiguous_top50_jaccard": 0.754386},
+            {"left": "2020-12-24", "right": "2020-12-25", "pattern_jaccard": 0.582626, "pattern_jaccard_relative_floor": 0.785714, "contiguous_top50_jaccard": 0.785714}
+          ],
+          "null_model": null,
+          "null_model_note": "不配零模型：随机化序列库后长模式必然消失，结论预先已知，不构成证据。"
+        },
+      "null_audit": {
+          "models": {"flow_od": "端点重排零模型", "flow_channel": "支撑内强度零模型"},
+          "tolerances": {"max_mean_deviation": "< 0.5", "max_sd_deviation": "< 0.5", "flow_od_margin_deviation": "== 0", "flow_channel_margin_deviation": "0 < value < 1"},
+          "all_within_tolerance": true,
+          "rows": [
+            {"matrix": "flow_channel", "scope": "2020-12-21", "null_model": "支撑内强度零模型", "max_mean_deviation": 0.3355, "max_sd_deviation": 0.2584, "margin_deviation": 0.5294, "audit_cells": 530},
+            {"matrix": "flow_channel", "scope": "2020-12-22", "null_model": "支撑内强度零模型", "max_mean_deviation": 0.2816, "max_sd_deviation": 0.2412, "margin_deviation": 0.5256, "audit_cells": 543},
+            {"matrix": "flow_channel", "scope": "2020-12-23", "null_model": "支撑内强度零模型", "max_mean_deviation": 0.3045, "max_sd_deviation": 0.22, "margin_deviation": 0.5509, "audit_cells": 448},
+            {"matrix": "flow_channel", "scope": "2020-12-24", "null_model": "支撑内强度零模型", "max_mean_deviation": 0.3366, "max_sd_deviation": 0.2718, "margin_deviation": 0.5412, "audit_cells": 569},
+            {"matrix": "flow_channel", "scope": "2020-12-25", "null_model": "支撑内强度零模型", "max_mean_deviation": 0.3194, "max_sd_deviation": 0.2706, "margin_deviation": 0.5309, "audit_cells": 531},
+            {"matrix": "flow_od", "scope": "2020-12-21", "null_model": "端点重排零模型", "max_mean_deviation": 0.3692, "max_sd_deviation": 0.3616, "margin_deviation": 0.0, "audit_cells": 9844},
+            {"matrix": "flow_od", "scope": "2020-12-22", "null_model": "端点重排零模型", "max_mean_deviation": 0.4166, "max_sd_deviation": 0.3026, "margin_deviation": 0.0, "audit_cells": 10122},
+            {"matrix": "flow_od", "scope": "2020-12-23", "null_model": "端点重排零模型", "max_mean_deviation": 0.3608, "max_sd_deviation": 0.3257, "margin_deviation": 0.0, "audit_cells": 5024},
+            {"matrix": "flow_od", "scope": "2020-12-24", "null_model": "端点重排零模型", "max_mean_deviation": 0.3769, "max_sd_deviation": 0.3365, "margin_deviation": 0.0, "audit_cells": 9580},
+            {"matrix": "flow_od", "scope": "2020-12-25", "null_model": "端点重排零模型", "max_mean_deviation": 0.3996, "max_sd_deviation": 0.3171, "margin_deviation": 0.0, "audit_cells": 9352}
+          ]
+        },
+      "preregistered_interpretation": [
+        "四折 excess_ami_points 全为正，边界包含超出格网骨架的流量结构。",
+        "四折 ami_points 均值 0.876670，仅比 fold-2v2 与 fold-3v3 均值低 0.018183 与 0.031856；曝光差异有影响，但没有形成大差距。",
+        "rain-included ami_points 为 0.937537，高于四折量级；不让 12-23 参与冻结划分没有改变区域结论。",
+        "Leiden γ=8 已到扫描上限且只有 111 区，因此主档为 capped；其 ami_points 与 ecs_points 仍与四折同量级。",
+        "200 米与 300 米 ami_points 都低于 150 米恒等行，但 300 米高于 200 米，且 300 米中位宽度更大；预注册的单调下降与宽度对齐方向没有完整出现。",
+        "显著流对不预设条数；晴天稳定集为 flow_od 738 对、flow_channel 204 对。",
+        "晴天守门后的对数与流量份额和 spec 参考范围一致；雨天 flow_od 只覆盖 81.82% 非对角流量，挡掉 18.18%，超过预期的 11%。",
+        "晴天两两 Spearman 为 flow_od 0.7604 到 0.7765、flow_channel 0.9611 到 0.9698；周一与周五各只有一个样本。",
+        "雨天总量按曝光归一后接近晴天，但 ≥3 km 出行流仅为 0.686865，三档不是等比缩水。",
+        "统一相对门槛将晴天模式 Jaccard 从 0.582626 到 0.733333 提高到 0.754513 到 0.802158；Top-50 连续模式重合不变。",
+        "null_audit 的均值与标准差偏差均小于 0.5，flow_od margin 恒为 0，flow_channel margin 位于 0 与 1 之间；十行全部满足测试容差。"
+      ]
+    }
+  },
+  "totals": {
+    "raw_points": 2849243,
+    "tracks": 153087,
+    "single_point_tracks": 25129,
+    "valid_tracks": 81035,
+    "valid_points": 2206672,
+    "match_entering_tracks": 81035,
+    "match_entering_points": 2206672,
+    "match_valid_tracks": 76958,
+    "match_valid_points": 2119826,
+    "match_edges": 2891344,
+    "match_pieces": 91167,
+    "unmatched_points": 38831,
+    "order_pairs": 220675,
+    "order_duration_kept": 212630,
+    "order_valid": 212355
+  }
+}
