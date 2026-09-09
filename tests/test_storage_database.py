@@ -25,6 +25,7 @@ from find_bike_routes.storage import (
 
 
 ROOT = Path(__file__).parents[1]
+QUERY_ROOT = ROOT / "database" / "queries"
 TABLES = {
     "dataset_release",
     "district",
@@ -656,6 +657,20 @@ def rows(database, query: str, parameters=()):
     return database.execute(query, parameters).fetchall()
 
 
+def query_sql(name: str) -> str:
+    return (QUERY_ROOT / name).read_text(encoding="utf-8").rstrip(";\n")
+
+
+def wgs84_bounds(database, west: float, south: float, east: float, north: float):
+    return rows(
+        database,
+        "SELECT ST_XMin(bounds), ST_YMin(bounds), ST_XMax(bounds), ST_YMax(bounds) "
+        "FROM (SELECT ST_Envelope(ST_Transform("
+        "ST_MakeEnvelope(%s, %s, %s, %s, 32650), 4326)) AS bounds) query",
+        (west, south, east, north),
+    )[0]
+
+
 def test_extensions_and_business_tables_are_queryable(database):
     extensions = dict(
         rows(
@@ -972,6 +987,223 @@ def test_import_publishes_the_frozen_release_and_same_digest_is_a_no_op(
     assert rows(empty_database, "SELECT imported_at FROM dataset_release") == [
         (imported_at,)
     ]
+
+
+def test_transit_query_restricts_time_before_space_and_returns_limited_context(
+    empty_database, tmp_path
+):
+    paths, labels_path = write_release_fixture(tmp_path / "inputs")
+    result = import_command(paths, labels_path, tmp_path / "artifacts", "query")
+    assert result.returncode == 0, result.stderr
+
+    trajectories = {
+        "2020-12-21-valid": (
+            "2020-12-21 05:50:00+08",
+            "2020-12-21 06:30:00+08",
+            "SRID=32650;{[Point(499980 2700000)@2020-12-21 05:50:00+08,"
+            "Point(499990 2700000)@2020-12-21 06:00:00+08,"
+            "Point(500010 2700000)@2020-12-21 06:10:00+08,"
+            "Point(499990 2700000)@2020-12-21 06:20:00+08,"
+            "Point(499980 2700000)@2020-12-21 06:30:00+08]}",
+        ),
+        "2020-12-22-valid": (
+            "2020-12-22 06:00:00+08",
+            "2020-12-22 06:20:00+08",
+            "SRID=32650;{[Point(499990 2700100)@2020-12-22 06:00:00+08,"
+            "Point(499995 2700100)@2020-12-22 06:05:00+08],"
+            "[Point(500005 2700100)@2020-12-22 06:15:00+08,"
+            "Point(500010 2700100)@2020-12-22 06:20:00+08]}",
+        ),
+        "2020-12-24-valid": (
+            "2020-12-24 06:00:00+08",
+            "2020-12-24 06:01:00+08",
+            "SRID=32650;{[Point(500000 2700200)@2020-12-24 06:00:00+08,"
+            "Point(500001 2700200)@2020-12-24 06:01:00+08]}",
+        ),
+        "2020-12-25-valid": (
+            "2020-12-25 10:00:00+08",
+            "2020-12-25 10:01:00+08",
+            "SRID=32650;{[Point(500000 2700200)@2020-12-25 10:00:00+08,"
+            "Point(500001 2700200)@2020-12-25 10:01:00+08]}",
+        ),
+    }
+    for track_id, (start, end, trajectory) in trajectories.items():
+        empty_database.execute(
+            "UPDATE track SET start_time = %s, end_time = %s, "
+            "trajectory = %s::tgeompoint WHERE track_id = %s",
+            (start, end, trajectory, track_id),
+        )
+
+    query = query_sql("transits.sql")
+    transit_parameters = {
+        "start_local": "2020-12-21 06:00:00",
+        "end_local": "2020-12-21 06:20:00",
+        "sample_limit": 500,
+    }
+    gap_bounds = wgs84_bounds(empty_database, 499999, 2700099, 500001, 2700101)
+    gap_result = rows(
+        empty_database,
+        query,
+        dict(zip(("west", "south", "east", "north"), gap_bounds))
+        | transit_parameters
+        | {
+            "start_local": "2020-12-22 06:00:00",
+            "end_local": "2020-12-22 06:30:00",
+        },
+    )
+    assert [(count, track_id) for count, track_id, _ in gap_result] == [(0, None)]
+
+    boundary_bounds = wgs84_bounds(empty_database, 499999, 2700199, 500002, 2700201)
+    boundary_parameters = (
+        dict(zip(("west", "south", "east", "north"), boundary_bounds))
+        | transit_parameters
+        | {
+            "start_local": "2020-12-24 06:00:00",
+            "end_local": "2020-12-25 10:00:00",
+        }
+    )
+    try:
+        empty_database.execute("SET TIME ZONE 'UTC'")
+        utc = rows(empty_database, query, boundary_parameters)
+        empty_database.execute("SET TIME ZONE 'America/New_York'")
+        new_york = rows(empty_database, query, boundary_parameters)
+    finally:
+        empty_database.execute("SET TIME ZONE 'UTC'")
+    assert [(count, track_id) for count, track_id, _ in utc] == [
+        (1, "2020-12-24-valid")
+    ]
+    assert [(count, track_id) for count, track_id, _ in new_york] == [
+        (1, "2020-12-24-valid")
+    ]
+
+    empty_database.execute(
+        "INSERT INTO track SELECT 'sample-' || samples.number, bicycle_id, source_date, "
+        "start_time, end_time, duration_s, points, range_m, slow_point_share, "
+        "mean_speed_mps, match_rate, matched_points, matched_length_m, "
+        "observed_length_m, inferred_length_m, inferred_share, path_breaks, "
+        "pieces, contraflow_points, trajectory FROM track "
+        "CROSS JOIN generate_series(1, 200) AS samples(number) "
+        "WHERE track_id = '2020-12-21-valid'"
+    )
+    crossing_bounds = wgs84_bounds(empty_database, 499999, 2699999, 500001, 2700001)
+    crossing_parameters = (
+        dict(zip(("west", "south", "east", "north"), crossing_bounds))
+        | transit_parameters
+    )
+    crossings = rows(empty_database, query, crossing_parameters)
+    assert len(crossings) == 200
+    assert {count for count, _, _ in crossings} == {201}
+    context = rows(
+        empty_database,
+        "SELECT ST_XMin(geometry_32650), ST_XMax(geometry_32650) "
+        f"FROM ({query}) result WHERE track_id = '2020-12-21-valid'",
+        crossing_parameters,
+    )
+    assert context == [(499990.0, 500010.0)]
+
+
+def test_flow_query_preserves_sparse_and_significance_semantics(
+    empty_database, tmp_path
+):
+    paths, labels_path = write_release_fixture(tmp_path / "inputs")
+    result = import_command(paths, labels_path, tmp_path / "artifacts", "flows")
+    assert result.returncode == 0, result.stderr
+    query = query_sql("flows.sql")
+    empty_database.execute(
+        "INSERT INTO flow_significance SELECT 'flow_channel', scope, 2, 1, "
+        "observed, null_mean, null_sd, z, p_normal, p_empirical, q, "
+        "is_significant, gated, false, null_model, reps, z_min, z_median, "
+        "days_significant FROM flow_significance WHERE matrix = 'flow_od' "
+        "AND scope = '2020-12-21' AND from_region = 1 AND to_region = 2"
+    )
+
+    day_od = rows(
+        empty_database,
+        query,
+        {"matrix": "flow_od", "source_date": "2020-12-22", "hour": 6},
+    )
+    assert day_od == [
+        (
+            "flow_od",
+            "2020-12-22",
+            6,
+            1,
+            2,
+            1.0,
+            True,
+            1,
+            False,
+            True,
+            False,
+        )
+    ]
+
+    day_od_self_loop = rows(
+        empty_database,
+        query,
+        {"matrix": "flow_od", "source_date": "2020-12-21", "hour": 6},
+    )[0]
+    assert day_od_self_loop[3:] == (1, 1, 0.0, True, 0, False, True, True)
+
+    untested_channel = rows(
+        empty_database,
+        query,
+        {"matrix": "flow_channel", "source_date": "2020-12-21", "hour": 6},
+    )
+    assert untested_channel == [
+        (
+            "flow_channel",
+            "2020-12-21",
+            6,
+            1,
+            2,
+            1.0,
+            False,
+            None,
+            None,
+            None,
+            None,
+        ),
+        (
+            "flow_channel",
+            "2020-12-21",
+            6,
+            2,
+            1,
+            0.0,
+            True,
+            1,
+            True,
+            False,
+            False,
+        ),
+    ]
+
+    empty_database.execute(
+        "DELETE FROM flow_od WHERE source_date IN "
+        "(DATE '2020-12-22', DATE '2020-12-25')"
+    )
+    empty_database.execute(
+        "UPDATE flow_od SET trips = CASE source_date "
+        "WHEN DATE '2020-12-21' THEN 4 WHEN DATE '2020-12-24' THEN 8 ELSE trips END"
+    )
+    empty_database.execute(
+        "UPDATE flow_significance SET observed = 999 "
+        "WHERE matrix = 'flow_od' AND scope = 'clear-days-stable'"
+    )
+    stable = rows(
+        empty_database,
+        query,
+        {"matrix": "flow_od", "source_date": None, "hour": 6},
+    )
+    assert stable[0][1:7] == ("clear-days-stable", 6, 1, 2, 3.0, True)
+    assert stable[0][7] == 999
+
+    assert rows(
+        empty_database,
+        "SELECT unlocks, pi_r FROM region_metric "
+        "WHERE source_date = DATE '2020-12-21' AND hour = 7 AND region_id = 2",
+    ) == [(0, None)]
 
 
 def test_import_requires_overwrite_and_rolls_back_a_copy_failure(
