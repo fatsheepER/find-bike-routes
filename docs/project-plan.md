@@ -114,7 +114,7 @@ flowchart LR
 | 大数据处理层 | PySpark 4.2、DataFrame/SQL、Parquet | 全量读取、字段规范化、轨迹切分、质量过滤、并行地图匹配、流网络与流矩阵聚合、PrefixSpan |
 | 空间与挖掘算法层 | osmium、Shapely、pyproj、NetworkX、Infomap、leidenalg | 路网抽取、HMM/Viterbi 匹配、网格流网络、社区检测、区域后处理、画像与零模型 |
 | 时空数据库层 | Docker Compose、PostgreSQL、PostGIS、MobilityDB | 轨迹时序对象、区域、流矩阵的存储与联机时空查询 |
-| 服务层 | FastAPI、Pydantic、psycopg | 参数校验、预计算产物分发、联机查询、GeoJSON 输出 |
+| 服务层 | FastAPI、Pydantic、psycopg | 参数校验、数据库只读查询、序列产物读取、GeoJSON 输出 |
 | 前端层 | Vue 3、TypeScript、Vite、Leaflet、ECharts | 三视图交互、双滑块、区域侧栏、弦图与方向玫瑰、框选联机查询 |
 | 验证层 | pytest、Spark 数据断言、前端类型检查与构建 | 数据契约、算法约束、API 与端到端演示场景 |
 
@@ -229,7 +229,7 @@ PrefixSpan 挖的是**允许跳过中间区域**的子序列，而地图匹配�
 
 ### 6.1 存储
 
-Parquet 运行产物及其内容摘要是唯一事实来源；MobilityDB 与预计算 GeoJSON 是同一冻结运行的只读发布副本。数据库只保留一个活动发布版，离线导入在单个事务中整库替换，失败则回滚；不做多版并存或增量更新。表结构用有序 SQL 管理，导入器用 `pyarrow` 读取现有产物、用 `psycopg` 批量写入，不引入 ORM 或迁移框架。
+Parquet 运行产物及其内容摘要是唯一事实来源；MobilityDB 是同一冻结运行的单版本只读发布副本。数据库只保留一个活动发布版，离线导入在单个事务中整库替换，失败则回滚；不做多版并存或增量更新。区域、片区、画像、流和轨迹由 Web API 直接查询数据库，不再生成预计算 GeoJSON。频繁区域序列不入库，API 继续读取现有 Parquet 产物并核对冻结划分摘要。表结构用有序 SQL 管理，导入器用 `pyarrow` 读取现有产物、用 `psycopg` 批量写入，不引入 ORM 或迁移框架。
 
 MobilityDB 只入库通过全部九条硬剔除的有效轨迹。五天实测为 76,958 条有效轨迹、2,119,826 个有效轨迹匹配点和 85,559 个匹配路径片段。`tgeompoint` 沿完整的地图匹配道路路径构造：根据观测点时间与路径偏移给道路顶点线性插值时间，路径断点切成多个 sequence，再合成 sequence set，不用直线跨过未知缺口。原始无时区时间按 `Asia/Shanghai` 解释为带时区时间，并单存当地 `source_date`。几何与 `tgeompoint` 仅存 EPSG:32650，对外输出时再转 EPSG:4326；`track.trajectory` 建 GiST 时空索引。
 
@@ -253,13 +253,15 @@ Docker Compose 固定使用 `mobilitydb/mobilitydb:16-3.5-1.3`，不用 `latest`
 
 | 接口 | 职责 |
 |---|---|
-| `GET /api/regions` | 区域 GeoJSON + 每日每时段指标 |
-| `GET /api/flows` | 出行流与通道流矩阵，关联 `flow_significance` 筛选显著流对；未选日期时由 `clear-days-stable` 决定成员，流量取当前时段四个晴天的每日均值 |
-| `GET /api/sequences` | PrefixSpan Top-N 频繁区域序列，读预计算产物、不入库，阈值是查询参数（默认 0.001） |
-| `POST /api/transits` | **联机时空查询**：框选区域 + 左闭右开时间窗，MobilityDB 返回窗内与框选范围相交的唯一有效轨迹数与示例轨迹 |
-| `GET /api/health` | API、数据库、预计算产物可用性 |
+| `GET /api/regions` | 直接查询区域、片区与每日每时段指标；一次返回全部 20 个指标切片、本岛边界、成图几何与地图锚点 |
+| `GET /api/flows` | 直接查询出行流或通道流并关联 `flow_significance`；未选日期时由 `clear-days-stable` 决定成员，流量取当前时段四个晴天的每日均值 |
+| `GET /api/sequences` | PrefixSpan Top-N 频繁区域序列，读取 Parquet、不入库；只返回达到连续支持度门槛且所有步骤相邻的模式 |
+| `POST /api/tracks/query` | **联机时空查询**：区域或矩形 + 左闭右开时间窗，MobilityDB 返回窗内与查询空间相交的唯一有效轨迹数与示例轨迹 |
+| `GET /api/health` | API、数据库、扩展、单行发布身份、本岛边界、序列产物与冻结划分摘要可用性 |
 
-全局图层走与数据库同发布版的预计算 GeoJSON 以保证响应速度；只有 `/api/transits` 打数据库。查询先把 `track.trajectory` 限制到时间窗，再判断与框选几何是否相交，按唯一 `TRACK_ID` 计数；几何最多返回 200 条时间窗内的完整匹配轨迹，保留框外上下文。
+空间数据仍以 GeoJSON 作为 WGS84 HTTP 响应格式，但不保存第二份 GeoJSON 发布物。`/api/regions`、`/api/flows` 与 `/api/tracks/query` 直接读取 MobilityDB；`/api/sequences` 读取现有 Parquet。首版不加缓存、压缩或额外聚合表，只有真实 HTTP 性能验收不达标时才针对瓶颈处理。
+
+轨迹查询支持两种互斥的查询空间：`region_id` 使用区域分析几何，矩形使用 WGS84 的 `west/south/east/north`。查询先把 `track.trajectory` 限制到时间窗，再判断与查询几何是否相交，按唯一 `TRACK_ID` 计数。结果包含纯经过、以查询空间为起点或终点、以及已知路径全部落在其中的轨迹，不做类型分类。几何最多返回 200 条时间窗内的完整匹配轨迹，保留查询空间外的上下文。
 
 未选日期的流视图不直接使用 `flow_significance.observed`：该字段是四个晴天的全天总和，与某一时段的单日流量不可比。此时 `clear-days-stable` 只筛出四天均显著的区域对，弧线与弦图权重由 API 对 `flow_od` 或 `flow_channel` 的当前时段求四个晴天的每日均值，某日缺少的稀疏键按 `0` 参与平均；不新增稳定集聚合流表。
 
@@ -270,7 +272,9 @@ Docker Compose 固定使用 `mobilitydb/mobilitydb:16-3.5-1.3`，不用 `latest`
 - **源汇地图**（主视图）：区域按净流填色；日期滑块（5 天）与时段滑块（6–10 点）；点击区域弹出侧栏，侧栏内含源汇数、`PI_r`、方向玫瑰、功能构成——画像类结论全部收进侧栏，不各占一页。
 - **区域间流动**：地图流弧线 + ECharts 弦图，可切换出行流/通道流，可只看显著流对。弦图按**片区**绘制，区域级流对走流弧线与列表。
 - **典型通勤链**：PrefixSpan Top-N 序列在地图上串珠展示。
-- **联机查询**：主视图上的框选操作，不单独占页。
+- **联机查询**：主视图上可选择一个区域或绘制矩形，不单独占页。
+
+本岛边界仍以 `config/xiamen-island.geojson` 为唯一来源。地图可活动范围取本岛外接矩形向四边各扩展其宽、高的 10%；初次加载按本岛范围适配缩放，视觉留白取地图容器短边的 4%，最少 24 px、最多 64 px。用户尚未操作地图时，容器尺寸变化可以重新适配；用户已经平移或缩放后不重置视图。矩形可以覆盖岛外水域，但必须完整落在地图可活动范围内，前端与 API 各校验一次。
 
 前端固定展示数据来源卡片：注明数据为 2020 年 12 月五个工作日早高峰（6:00–10:00），所有结论只代表该时段。局限性由产品显式声明，而非事后解释。
 
@@ -310,7 +314,7 @@ Docker Compose 固定使用 `mobilitydb/mobilitydb:16-3.5-1.3`，不用 `latest`
 - 频繁区域序列的跨天与雨天重合率完整报告。
 - PrefixSpan 报告支持度分布、不同阈值下的模式条数、Spark `minSupport` 的换算值、每条模式是否为连续子序列，以及每条模式按出发时段的支持度分解。
 - 净流入强度与“就业+教育类占比”的相关系数有具体数值。
-- 联机查询在本机 5 秒内返回；全局图层秒开。
+- 真实 HTTP 验收包含数据库查询、GeoJSON 转换、JSON 序列化与完整响应读取：区域、流、序列和健康接口各在本机 1 秒内返回；小框 15 分钟、中框 1 小时与大框 4 小时三组轨迹查询各在 5 秒内返回。
 - 前端完成三视图、双滑块、区域侧栏、弦图、方向玫瑰与框选联机查询。
 - 计划、`CONTEXT.md`、ADR、`config/baselines.json`、提示词、ticket、测试与提交之间可完成追溯。
 
