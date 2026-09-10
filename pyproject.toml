@@ -3,6 +3,7 @@ name = "find-bike-routes"
 version = "0.1.0"
 requires-python = ">=3.13,<3.14"
 dependencies = [
+    "fastapi>=0.141.1",
     "folium>=0.20.0",
     "igraph>=1.0.0",
     "infomap>=2.15.1",
@@ -23,6 +24,7 @@ dependencies = [
     "pyspark==4.2.0",
     "scikit-learn>=1.9.0",
     "shapely>=2.0",
+    "uvicorn>=0.52.4",
 ]
 
 [build-system]

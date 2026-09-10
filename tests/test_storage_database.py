@@ -632,21 +632,6 @@ def test_track_rows_reject_stale_matched_point_summary(tmp_path):
         list(_track_rows(prepared))
 
 
-@pytest.fixture(scope="module")
-def database():
-    dsn = os.getenv("MOBILITYDB_TEST_DSN")
-    if not dsn:
-        pytest.skip("set MOBILITYDB_TEST_DSN to a disposable empty MobilityDB database")
-    import psycopg
-
-    with psycopg.connect(dsn, autocommit=True) as connection:
-        for path in sorted((ROOT / "database" / "init").glob("*.sql")):
-            connection.execute(path.read_text(encoding="utf-8"))
-
-    with psycopg.connect(dsn, autocommit=True) as connection:
-        yield connection
-
-
 @pytest.fixture
 def empty_database(database):
     tables = ", ".join(TABLES)
