@@ -1,6 +1,17 @@
 <script setup lang="ts">
+import { init as initChart, type ECharts } from "echarts"
 import L, { type GeoJSON as LeafletGeoJSON, type LayerGroup, type Map as LeafletMap, type TileLayer } from "leaflet"
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import {
+  aggregateDistrictFlows,
+  aggregateFlows,
+  flowRequests,
+  topRegionFlows,
+  type AggregatedFlow,
+  type FlowMatrix,
+  type FlowSignificance,
+  type FlowSlice,
+} from "./flow-aggregation"
 import {
   aggregateRegion,
   type Aggregation,
@@ -9,7 +20,9 @@ import {
   type RegionSelection,
 } from "./region-aggregation"
 import {
+  aggregationNote,
   colorScaleLimit,
+  formatMetric,
   sourceSinkColor,
   sourceSinkLegend,
   sourceSinkTooltip,
@@ -57,6 +70,11 @@ const dateScope = ref<DateScope>("clear-days")
 const startHour = ref(6)
 const endHour = ref(10)
 const aggregation = ref<Aggregation>("average")
+const flowMatrix = ref<FlowMatrix>("od")
+const flowSignificance = ref<FlowSignificance>("significant")
+const flowStatus = ref<"idle" | "loading" | "ready" | "empty" | "error">("idle")
+const flowSlices = ref<FlowSlice[]>([])
+const selectedFlowKey = ref<string | null>(null)
 const sequenceSupport = ref<number>(0.001)
 const sequenceLimit = ref(20)
 const sequenceStatus = ref<"idle" | "loading" | "ready" | "empty" | "error">("idle")
@@ -83,12 +101,37 @@ const aggregatedRegions = computed(() =>
 )
 const sourceSinkLimit = computed(() => colorScaleLimit(aggregatedRegions.value))
 const sourceSinkLegendText = computed(() => sourceSinkLegend(sourceSinkLimit.value, selection.value))
+const aggregatedFlows = computed(() => aggregateFlows(flowSlices.value, {
+  dateScope: dateScope.value,
+  aggregation: aggregation.value,
+  significance: flowSignificance.value,
+}))
+const visibleFlows = computed(() => aggregatedFlows.value.filter(
+  (flow) => !flow.is_self_loop && flow.from_region !== flow.to_region,
+))
+const topFlows = computed(() => topRegionFlows(visibleFlows.value))
+const flowKey = (flow: Pick<AggregatedFlow, "from_region" | "to_region">) =>
+  `${flow.from_region}/${flow.to_region}`
+const currentFlow = computed(() =>
+  topFlows.value.find((flow) => flowKey(flow) === selectedFlowKey.value) ?? topFlows.value[0] ?? null,
+)
+const districtByRegion = computed(() => new Map(
+  regionContext.value?.regions.features.map((feature) => [
+    feature.properties.region_id,
+    feature.properties.district_id,
+  ]) ?? [],
+))
+const districtFlows = computed(() => aggregateDistrictFlows(visibleFlows.value, districtByRegion.value))
 
 let map: LeafletMap | null = null
 let tileLayer: TileLayer | null = null
 let regionLayer: LeafletGeoJSON | null = null
+let flowLayer: LayerGroup | null = null
 let sequenceLayer: LayerGroup | null = null
+let flowRequest: AbortController | null = null
 let sequenceRequest: AbortController | null = null
+let flowChart: ECharts | null = null
+const flowChartElement = ref<HTMLElement | null>(null)
 let resizeObserver: ResizeObserver | null = null
 let userAdjustedView = false
 let fittingView = false
@@ -187,6 +230,7 @@ function initializeMap(context: RegionContext): void {
   })
   resizeObserver.observe(mapElement.value)
   fitIsland()
+  drawFlows()
   drawSequences()
 }
 
@@ -195,6 +239,162 @@ function districtName(id: number): string {
     (feature) => feature.properties.district_id === id,
   )
   return String(district?.properties.label ?? id)
+}
+
+function regionCode(id: number): string {
+  const region = regionContext.value?.regions.features.find(
+    (feature) => feature.properties.region_id === id,
+  )
+  return region?.properties.region_code ?? String(id)
+}
+
+function regionDistrictName(id: number): string {
+  const districtId = districtByRegion.value.get(id)
+  return districtId === undefined ? "未知" : districtName(districtId)
+}
+
+function selectFlow(flow: AggregatedFlow, event?: L.LeafletMouseEvent): void {
+  if (event?.originalEvent) L.DomEvent.stopPropagation(event.originalEvent)
+  selectedFlowKey.value = flowKey(flow)
+}
+
+function flowArc(from: L.LatLngTuple, to: L.LatLngTuple): L.LatLngTuple[] {
+  const deltaLat = to[0] - from[0]
+  const deltaLng = to[1] - from[1]
+  const distance = Math.hypot(deltaLat, deltaLng)
+  if (distance === 0) return [from, to]
+  const bend = distance * 0.18
+  const middle: L.LatLngTuple = [
+    (from[0] + to[0]) / 2 + deltaLng / distance * bend,
+    (from[1] + to[1]) / 2 - deltaLat / distance * bend,
+  ]
+  return Array.from({ length: 17 }, (_, index) => {
+    const progress = index / 16
+    const remaining = 1 - progress
+    return [
+      remaining * remaining * from[0] + 2 * remaining * progress * middle[0] + progress * progress * to[0],
+      remaining * remaining * from[1] + 2 * remaining * progress * middle[1] + progress * progress * to[1],
+    ]
+  })
+}
+
+function drawFlows(): void {
+  flowLayer?.clearLayers()
+  if (
+    !map ||
+    layer.value !== "flows" ||
+    flowStatus.value !== "ready" ||
+    !regionContext.value
+  ) return
+
+  flowLayer ??= L.layerGroup().addTo(map)
+  const anchors = new Map(
+    regionContext.value.regions.features.flatMap((feature) => {
+      if (feature.properties.map_anchor?.type !== "Point") return []
+      const coordinates = feature.properties.map_anchor.coordinates
+      return [[feature.properties.region_id, [coordinates[1], coordinates[0]] as L.LatLngTuple] as const]
+    }),
+  )
+  const maximum = Math.max(...topFlows.value.map((flow) => flow.weight), 1)
+  for (const flow of topFlows.value) {
+    const from = anchors.get(flow.from_region)
+    const to = anchors.get(flow.to_region)
+    if (!from || !to) continue
+    const selected = flowKey(flow) === flowKey(currentFlow.value ?? flow)
+    const color = selected ? "#c2410c" : "#0369a1"
+    const weight = 1.5 + 5 * Math.sqrt(flow.weight / maximum)
+    L.polyline(flowArc(from, to), {
+      className: "flow-arc",
+      color,
+      opacity: selected ? 0.95 : 0.58,
+      weight,
+    })
+      .addTo(flowLayer)
+      .on("click", (event) => selectFlow(flow, event))
+
+    const rotation = Math.atan2(-(to[0] - from[0]), to[1] - from[1]) * 180 / Math.PI
+    L.marker(to, {
+      icon: L.divIcon({
+        className: "flow-arrow",
+        html: `<span style="color: ${color}; transform: rotate(${rotation}deg)">➤</span>`,
+      }),
+      interactive: true,
+    })
+      .addTo(flowLayer)
+      .on("click", (event) => selectFlow(flow, event))
+  }
+}
+
+async function loadFlows(): Promise<void> {
+  flowRequest?.abort()
+  const request = new AbortController()
+  flowRequest = request
+  flowStatus.value = "loading"
+  flowSlices.value = []
+  selectedFlowKey.value = null
+  const requests = flowRequests(
+    flowMatrix.value,
+    flowSignificance.value,
+    dateScope.value,
+    startHour.value,
+    endHour.value,
+  )
+  try {
+    const slices = await Promise.all(requests.map(async (item) => {
+      const response = await fetch(item.url, { signal: request.signal })
+      if (!response.ok) throw new Error("flow request failed")
+      const payload = (await response.json()) as { flows?: unknown }
+      if (!Array.isArray(payload.flows)) throw new Error("invalid flow response")
+      return { scope: item.scope, hour: item.hour, rows: payload.flows } as FlowSlice
+    }))
+    if (stopped || request !== flowRequest) return
+    flowSlices.value = slices
+    flowStatus.value = topRegionFlows(aggregateFlows(slices, {
+      dateScope: dateScope.value,
+      aggregation: aggregation.value,
+      significance: flowSignificance.value,
+    })).length ? "ready" : "empty"
+  } catch (problem) {
+    if (!stopped && request === flowRequest && (problem as Error).name !== "AbortError") {
+      flowStatus.value = "error"
+    }
+  }
+}
+
+function renderFlowChart(): void {
+  if (layer.value !== "flows" || flowStatus.value !== "ready" || !flowChartElement.value) {
+    flowChart?.dispose()
+    flowChart = null
+    return
+  }
+  flowChart ??= initChart(flowChartElement.value)
+  const districtIds = [...new Set(districtFlows.value.flatMap(
+    (flow) => [flow.from_district, flow.to_district],
+  ))]
+  const selectedDistricts = currentFlow.value && [
+    districtByRegion.value.get(currentFlow.value.from_region),
+    districtByRegion.value.get(currentFlow.value.to_region),
+  ]
+  flowChart.setOption({
+    tooltip: { trigger: "item" },
+    series: [{
+      type: "chord",
+      data: districtIds.map((id) => ({ id: String(id), name: districtName(id) })),
+      links: districtFlows.value.map((flow) => {
+        const selected = selectedDistricts?.[0] === flow.from_district && selectedDistricts[1] === flow.to_district
+        return {
+          source: String(flow.from_district),
+          target: String(flow.to_district),
+          value: flow.weight,
+          name: flow.is_internal ? "片区内部区域间流动" : `${districtName(flow.from_district)} → ${districtName(flow.to_district)}`,
+          lineStyle: selected ? { color: "#c2410c", opacity: 0.9 } : undefined,
+        }
+      }),
+      label: { show: true },
+      lineStyle: { color: "source", opacity: 0.45 },
+      emphasis: { focus: "adjacency" },
+    }],
+  })
 }
 
 function selectSequence(index: number, event?: L.LeafletMouseEvent): void {
@@ -318,6 +518,8 @@ function reset(): void {
   startHour.value = 6
   endHour.value = 10
   aggregation.value = "average"
+  flowMatrix.value = "od"
+  flowSignificance.value = "significant"
   sequenceSupport.value = 0.001
   sequenceLimit.value = 20
   userAdjustedView = false
@@ -335,6 +537,20 @@ watch([layer, dateScope, sequenceSupport, sequenceLimit], () => {
     selectedSequenceIndex.value = 0
   }
 })
+watch([layer, dateScope, startHour, endHour, flowMatrix, flowSignificance], () => {
+  if (layer.value === "flows") void loadFlows()
+  else {
+    flowRequest?.abort()
+    flowStatus.value = "idle"
+    flowSlices.value = []
+    selectedFlowKey.value = null
+  }
+})
+watch([layer, flowStatus, topFlows, currentFlow, regionContext], drawFlows)
+watch([layer, flowStatus, districtFlows, currentFlow, regionContext], async () => {
+  await nextTick()
+  renderFlowChart()
+}, { flush: "post" })
 watch([layer, sequenceStatus, sequenceResponse, selectedSequenceIndex, regionContext], drawSequences)
 
 onMounted(() => {
@@ -346,7 +562,9 @@ watch([layer, dateScope, startHour, endHour, aggregation], renderRegions)
 
 onBeforeUnmount(() => {
   stopped = true
+  flowRequest?.abort()
   sequenceRequest?.abort()
+  flowChart?.dispose()
   resizeObserver?.disconnect()
   map?.remove()
   map = null
@@ -421,6 +639,24 @@ onBeforeUnmount(() => {
           </select>
         </label>
 
+        <fieldset v-if="layer === 'flows'" class="flow-context">
+          <legend>流动上下文</legend>
+          <label>
+            矩阵
+            <select v-model="flowMatrix" aria-label="流矩阵">
+              <option value="od">出行流</option>
+              <option value="channel">通道流</option>
+            </select>
+          </label>
+          <label>
+            显著性
+            <select v-model="flowSignificance" aria-label="显著性">
+              <option value="significant">仅显著</option>
+              <option value="all">全部流对</option>
+            </select>
+          </label>
+        </fieldset>
+
         <button type="button" @click="reset">重置</button>
       </form>
     </header>
@@ -442,6 +678,53 @@ onBeforeUnmount(() => {
         </aside>
         <div id="map" ref="mapElement" />
       </section>
+
+      <aside v-if="layer === 'flows'" class="flow-panel" aria-label="区域间流动">
+        <h2>区域间流动</h2>
+        <p class="flow-scope">{{ aggregationNote(selection) }}</p>
+        <p v-if="flowStatus === 'loading'" role="status">正在加载区域流…</p>
+        <div v-else-if="flowStatus === 'error'" role="alert">
+          <p>区域流暂不可用，区域地图仍可查看。</p>
+          <button type="button" @click="loadFlows">重试</button>
+        </div>
+        <p v-else-if="flowStatus === 'empty'" role="status">当前条件下没有区域流。</p>
+        <template v-else-if="flowStatus === 'ready'">
+          <figure class="flow-chart-figure">
+            <div ref="flowChartElement" class="flow-chart" aria-label="片区流动弦图" />
+            <figcaption>片区弦图使用全部过滤后的非自环区域流。片区自连接表示不同区域之间的片区内部区域间流动。</figcaption>
+          </figure>
+          <h3>Top 50 区域流列表</h3>
+          <ol class="flow-list" aria-label="Top 50 区域流列表">
+            <li v-for="flow in topFlows" :key="flowKey(flow)">
+              <button
+                type="button"
+                :aria-current="flowKey(flow) === flowKey(currentFlow ?? flow) ? 'true' : undefined"
+                @click="selectFlow(flow)"
+              >
+                {{ regionCode(flow.from_region) }} → {{ regionCode(flow.to_region) }} · {{ formatMetric(flow.weight) }}（{{ aggregationNote(selection) }}）
+              </button>
+            </li>
+          </ol>
+          <dl v-if="currentFlow" class="flow-details" aria-label="所选流对详情">
+            <dt>矩阵</dt>
+            <dd>{{ currentFlow.matrix === "od" ? "出行流" : "通道流" }}</dd>
+            <dt>起终区域编码</dt>
+            <dd>{{ regionCode(currentFlow.from_region) }} → {{ regionCode(currentFlow.to_region) }}</dd>
+            <dt>起终片区</dt>
+            <dd>{{ regionDistrictName(currentFlow.from_region) }} → {{ regionDistrictName(currentFlow.to_region) }}</dd>
+            <dt>权重</dt>
+            <dd>{{ formatMetric(currentFlow.weight) }}</dd>
+            <dt>日期时段口径</dt>
+            <dd>{{ aggregationNote(selection) }}</dd>
+            <dt>已检验</dt>
+            <dd>{{ currentFlow.is_tested ? "是" : "否" }}</dd>
+            <dt>显著</dt>
+            <dd>{{ currentFlow.is_significant === null ? "未检验" : currentFlow.is_significant ? "是" : "否" }}</dd>
+            <dt>被门槛挡住</dt>
+            <dd>{{ currentFlow.gated ? "是" : "否" }}</dd>
+          </dl>
+        </template>
+      </aside>
 
       <aside v-if="layer === 'sequences'" class="sequence-panel" aria-label="典型通勤链">
         <h2>典型通勤链</h2>
