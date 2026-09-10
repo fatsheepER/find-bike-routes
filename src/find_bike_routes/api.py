@@ -18,8 +18,8 @@ import pyarrow.dataset as ds
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from psycopg.rows import dict_row
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from shapely.errors import ShapelyError
 from shapely.geometry import MultiPolygon, Polygon, shape
 
@@ -185,6 +185,56 @@ def create_app(
             status_code=500, content={"detail": "internal server error"}
         )
 
+    @app.get("/api/health")
+    def health() -> JSONResponse:
+        database, extensions, release = _read_database_health(app.state.dsn)
+        try:
+            boundary, _bounds = _read_boundary(app.state.boundary_path)
+            island_boundary = {
+                "status": "ok",
+                "geometry_type": boundary["geometry"]["type"],
+            }
+        except BoundaryUnavailable:
+            island_boundary = {"status": "unavailable"}
+
+        try:
+            sequence_digest, _threshold, _patterns = _read_sequences(
+                app.state.sequences_path,
+                "clear-days",
+                SupportLevel.LEVEL_001.value,
+                1,
+            )
+            sequences = {
+                "status": "ok",
+                "region_cells_digest": sequence_digest,
+            }
+        except SequencesUnavailable:
+            sequences = {"status": "unavailable"}
+
+        digest_match = {"status": "unavailable"}
+        if (
+            release["status"] == sequences["status"] == "ok"
+            and release["region_cells_digest"] == sequences["region_cells_digest"]
+        ):
+            digest_match = {"status": "ok"}
+
+        components = {
+            "database": database,
+            "extensions": extensions,
+            "dataset_release": release,
+            "island_boundary": island_boundary,
+            "sequences": sequences,
+            "digest_match": digest_match,
+        }
+        ready = all(component["status"] == "ok" for component in components.values())
+        return JSONResponse(
+            status_code=200 if ready else 503,
+            content={
+                "status": "ok" if ready else "unavailable",
+                "components": components,
+            },
+        )
+
     @app.get("/api/regions")
     def regions() -> dict[str, Any]:
         try:
@@ -213,7 +263,7 @@ def create_app(
     @app.get("/api/flows")
     def flows(
         matrix: Literal["od", "channel"],
-        hour: Literal[6, 7, 8, 9],
+        hour: Annotated[int, Query(ge=6, le=9)],
         date: Literal[
             "2020-12-21",
             "2020-12-22",
@@ -330,6 +380,8 @@ def _read_boundary(path: Path) -> tuple[dict[str, Any], dict[str, float]]:
     try:
         boundary = json.loads(path.read_text(encoding="utf-8"))
         json.dumps(boundary, allow_nan=False)
+        if "crs" in boundary:
+            raise TypeError
         geometry = shape(boundary["geometry"])
         if (
             not isinstance(geometry, (Polygon, MultiPolygon))
@@ -349,6 +401,8 @@ def _read_boundary(path: Path) -> tuple[dict[str, Any], dict[str, float]]:
     ) as problem:
         raise BoundaryUnavailable from problem
     west, south, east, north = geometry.bounds
+    if not (-180 <= west <= east <= 180 and -90 <= south <= north <= 90):
+        raise BoundaryUnavailable
     return boundary, {"west": west, "south": south, "east": east, "north": north}
 
 
@@ -417,6 +471,54 @@ def _read_release(dsn: str) -> tuple[str, str]:
     return release["release_digest"], release["region_cells_digest"]
 
 
+def _read_database_health(
+    dsn: str,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    unavailable = {"status": "unavailable"}
+    try:
+        with psycopg.connect(dsn, row_factory=dict_row) as connection:
+            connection.execute("SET TRANSACTION READ ONLY")
+            database = {"status": "ok"}
+            try:
+                extension_rows = connection.execute(
+                    "SELECT extname, extversion FROM pg_catalog.pg_extension "
+                    "WHERE extname IN ('postgis', 'mobilitydb')"
+                ).fetchall()
+                versions = {row["extname"]: row["extversion"] for row in extension_rows}
+                extensions = (
+                    {"status": "ok", "versions": versions}
+                    if versions.keys() >= {"postgis", "mobilitydb"}
+                    else unavailable
+                )
+            except psycopg.Error:
+                connection.rollback()
+                connection.execute("SET TRANSACTION READ ONLY")
+                extensions = unavailable
+            try:
+                releases = connection.execute(
+                    "SELECT release_digest, region_cells_digest "
+                    "FROM dataset_release LIMIT 2"
+                ).fetchall()
+            except psycopg.Error:
+                connection.rollback()
+                releases = []
+    except psycopg.Error:
+        return unavailable, unavailable, unavailable
+
+    release = unavailable
+    if (
+        len(releases) == 1
+        and isinstance(releases[0]["release_digest"], str)
+        and isinstance(releases[0]["region_cells_digest"], str)
+    ):
+        release = {
+            "status": "ok",
+            "release_digest": releases[0]["release_digest"],
+            "region_cells_digest": releases[0]["region_cells_digest"],
+        }
+    return database, extensions, release
+
+
 def _read_tracks(
     dsn: str, request: TrackQuery
 ) -> tuple[str, int, list[dict[str, Any]]]:
@@ -458,14 +560,7 @@ def _read_sequences(
     root: Path, scope: str, min_support: float, limit: int
 ) -> tuple[str, dict[str, int], list[dict[str, Any]]]:
     try:
-        patterns = ds.dataset(root / "sequence_patterns", format="parquet").to_table()
-        scan = ds.dataset(root / "sequence_support_scan", format="parquet").to_table()
-        if not PATTERN_COLUMNS.issubset(patterns.column_names):
-            raise SequencesUnavailable
-        if not SCAN_COLUMNS.issubset(scan.column_names):
-            raise SequencesUnavailable
-        params = json.loads((root / "params.json").read_text(encoding="utf-8"))
-        digest = params["region_cells_digest"]
+        patterns, scan, digest = _read_sequence_products(root)
         thresholds = [
             row
             for row in scan.select(sorted(SCAN_COLUMNS)).to_pylist()
@@ -500,6 +595,30 @@ def _read_sequences(
             for row in selected[:limit]
         ]
         return digest, threshold, payload
+    except (
+        SequencesUnavailable,
+        OSError,
+        ValueError,
+        TypeError,
+        KeyError,
+        pa.ArrowException,
+    ) as problem:
+        raise SequencesUnavailable from problem
+
+
+def _read_sequence_products(root: Path) -> tuple[pa.Table, pa.Table, str]:
+    try:
+        patterns = ds.dataset(root / "sequence_patterns", format="parquet").to_table()
+        scan = ds.dataset(root / "sequence_support_scan", format="parquet").to_table()
+        if not PATTERN_COLUMNS.issubset(patterns.column_names):
+            raise SequencesUnavailable
+        if not SCAN_COLUMNS.issubset(scan.column_names):
+            raise SequencesUnavailable
+        params = json.loads((root / "params.json").read_text(encoding="utf-8"))
+        digest = params["region_cells_digest"]
+        if not isinstance(digest, str):
+            raise SequencesUnavailable
+        return patterns, scan, digest
     except (
         OSError,
         ValueError,
