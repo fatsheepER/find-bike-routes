@@ -7,7 +7,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -20,6 +20,7 @@ from .geography import BOUNDARY_PATH
 
 
 SEQUENCES_PATH = Path(__file__).resolve().parents[2] / "data/processed/region_sequences"
+FLOWS_SQL_PATH = Path(__file__).resolve().parents[2] / "database/queries/flows.sql"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -104,6 +105,25 @@ def create_app(
             "regions": _region_collection(region_rows, metrics),
         }
 
+    @app.get("/api/flows")
+    def flows(
+        matrix: Literal["od", "channel"],
+        hour: Literal[6, 7, 8, 9],
+        date: Literal[
+            "2020-12-21",
+            "2020-12-22",
+            "2020-12-23",
+            "2020-12-24",
+            "2020-12-25",
+        ]
+        | None = None,
+    ) -> dict[str, Any]:
+        try:
+            release_digest, rows = _read_flows(app.state.dsn, matrix, hour, date)
+        except psycopg.Error:
+            raise HTTPException(status_code=503, detail="database unavailable") from None
+        return {"release_digest": release_digest, "flows": rows}
+
     return app
 
 
@@ -158,6 +178,32 @@ def _read_region_context(
         regions = connection.execute(REGIONS_SQL).fetchall()
         metrics = connection.execute(METRICS_SQL).fetchall()
     return release["release_digest"], districts, regions, metrics
+
+
+def _read_flows(
+    dsn: str,
+    matrix: Literal["od", "channel"],
+    hour: int,
+    source_date: str | None,
+) -> tuple[str, list[dict[str, Any]]]:
+    query = FLOWS_SQL_PATH.read_text(encoding="utf-8")
+    database_matrix = {"od": "flow_od", "channel": "flow_channel"}[matrix]
+    with psycopg.connect(dsn, row_factory=dict_row) as connection:
+        connection.execute("SET TRANSACTION READ ONLY")
+        release_digest = connection.execute(
+            "SELECT release_digest FROM dataset_release WHERE singleton"
+        ).fetchone()
+        if release_digest is None:
+            raise psycopg.DatabaseError("dataset release is unavailable")
+        rows = connection.execute(
+            query,
+            {
+                "matrix": database_matrix,
+                "source_date": source_date,
+                "hour": hour,
+            },
+        ).fetchall()
+    return release_digest["release_digest"], [row | {"matrix": matrix} for row in rows]
 
 
 def _district_collection(rows: list[dict[str, Any]]) -> dict[str, Any]:
