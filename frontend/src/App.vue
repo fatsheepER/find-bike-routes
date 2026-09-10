@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import L, { type Map as LeafletMap, type TileLayer } from "leaflet"
-import { computed, onBeforeUnmount, onMounted, ref } from "vue"
+import L, { type LayerGroup, type Map as LeafletMap, type TileLayer } from "leaflet"
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
 
 type Layer = "source-sink" | "flows" | "sequences"
 type DateScope =
@@ -12,7 +12,11 @@ type DateScope =
   | "2020-12-25"
 type Aggregation = "average" | "sum"
 type Bounds = { west: number; south: number; east: number; north: number }
-type FeatureCollection = { type: "FeatureCollection"; features: object[] }
+type MapFeature = {
+  properties: Record<string, unknown>
+  geometry: object
+}
+type FeatureCollection = { type: "FeatureCollection"; features: MapFeature[] }
 type RegionContext = {
   release_digest: string
   island_boundary: object
@@ -21,6 +25,23 @@ type RegionContext = {
   districts: FeatureCollection
   regions: FeatureCollection
 }
+type SequencePattern = {
+  region_ids: number[]
+  region_codes: string[]
+  district_ids: number[]
+  length: number
+  support: number
+  contiguous_support: number
+}
+type SequenceResponse = {
+  scope: DateScope
+  min_contiguous_support: number
+  min_contiguous_support_count: number
+  valid_tracks: number
+  limit: number
+  patterns: SequencePattern[]
+}
+const SUPPORT_LEVELS = [0.0002, 0.0005, 0.001, 0.002, 0.005, 0.01] as const
 const HEALTH_COMPONENTS = [
   ["database", "数据库"],
   ["extensions", "空间扩展"],
@@ -35,6 +56,14 @@ const dateScope = ref<DateScope>("clear-days")
 const startHour = ref(6)
 const endHour = ref(10)
 const aggregation = ref<Aggregation>("average")
+const sequenceSupport = ref<number>(0.001)
+const sequenceLimit = ref(20)
+const sequenceStatus = ref<"idle" | "loading" | "ready" | "empty" | "error">("idle")
+const sequenceResponse = ref<SequenceResponse | null>(null)
+const selectedSequenceIndex = ref(0)
+const currentSequence = computed(
+  () => sequenceResponse.value?.patterns[selectedSequenceIndex.value] ?? null,
+)
 const analysisControlsDisabled = computed(() => layer.value === "sequences")
 const mapElement = ref<HTMLElement | null>(null)
 const regionContext = ref<RegionContext | null>(null)
@@ -45,6 +74,8 @@ const basemapAvailable = ref(true)
 
 let map: LeafletMap | null = null
 let tileLayer: TileLayer | null = null
+let sequenceLayer: LayerGroup | null = null
+let sequenceRequest: AbortController | null = null
 let resizeObserver: ResizeObserver | null = null
 let userAdjustedView = false
 let fittingView = false
@@ -110,6 +141,93 @@ function initializeMap(context: RegionContext): void {
   })
   resizeObserver.observe(mapElement.value)
   fitIsland()
+  drawSequences()
+}
+
+function districtName(id: number): string {
+  const district = regionContext.value?.districts.features.find(
+    (feature) => feature.properties.district_id === id,
+  )
+  return String(district?.properties.label ?? id)
+}
+
+function selectSequence(index: number, event?: L.LeafletMouseEvent): void {
+  if (event?.originalEvent) L.DomEvent.stopPropagation(event.originalEvent)
+  selectedSequenceIndex.value = index
+}
+
+function drawSequences(): void {
+  sequenceLayer?.clearLayers()
+  if (
+    !map ||
+    layer.value !== "sequences" ||
+    sequenceStatus.value !== "ready" ||
+    !sequenceResponse.value ||
+    !regionContext.value
+  ) return
+
+  sequenceLayer ??= L.layerGroup().addTo(map)
+  const anchors = new Map(
+    regionContext.value.regions.features.map((feature) => {
+      const coordinates = (feature.properties.map_anchor as { coordinates: [number, number] }).coordinates
+      return [Number(feature.properties.region_id), [coordinates[1], coordinates[0]] as L.LatLngTuple]
+    }),
+  )
+  sequenceResponse.value.patterns.forEach((pattern, index) => {
+    const positions = pattern.region_ids.map((id) => anchors.get(id)).filter((point) => point !== undefined)
+    if (positions.length !== pattern.region_ids.length) return
+    const selected = index === selectedSequenceIndex.value
+    L.polyline(positions, {
+      color: selected ? "#c2410c" : "#64748b",
+      opacity: selected ? 1 : 0.35,
+      weight: selected ? 5 : 2,
+    })
+      .addTo(sequenceLayer!)
+      .on("click", (event) => selectSequence(index, event))
+    positions.forEach((position) => {
+      L.circleMarker(position, {
+        color: selected ? "#9a3412" : "#64748b",
+        fillColor: selected ? "#fb923c" : "#cbd5e1",
+        fillOpacity: selected ? 1 : 0.5,
+        radius: selected ? 6 : 4,
+        weight: 2,
+      })
+        .addTo(sequenceLayer!)
+        .on("click", (event) => selectSequence(index, event))
+    })
+  })
+}
+
+async function loadSequences(): Promise<void> {
+  sequenceRequest?.abort()
+  const request = new AbortController()
+  sequenceRequest = request
+  sequenceStatus.value = "loading"
+  sequenceResponse.value = null
+  selectedSequenceIndex.value = 0
+  const query = new URLSearchParams({
+    scope: dateScope.value,
+    min_contiguous_support: String(sequenceSupport.value),
+    limit: String(sequenceLimit.value),
+  })
+  try {
+    const response = await fetch(`/api/sequences?${query}`, { signal: request.signal })
+    if (!response.ok) throw new Error("sequence request failed")
+    const payload = (await response.json()) as SequenceResponse
+    if (!Array.isArray(payload.patterns)) throw new Error("invalid sequence response")
+    if (stopped || request !== sequenceRequest) return
+    sequenceResponse.value = payload
+    sequenceStatus.value = payload.patterns.length ? "ready" : "empty"
+  } catch (problem) {
+    if (!stopped && request === sequenceRequest && (problem as Error).name !== "AbortError") {
+      sequenceStatus.value = "error"
+    }
+  }
+}
+
+function setSequenceLimit(event: Event): void {
+  const value = Math.trunc(Number((event.target as HTMLInputElement).value))
+  sequenceLimit.value = Number.isFinite(value) ? Math.min(100, Math.max(1, value)) : 20
 }
 
 async function loadRegions(): Promise<void> {
@@ -154,11 +272,24 @@ function reset(): void {
   startHour.value = 6
   endHour.value = 10
   aggregation.value = "average"
+  sequenceSupport.value = 0.001
+  sequenceLimit.value = 20
   userAdjustedView = false
   fitIsland()
   if (regionStatus.value === "error") void loadRegions()
   if (healthStatus.value === "unavailable") void loadHealth()
 }
+
+watch([layer, dateScope, sequenceSupport, sequenceLimit], () => {
+  if (layer.value === "sequences") void loadSequences()
+  else {
+    sequenceRequest?.abort()
+    sequenceStatus.value = "idle"
+    sequenceResponse.value = null
+    selectedSequenceIndex.value = 0
+  }
+})
+watch([layer, sequenceStatus, sequenceResponse, selectedSequenceIndex, regionContext], drawSequences)
 
 onMounted(() => {
   void loadRegions()
@@ -167,6 +298,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   stopped = true
+  sequenceRequest?.abort()
   resizeObserver?.disconnect()
   map?.remove()
   map = null
@@ -244,15 +376,77 @@ onBeforeUnmount(() => {
       </form>
     </header>
 
-    <section class="map-panel" aria-label="业务地图">
-      <p v-if="regionStatus === 'loading'" class="map-status" role="status">正在加载区域地图…</p>
-      <div v-if="regionStatus === 'error'" class="map-status" role="alert">
-        <p>区域地图暂不可用。</p>
-        <button type="button" @click="loadRegions">重试</button>
-      </div>
-      <p v-if="regionStatus === 'empty'" class="map-status" role="status">区域数据为空，共 0 个区域。</p>
-      <p v-if="!basemapAvailable" class="basemap-status" role="status">外部底图不可用，本地业务地图仍可查看。</p>
-      <div id="map" ref="mapElement" />
+    <section class="workspace">
+      <section class="map-panel" aria-label="业务地图">
+        <p v-if="regionStatus === 'loading'" class="map-status" role="status">正在加载区域地图…</p>
+        <div v-if="regionStatus === 'error'" class="map-status" role="alert">
+          <p>区域地图暂不可用。</p>
+          <button type="button" @click="loadRegions">重试</button>
+        </div>
+        <p v-if="regionStatus === 'empty'" class="map-status" role="status">区域数据为空，共 0 个区域。</p>
+        <p v-if="!basemapAvailable" class="basemap-status" role="status">外部底图不可用，本地业务地图仍可查看。</p>
+        <div id="map" ref="mapElement" />
+      </section>
+
+      <aside v-if="layer === 'sequences'" class="sequence-panel" aria-label="典型通勤链">
+        <h2>典型通勤链</h2>
+        <label>
+          连续支持度门槛
+          <select v-model.number="sequenceSupport" aria-label="连续支持度门槛">
+            <option v-for="level in SUPPORT_LEVELS" :key="level" :value="level">{{ level }}</option>
+          </select>
+        </label>
+        <label>
+          Top-N
+          <input
+            :value="sequenceLimit"
+            aria-label="Top-N"
+            type="number"
+            min="1"
+            max="100"
+            step="1"
+            @change="setSequenceLimit"
+          />
+        </label>
+        <p v-if="sequenceStatus === 'loading'" role="status">正在加载通勤链…</p>
+        <div v-else-if="sequenceStatus === 'error'" role="alert">
+          <p>通勤链暂不可用，区域地图仍可查看。</p>
+          <button type="button" @click="loadSequences">重试</button>
+        </div>
+        <p v-else-if="sequenceStatus === 'empty'" role="status">当前条件下没有通勤链。</p>
+        <template v-else-if="sequenceResponse">
+          <ol class="sequence-list">
+            <li v-for="(pattern, index) in sequenceResponse.patterns" :key="pattern.region_ids.join('-')">
+              <button
+                type="button"
+                :aria-current="index === selectedSequenceIndex ? 'true' : undefined"
+                @click="selectSequence(index)"
+              >
+                {{ pattern.region_codes.join(" → ") }}
+              </button>
+            </li>
+          </ol>
+          <dl v-if="currentSequence" class="sequence-details">
+            <dt>区域编码</dt>
+            <dd>{{ currentSequence.region_codes.join(" → ") }}</dd>
+            <dt>所属片区</dt>
+            <dd>{{ currentSequence.district_ids.map(districtName).join(" → ") }}</dd>
+            <dt>长度</dt>
+            <dd>{{ currentSequence.length }}</dd>
+            <dt>支持度（区域序列条数）</dt>
+            <dd>{{ currentSequence.support }}</dd>
+            <dt>连续支持度</dt>
+            <dd>{{ currentSequence.contiguous_support }}</dd>
+            <dt>绝对连续支持度门槛</dt>
+            <dd>{{ sequenceResponse.min_contiguous_support_count }}</dd>
+            <dt>有效轨迹分母</dt>
+            <dd>{{ sequenceResponse.valid_tracks }}</dd>
+          </dl>
+          <p class="sequence-note">
+            支持度按含该模式的区域序列条数计算，同一条序列内重复出现只计一次；一条有效轨迹可能贡献多条区域序列。绘图资格使用 API 已审计的连续支持度与区域相邻性，不受跨日平均或合计影响。
+          </p>
+        </template>
+      </aside>
     </section>
 
     <footer>
