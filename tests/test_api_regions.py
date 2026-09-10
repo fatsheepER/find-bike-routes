@@ -131,10 +131,10 @@ def region_release(database):
                         int(active),
                         1.0 if active else None,
                         int(active),
-                        float(active),
-                        0.0,
-                        float(active),
-                        0.0,
+                        0.125 if active else 0.0,
+                        -0.25 if active else 0.0,
+                        0.375 if active else 0.0,
+                        -0.5 if active else 0.0,
                         1.0 if active else None,
                         1.0 if active else None,
                         0.0 if active else None,
@@ -220,6 +220,28 @@ def test_regions_returns_complete_deterministic_map_context(region_release, tmp_
     } == properties
     metrics = properties["metrics"]
     assert len(metrics) == 20
+    assert set(metrics[0]) == {
+        "date",
+        "hour",
+        "unlocks",
+        "locks",
+        "net_inflow",
+        "net_inflow_per_km2",
+        "order_events_per_km2",
+        "tracks_visiting",
+        "tracks_transit",
+        "pi_r",
+        "chords",
+        "sum_cos",
+        "sum_sin",
+        "sum_cos2",
+        "sum_sin2",
+        "r",
+        "r_axial",
+        "mean_bearing_deg",
+        "axis_bearing_deg",
+        "sectors",
+    }
     assert [(row["date"], row["hour"]) for row in metrics] == sorted(
         (row["date"], row["hour"]) for row in metrics
     )
@@ -228,8 +250,25 @@ def test_regions_returns_complete_deterministic_map_context(region_release, tmp_
     assert metrics[4]["pi_r"] is None
     assert metrics[4]["r"] is None
     assert metrics[4]["mean_bearing_deg"] is None
+    assert {
+        key: metrics[0][key]
+        for key in ("sum_cos", "sum_sin", "sum_cos2", "sum_sin2")
+    } == {
+        "sum_cos": 0.125,
+        "sum_sin": -0.25,
+        "sum_cos2": 0.375,
+        "sum_sin2": -0.5,
+    }
+    assert {
+        key: metrics[4][key]
+        for key in ("sum_cos", "sum_sin", "sum_cos2", "sum_sin2")
+    } == {
+        "sum_cos": 0.0,
+        "sum_sin": 0.0,
+        "sum_cos2": 0.0,
+        "sum_sin2": 0.0,
+    }
     assert metrics[0]["sectors"] == [1] + [0] * 15
-    assert not ({"sum_cos", "sum_sin", "sum_cos2", "sum_sin2"} & metrics[0].keys())
 
 
 def test_regions_returns_safe_dependency_and_server_errors(tmp_path):
