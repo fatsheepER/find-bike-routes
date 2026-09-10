@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from collections import defaultdict
+from datetime import datetime, time, timedelta
 from enum import Enum
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -14,15 +16,19 @@ import psycopg
 import pyarrow as pa
 import pyarrow.dataset as ds
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from psycopg.rows import dict_row
 from shapely.errors import ShapelyError
 from shapely.geometry import MultiPolygon, Polygon, shape
 
+from .config import STUDY_DATES
 from .geography import BOUNDARY_PATH
 
 SEQUENCES_PATH = Path(__file__).resolve().parents[2] / "data/processed/region_sequences"
 FLOWS_SQL_PATH = Path(__file__).resolve().parents[2] / "database/queries/flows.sql"
+TRACKS_SQL_PATH = Path(__file__).resolve().parents[2] / "database/queries/tracks.sql"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -32,6 +38,63 @@ class BoundaryUnavailable(Exception):
 
 class SequencesUnavailable(Exception):
     pass
+
+
+class RegionNotFound(Exception):
+    pass
+
+
+class RegionSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["region"]
+    region_id: Annotated[int, Field(strict=True, gt=0)]
+
+
+class BoundsSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    type: Literal["bounds"]
+    west: Annotated[float, Field(strict=True)]
+    south: Annotated[float, Field(strict=True)]
+    east: Annotated[float, Field(strict=True)]
+    north: Annotated[float, Field(strict=True)]
+
+    @model_validator(mode="after")
+    def ordered(self) -> BoundsSelection:
+        if self.west >= self.east or self.south >= self.north:
+            raise ValueError("bounds must be ordered west to east and south to north")
+        return self
+
+
+class TrackQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    selection: Annotated[RegionSelection | BoundsSelection, Field(discriminator="type")]
+    start: datetime
+    end: datetime
+    sample_limit: Annotated[int, Field(strict=True, ge=0, le=200)] = 20
+
+    @field_validator("start", "end", mode="before")
+    @classmethod
+    def exact_shanghai_rfc3339(cls, value: Any) -> Any:
+        if not isinstance(value, str) or re.fullmatch(
+            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?\+08:00", value
+        ) is None:
+            raise ValueError("timestamp must be RFC 3339 with the +08:00 offset")
+        return value
+
+    @model_validator(mode="after")
+    def study_window(self) -> TrackQuery:
+        if self.start.date() != self.end.date() or self.start.date() not in STUDY_DATES:
+            raise ValueError("timestamps must use one study date")
+        opens = datetime.combine(self.start.date(), time(6), self.start.tzinfo)
+        closes = datetime.combine(self.start.date(), time(10), self.start.tzinfo)
+        if not opens <= self.start < self.end <= closes:
+            raise ValueError("time window must be within 06:00 to 10:00")
+        if self.end - self.start > timedelta(hours=4):
+            raise ValueError("time window cannot exceed four hours")
+        return self
 
 
 SequenceScope = Literal[
@@ -204,6 +267,62 @@ def create_app(
             "patterns": patterns,
         }
 
+    @app.post("/api/tracks/query")
+    def tracks(request: TrackQuery) -> dict[str, Any]:
+        if isinstance(request.selection, BoundsSelection):
+            try:
+                _boundary, island_bounds = _read_boundary(app.state.boundary_path)
+            except BoundaryUnavailable:
+                raise HTTPException(
+                    status_code=503, detail="island boundary unavailable"
+                ) from None
+            bounds = _padded_bounds(island_bounds)
+            selection = request.selection
+            if not (
+                bounds["west"] <= selection.west < selection.east <= bounds["east"]
+                and bounds["south"]
+                <= selection.south
+                < selection.north
+                <= bounds["north"]
+            ):
+                raise RequestValidationError(
+                    [
+                        {
+                            "type": "value_error",
+                            "loc": ("body", "selection"),
+                            "msg": "Value error, bounds outside map bounds",
+                            "input": selection.model_dump(),
+                        }
+                    ],
+                    body=request.model_dump(mode="json"),
+                )
+        try:
+            release_digest, total_count, samples = _read_tracks(
+                app.state.dsn, request
+            )
+        except RegionNotFound:
+            raise HTTPException(status_code=404, detail="region not found") from None
+        except psycopg.Error:
+            raise HTTPException(
+                status_code=503, detail="database unavailable"
+            ) from None
+        return {
+            "release_digest": release_digest,
+            "total_count": total_count,
+            "samples": {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "id": row["track_id"],
+                        "geometry": json.loads(row["geometry"]),
+                        "properties": {"track_id": row["track_id"]},
+                    }
+                    for row in samples
+                ],
+            },
+        }
+
     return app
 
 
@@ -296,6 +415,43 @@ def _read_release(dsn: str) -> tuple[str, str]:
         if release is None:
             raise psycopg.DatabaseError("dataset release is unavailable")
     return release["release_digest"], release["region_cells_digest"]
+
+
+def _read_tracks(
+    dsn: str, request: TrackQuery
+) -> tuple[str, int, list[dict[str, Any]]]:
+    query = TRACKS_SQL_PATH.read_text(encoding="utf-8")
+    selection = request.selection
+    parameters = {
+        "selection_type": selection.type,
+        "region_id": selection.region_id if isinstance(selection, RegionSelection) else None,
+        "west": selection.west if isinstance(selection, BoundsSelection) else None,
+        "south": selection.south if isinstance(selection, BoundsSelection) else None,
+        "east": selection.east if isinstance(selection, BoundsSelection) else None,
+        "north": selection.north if isinstance(selection, BoundsSelection) else None,
+        "source_date": request.start.date(),
+        "start": request.start,
+        "end": request.end,
+        "sample_limit": request.sample_limit,
+    }
+    with psycopg.connect(dsn, row_factory=dict_row) as connection:
+        connection.execute("SET TRANSACTION READ ONLY")
+        release = connection.execute(
+            "SELECT release_digest FROM dataset_release WHERE singleton"
+        ).fetchone()
+        if release is None:
+            raise psycopg.DatabaseError("dataset release is unavailable")
+        if isinstance(selection, RegionSelection):
+            exists = connection.execute(
+                "SELECT EXISTS(SELECT 1 FROM region WHERE region_id = %s)",
+                (selection.region_id,),
+            ).fetchone()
+            if exists is None or not exists["exists"]:
+                raise RegionNotFound
+        rows = connection.execute(query, parameters).fetchall()
+    return release["release_digest"], rows[0]["total_count"], [
+        row for row in rows if row["track_id"] is not None
+    ]
 
 
 def _read_sequences(

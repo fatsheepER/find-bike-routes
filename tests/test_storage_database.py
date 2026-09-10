@@ -984,7 +984,7 @@ def test_import_publishes_the_frozen_release_and_same_digest_is_a_no_op(
     ]
 
 
-def test_transit_query_restricts_time_before_space_and_returns_limited_context(
+def test_track_query_restricts_time_before_space_and_returns_limited_context(
     empty_database, tmp_path
 ):
     paths, labels_path = write_release_fixture(tmp_path / "inputs")
@@ -1029,10 +1029,13 @@ def test_transit_query_restricts_time_before_space_and_returns_limited_context(
             (start, end, trajectory, track_id),
         )
 
-    query = query_sql("transits.sql")
-    transit_parameters = {
-        "start_local": "2020-12-21 06:00:00",
-        "end_local": "2020-12-21 06:20:00",
+    query = query_sql("tracks.sql")
+    track_parameters = {
+        "selection_type": "bounds",
+        "region_id": None,
+        "source_date": "2020-12-21",
+        "start": "2020-12-21 06:00:00+08",
+        "end": "2020-12-21 06:20:00+08",
         "sample_limit": 500,
     }
     gap_bounds = wgs84_bounds(empty_database, 499999, 2700099, 500001, 2700101)
@@ -1040,10 +1043,11 @@ def test_transit_query_restricts_time_before_space_and_returns_limited_context(
         empty_database,
         query,
         dict(zip(("west", "south", "east", "north"), gap_bounds))
-        | transit_parameters
+        | track_parameters
         | {
-            "start_local": "2020-12-22 06:00:00",
-            "end_local": "2020-12-22 06:30:00",
+            "source_date": "2020-12-22",
+            "start": "2020-12-22 06:00:00+08",
+            "end": "2020-12-22 06:30:00+08",
         },
     )
     assert [(count, track_id) for count, track_id, _ in gap_result] == [(0, None)]
@@ -1051,10 +1055,11 @@ def test_transit_query_restricts_time_before_space_and_returns_limited_context(
     boundary_bounds = wgs84_bounds(empty_database, 499999, 2700199, 500002, 2700201)
     boundary_parameters = (
         dict(zip(("west", "south", "east", "north"), boundary_bounds))
-        | transit_parameters
+        | track_parameters
         | {
-            "start_local": "2020-12-24 06:00:00",
-            "end_local": "2020-12-25 10:00:00",
+            "source_date": "2020-12-24",
+            "start": "2020-12-24 06:00:00+08",
+            "end": "2020-12-24 10:00:00+08",
         }
     )
     try:
@@ -1083,7 +1088,7 @@ def test_transit_query_restricts_time_before_space_and_returns_limited_context(
     crossing_bounds = wgs84_bounds(empty_database, 499999, 2699999, 500001, 2700001)
     crossing_parameters = (
         dict(zip(("west", "south", "east", "north"), crossing_bounds))
-        | transit_parameters
+        | track_parameters
     )
     crossings = rows(empty_database, query, crossing_parameters)
     assert len(crossings) == 200
@@ -1100,11 +1105,13 @@ def test_transit_query_restricts_time_before_space_and_returns_limited_context(
     assert "track_trajectory_gist" in "\n".join(line for line, in plan)
     context = rows(
         empty_database,
-        "SELECT ST_XMin(geometry_32650), ST_XMax(geometry_32650) "
-        f"FROM ({query}) result WHERE track_id = '2020-12-21-valid'",
+        "SELECT ST_XMin(projected), ST_XMax(projected) FROM ("
+        "SELECT ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(geometry), 4326), 32650) "
+        f"AS projected FROM ({query}) result "
+        "WHERE track_id = '2020-12-21-valid') context",
         crossing_parameters,
     )
-    assert context == [(499990.0, 500010.0)]
+    assert context[0] == pytest.approx((499990.0, 500010.0), abs=0.01)
 
 
 def test_flow_query_preserves_sparse_and_significance_semantics(
