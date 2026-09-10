@@ -1,25 +1,30 @@
 <script setup lang="ts">
-import L, { type Map as LeafletMap, type TileLayer } from "leaflet"
-import { computed, onBeforeUnmount, onMounted, ref } from "vue"
+import L, { type GeoJSON as LeafletGeoJSON, type Map as LeafletMap, type TileLayer } from "leaflet"
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import {
+  aggregateRegion,
+  type Aggregation,
+  type DateScope,
+  type RegionFeature,
+  type RegionSelection,
+} from "./region-aggregation"
+import {
+  colorScaleLimit,
+  sourceSinkColor,
+  sourceSinkLegend,
+  sourceSinkTooltip,
+} from "./source-sink-layer"
 
 type Layer = "source-sink" | "flows" | "sequences"
-type DateScope =
-  | "clear-days"
-  | "2020-12-21"
-  | "2020-12-22"
-  | "2020-12-23"
-  | "2020-12-24"
-  | "2020-12-25"
-type Aggregation = "average" | "sum"
 type Bounds = { west: number; south: number; east: number; north: number }
-type FeatureCollection = { type: "FeatureCollection"; features: object[] }
+type DistrictFeature = GeoJSON.Feature<GeoJSON.Geometry, { district_id: number; label: string }>
 type RegionContext = {
   release_digest: string
   island_boundary: object
   island_bounds: Bounds
   map_bounds: Bounds
-  districts: FeatureCollection
-  regions: FeatureCollection
+  districts: { type: "FeatureCollection"; features: DistrictFeature[] }
+  regions: { type: "FeatureCollection"; features: RegionFeature[] }
 }
 const HEALTH_COMPONENTS = [
   ["database", "数据库"],
@@ -36,15 +41,27 @@ const startHour = ref(6)
 const endHour = ref(10)
 const aggregation = ref<Aggregation>("average")
 const analysisControlsDisabled = computed(() => layer.value === "sequences")
+const selection = computed<RegionSelection>(() => ({
+  dateScope: dateScope.value,
+  startHour: startHour.value,
+  endHour: endHour.value,
+  aggregation: aggregation.value,
+}))
 const mapElement = ref<HTMLElement | null>(null)
 const regionContext = ref<RegionContext | null>(null)
 const regionStatus = ref<"loading" | "ready" | "empty" | "error">("loading")
 const healthStatus = ref<"loading" | "ok" | "unavailable">("loading")
 const healthComponents = ref<Record<string, string>>({})
 const basemapAvailable = ref(true)
+const aggregatedRegions = computed(() =>
+  regionContext.value?.regions.features.map((feature) => aggregateRegion(feature, selection.value)) ?? [],
+)
+const sourceSinkLimit = computed(() => colorScaleLimit(aggregatedRegions.value))
+const sourceSinkLegendText = computed(() => sourceSinkLegend(sourceSinkLimit.value, selection.value))
 
 let map: LeafletMap | null = null
 let tileLayer: TileLayer | null = null
+let regionLayer: LeafletGeoJSON | null = null
 let resizeObserver: ResizeObserver | null = null
 let userAdjustedView = false
 let fittingView = false
@@ -67,6 +84,36 @@ function fitIsland(): void {
     padding: [padding, padding],
   })
   fittingView = false
+}
+
+function renderRegions(): void {
+  if (!map || !regionContext.value) return
+  if (regionLayer) map.removeLayer(regionLayer)
+  const byId = new Map(aggregatedRegions.value.map((region) => [region.region_id, region]))
+  const districtLabels = new Map(
+    regionContext.value.districts.features.map((feature) => [feature.properties.district_id, feature.properties.label]),
+  )
+  const showSourceSink = layer.value === "source-sink"
+  const regionFor = (feature?: GeoJSON.Feature) =>
+    feature?.properties ? byId.get(feature.properties.region_id as number) : undefined
+  regionLayer = L.geoJSON(regionContext.value.regions as GeoJSON.FeatureCollection, {
+    style: (feature) => {
+      const region = regionFor(feature)
+      return {
+        color: "#64748b",
+        fillColor: showSourceSink && region ? sourceSinkColor(region.net_inflow_per_km2, sourceSinkLimit.value) : "#f8fafc",
+        fillOpacity: showSourceSink ? 0.82 : 0.08,
+        weight: 0.8,
+      }
+    },
+    onEachFeature: (feature, leafletLayer) => {
+      const region = regionFor(feature)
+      if (showSourceSink && region) {
+        const districtLabel = districtLabels.get(region.district_id) ?? String(region.district_id)
+        leafletLayer.bindTooltip(sourceSinkTooltip(region, selection.value, districtLabel), { sticky: true })
+      }
+    },
+  }).addTo(map)
 }
 
 function initializeMap(context: RegionContext): void {
@@ -97,9 +144,7 @@ function initializeMap(context: RegionContext): void {
   L.geoJSON(context.districts as GeoJSON.GeoJsonObject, {
     style: { color: "#64748b", fillOpacity: 0, weight: 1.5 },
   }).addTo(map)
-  L.geoJSON(context.regions as GeoJSON.GeoJsonObject, {
-    style: { color: "#94a3b8", fillOpacity: 0.08, weight: 0.8 },
-  }).addTo(map)
+  renderRegions()
 
   map.on("movestart", () => {
     if (!fittingView) userAdjustedView = true
@@ -165,11 +210,14 @@ onMounted(() => {
   void loadHealth()
 })
 
+watch([layer, dateScope, startHour, endHour, aggregation], renderRegions)
+
 onBeforeUnmount(() => {
   stopped = true
   resizeObserver?.disconnect()
   map?.remove()
   map = null
+  regionLayer = null
 })
 </script>
 
@@ -252,6 +300,12 @@ onBeforeUnmount(() => {
       </div>
       <p v-if="regionStatus === 'empty'" class="map-status" role="status">区域数据为空，共 0 个区域。</p>
       <p v-if="!basemapAvailable" class="basemap-status" role="status">外部底图不可用，本地业务地图仍可查看。</p>
+      <aside v-if="layer === 'source-sink' && regionStatus === 'ready'" class="source-sink-legend" aria-label="净流入强度图例">
+        <strong>净流入强度</strong>
+        <span>源 − ｜ 平衡 0 ｜ 汇 +</span>
+        <span>{{ sourceSinkLegendText }}</span>
+        <span>灰色表示不可计算</span>
+      </aside>
       <div id="map" ref="mapElement" />
     </section>
 

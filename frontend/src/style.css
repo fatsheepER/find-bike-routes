@@ -159,6 +159,59 @@ h1 {
   bottom: 1rem;
 }
 
+.source-sink-legend {
+  position: absolute;
+  z-index: 500;
+  right: 1rem;
+  bottom: 1rem;
+  display: grid;
+  gap: 0.25rem;
+  max-width: 24rem;
+  padding: 0.75rem;
+  border: 1px solid #94a3b8;
+  border-radius: 0.3rem;
+  background: rgb(255 255 255 / 94%);
+  box-shadow: 0 4px 18px rgb(15 23 42 / 14%);
+  font-size: 0.78rem;
+}
+
+.source-sink-tooltip {
+  max-width: 34rem;
+}
+
+.source-sink-tooltip p {
+  margin: 0.35rem 0 0;
+}
+
+.source-sink-tooltip .metric-scope {
+  font-weight: 650;
+}
+
+.direction-rose {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin: 0.35rem 0 0;
+}
+
+.direction-rose svg {
+  width: 5rem;
+  height: 5rem;
+  flex: none;
+  border: 1px solid #cbd5e1;
+  border-radius: 50%;
+}
+
+.direction-rose line {
+  stroke: #0e7490;
+  stroke-linecap: round;
+  stroke-width: 4;
+}
+
+.direction-rose figcaption {
+  max-width: 22rem;
+}
+
 footer {
   display: flex;
   flex-wrap: wrap;
