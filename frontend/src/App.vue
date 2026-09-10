@@ -121,22 +121,27 @@ function initializeMap(context: RegionContext): void {
 
   map = L.map(mapElement.value, { attributionControl: true })
   map.setMaxBounds(leafletBounds(context.map_bounds))
-  tileLayer = L.tileLayer(
-    "https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png",
-    {
-      attribution:
-        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-      subdomains: "abcd",
-      maxZoom: 20,
-    },
-  )
-  tileLayer.addTo(map)
-  tileLayer.on("tileerror", () => {
-    if (!map || !tileLayer) return
-    map.removeLayer(tileLayer)
-    tileLayer = null
+  const cartoKey = import.meta.env.VITE_CARTO_API_KEY
+  if (!cartoKey) {
     basemapAvailable.value = false
-  })
+  } else {
+    tileLayer = L.tileLayer(
+      `https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png?key=${encodeURIComponent(cartoKey)}`,
+      {
+        attribution:
+          '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        subdomains: "abcd",
+        maxZoom: 20,
+      },
+    )
+    tileLayer.addTo(map)
+    tileLayer.on("tileerror", () => {
+      if (!map || !tileLayer) return
+      map.removeLayer(tileLayer)
+      tileLayer = null
+      basemapAvailable.value = false
+    })
+  }
 
   L.geoJSON(context.island_boundary as GeoJSON.GeoJsonObject, {
     style: { color: "#164e63", fillOpacity: 0.04, weight: 2 },

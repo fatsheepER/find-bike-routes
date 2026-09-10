@@ -52,6 +52,7 @@ let wrapper: VueWrapper | undefined
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.stubEnv("VITE_CARTO_API_KEY", "test-carto-key")
   Object.keys(leaflet.handlers).forEach((event) => delete leaflet.handlers[event])
   document.body.innerHTML = '<div id="app"></div>'
   class ResizeObserverStub {
@@ -75,6 +76,7 @@ afterEach(() => {
   wrapper = undefined
   vi.resetModules()
   vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
 })
 
 describe("single-map app shell", () => {
@@ -183,7 +185,7 @@ describe("single-map app shell", () => {
 
     expect(leaflet.geoJSON).toHaveBeenCalledTimes(3)
     expect(leaflet.tileLayer).toHaveBeenCalledWith(
-      expect.stringContaining("light_nolabels"),
+      expect.stringContaining("light_nolabels/{z}/{x}/{y}{r}.png?key=test-carto-key"),
       expect.objectContaining({ attribution: expect.stringContaining("OpenStreetMap") }),
     )
     expect(wrapper.text()).toContain("OpenStreetMap")
