@@ -119,11 +119,87 @@ h1 {
   font-variant-numeric: tabular-nums;
 }
 
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 0;
+}
+
 .map-panel {
   position: relative;
   min-height: 0;
   overflow: hidden;
   background: #dbe7ea;
+}
+
+.sequence-panel {
+  z-index: 600;
+  width: 23rem;
+  padding: 1rem;
+  overflow: auto;
+  border-left: 1px solid #c7d2d9;
+  background: #f8fafb;
+}
+
+.sequence-panel h2 {
+  margin: 0 0 1rem;
+  font-size: 1.1rem;
+}
+
+.sequence-panel > label {
+  display: grid;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+  color: #425466;
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.sequence-panel select,
+.sequence-panel input {
+  width: 100%;
+  min-height: 2.25rem;
+  padding: 0.25rem 0.5rem;
+}
+
+.sequence-list {
+  display: grid;
+  gap: 0.4rem;
+  margin: 1rem 0;
+  padding-left: 1.5rem;
+}
+
+.sequence-list button {
+  width: 100%;
+  text-align: left;
+}
+
+.sequence-list button[aria-current="true"] {
+  border-color: #c2410c;
+  background: #fff7ed;
+  font-weight: 700;
+}
+
+.sequence-details {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.35rem 0.7rem;
+  margin: 0;
+}
+
+.sequence-details dt {
+  color: #425466;
+  font-weight: 650;
+}
+
+.sequence-details dd {
+  margin: 0;
+}
+
+.sequence-note {
+  color: #425466;
+  font-size: 0.78rem;
+  line-height: 1.5;
 }
 
 #map {
