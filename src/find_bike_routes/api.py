@@ -2,22 +2,24 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
 import json
 import logging
 import os
+from collections import defaultdict
+from enum import Enum
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
 import psycopg
+import pyarrow as pa
+import pyarrow.dataset as ds
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from psycopg.rows import dict_row
 from shapely.errors import ShapelyError
 from shapely.geometry import MultiPolygon, Polygon, shape
 
 from .geography import BOUNDARY_PATH
-
 
 SEQUENCES_PATH = Path(__file__).resolve().parents[2] / "data/processed/region_sequences"
 FLOWS_SQL_PATH = Path(__file__).resolve().parents[2] / "database/queries/flows.sql"
@@ -26,6 +28,42 @@ LOGGER = logging.getLogger(__name__)
 
 class BoundaryUnavailable(Exception):
     pass
+
+
+class SequencesUnavailable(Exception):
+    pass
+
+
+SequenceScope = Literal[
+    "clear-days",
+    "2020-12-21",
+    "2020-12-22",
+    "2020-12-23",
+    "2020-12-24",
+    "2020-12-25",
+]
+
+
+class SupportLevel(float, Enum):
+    LEVEL_0002 = 0.0002
+    LEVEL_0005 = 0.0005
+    LEVEL_001 = 0.001
+    LEVEL_002 = 0.002
+    LEVEL_005 = 0.005
+    LEVEL_01 = 0.01
+
+
+PATTERN_COLUMNS = {
+    "scope",
+    "pattern",
+    "length",
+    "support",
+    "contiguous_support",
+    "all_steps_adjacent",
+    "region_codes",
+    "districts",
+}
+SCAN_COLUMNS = {"scope", "min_support", "min_support_count", "valid_tracks"}
 
 DISTRICTS_SQL = """
 SELECT district_id, label, regions, cells, area_km2,
@@ -80,7 +118,9 @@ def create_app(
     @app.exception_handler(Exception)
     async def unexpected_error(_request: Request, problem: Exception) -> JSONResponse:
         LOGGER.exception("unhandled API error", exc_info=problem)
-        return JSONResponse(status_code=500, content={"detail": "internal server error"})
+        return JSONResponse(
+            status_code=500, content={"detail": "internal server error"}
+        )
 
     @app.get("/api/regions")
     def regions() -> dict[str, Any]:
@@ -95,7 +135,9 @@ def create_app(
                 app.state.dsn
             )
         except psycopg.Error:
-            raise HTTPException(status_code=503, detail="database unavailable") from None
+            raise HTTPException(
+                status_code=503, detail="database unavailable"
+            ) from None
         return {
             "release_digest": release,
             "island_boundary": boundary,
@@ -121,8 +163,46 @@ def create_app(
         try:
             release_digest, rows = _read_flows(app.state.dsn, matrix, hour, date)
         except psycopg.Error:
-            raise HTTPException(status_code=503, detail="database unavailable") from None
+            raise HTTPException(
+                status_code=503, detail="database unavailable"
+            ) from None
         return {"release_digest": release_digest, "flows": rows}
+
+    @app.get("/api/sequences")
+    def sequences(
+        scope: SequenceScope = "clear-days",
+        min_contiguous_support: SupportLevel = SupportLevel.LEVEL_001,
+        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    ) -> dict[str, Any]:
+        try:
+            release_digest, database_digest = _read_release(app.state.dsn)
+        except psycopg.Error:
+            raise HTTPException(
+                status_code=503, detail="database unavailable"
+            ) from None
+        try:
+            sequence_digest, threshold, patterns = _read_sequences(
+                app.state.sequences_path,
+                scope,
+                min_contiguous_support.value,
+                limit,
+            )
+            if sequence_digest != database_digest:
+                raise SequencesUnavailable
+        except SequencesUnavailable:
+            raise HTTPException(
+                status_code=503, detail="sequence data unavailable"
+            ) from None
+        return {
+            "release_digest": release_digest,
+            "region_cells_digest": database_digest,
+            "scope": scope,
+            "min_contiguous_support": min_contiguous_support.value,
+            "min_contiguous_support_count": threshold["min_support_count"],
+            "valid_tracks": threshold["valid_tracks"],
+            "limit": limit,
+            "patterns": patterns,
+        }
 
     return app
 
@@ -204,6 +284,74 @@ def _read_flows(
             },
         ).fetchall()
     return release_digest["release_digest"], [row | {"matrix": matrix} for row in rows]
+
+
+def _read_release(dsn: str) -> tuple[str, str]:
+    with psycopg.connect(dsn, row_factory=dict_row) as connection:
+        connection.execute("SET TRANSACTION READ ONLY")
+        release = connection.execute(
+            "SELECT release_digest, region_cells_digest "
+            "FROM dataset_release WHERE singleton"
+        ).fetchone()
+        if release is None:
+            raise psycopg.DatabaseError("dataset release is unavailable")
+    return release["release_digest"], release["region_cells_digest"]
+
+
+def _read_sequences(
+    root: Path, scope: str, min_support: float, limit: int
+) -> tuple[str, dict[str, int], list[dict[str, Any]]]:
+    try:
+        patterns = ds.dataset(root / "sequence_patterns", format="parquet").to_table()
+        scan = ds.dataset(root / "sequence_support_scan", format="parquet").to_table()
+        if not PATTERN_COLUMNS.issubset(patterns.column_names):
+            raise SequencesUnavailable
+        if not SCAN_COLUMNS.issubset(scan.column_names):
+            raise SequencesUnavailable
+        params = json.loads((root / "params.json").read_text(encoding="utf-8"))
+        digest = params["region_cells_digest"]
+        thresholds = [
+            row
+            for row in scan.select(sorted(SCAN_COLUMNS)).to_pylist()
+            if row["scope"] == scope and row["min_support"] == min_support
+        ]
+        if len(thresholds) != 1 or not isinstance(digest, str):
+            raise SequencesUnavailable
+        threshold = thresholds[0]
+        selected = [
+            row
+            for row in patterns.select(sorted(PATTERN_COLUMNS)).to_pylist()
+            if row["scope"] == scope
+            and row["all_steps_adjacent"] is True
+            and row["contiguous_support"] >= threshold["min_support_count"]
+        ]
+        selected.sort(
+            key=lambda row: (
+                -row["contiguous_support"],
+                -row["length"],
+                row["pattern"],
+            )
+        )
+        payload = [
+            {
+                "region_ids": row["pattern"],
+                "region_codes": row["region_codes"],
+                "district_ids": row["districts"],
+                "length": row["length"],
+                "support": row["support"],
+                "contiguous_support": row["contiguous_support"],
+            }
+            for row in selected[:limit]
+        ]
+        return digest, threshold, payload
+    except (
+        OSError,
+        ValueError,
+        TypeError,
+        KeyError,
+        pa.ArrowException,
+    ) as problem:
+        raise SequencesUnavailable from problem
 
 
 def _district_collection(rows: list[dict[str, Any]]) -> dict[str, Any]:
