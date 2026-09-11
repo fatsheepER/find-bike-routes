@@ -1,3 +1,4 @@
+import { selectDate, currentDate, focusHour } from "./app-test-support"
 import { flushPromises, mount, type VueWrapper } from "@vue/test-utils"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import App from "./App.vue"
@@ -173,23 +174,23 @@ describe("focus restoration", () => {
     await flushPromises()
     await wrapper.get('[aria-label="开始时间"]').setValue("7")
     await wrapper.get('[aria-label="结束时间"]').setValue("9")
-    await wrapper.get('[aria-label="内容图层"]').setValue(background)
+    await wrapper.get(`[data-layer="${background}"]`).trigger("click")
     await flushPromises()
 
     leaflet.regionClicks.get(7)?.()
     await flushPromises()
 
     expect(wrapper.find('[aria-label="区域聚焦详情"]').exists()).toBe(true)
-    expect((wrapper.get('[aria-label="内容图层"]').element as HTMLSelectElement).disabled).toBe(true)
+    expect((wrapper.get('[role="tab"][aria-selected="true"]').element as HTMLButtonElement).disabled).toBe(true)
     expect((wrapper.get('[aria-label="框选范围"]').element as HTMLButtonElement).disabled).toBe(true)
-    expect((wrapper.get('[aria-label="聚焦开始时间"]').element as HTMLInputElement).value).toBe(focusStart)
-    expect((wrapper.get('[aria-label="聚焦结束时间"]').element as HTMLInputElement).value).toBe(focusEnd)
+    expect(focusHour(wrapper, "start")).toBe(focusStart)
+    expect(focusHour(wrapper, "end")).toBe(focusEnd)
   })
 
   it("gives flow arcs, sequence lines, and step nodes priority over region polygons", async () => {
     wrapper = mount(App)
     await flushPromises()
-    await wrapper.get('[aria-label="内容图层"]').setValue("flows")
+    await wrapper.get('[data-layer="flows"]').trigger("click")
     await flushPromises()
     const flowArc = leaflet.polyline.mock.results[0].value
     flowArc.on.mock.calls[0][1]({ originalEvent: new Event("click") })
@@ -200,7 +201,7 @@ describe("focus restoration", () => {
 
     leaflet.polyline.mockClear()
     leaflet.circleMarker.mockClear()
-    await wrapper.get('[aria-label="内容图层"]').setValue("sequences")
+    await wrapper.get('[data-layer="sequences"]').trigger("click")
     await flushPromises()
     leaflet.polyline.mock.results[1].value.on.mock.calls[0][1]({ originalEvent: new Event("click") })
     leaflet.circleMarker.mock.results[0].value.on.mock.calls[0][1]({ originalEvent: new Event("click") })
@@ -213,10 +214,10 @@ describe("focus restoration", () => {
   it("restores the selected flow and map view on exit, then globally resets normal state", async () => {
     wrapper = mount(App)
     await flushPromises()
-    await wrapper.get('[aria-label="日期"]').setValue("2020-12-23")
+    await selectDate(wrapper, "2020-12-23")
     await wrapper.get('[aria-label="开始时间"]').setValue("7")
     await wrapper.get('[aria-label="聚合口径"]').setValue("sum")
-    await wrapper.get('[aria-label="内容图层"]').setValue("flows")
+    await wrapper.get('[data-layer="flows"]').trigger("click")
     await flushPromises()
     await wrapper.get('[aria-label="Top 50 区域流列表"]').findAll("button")[1].trigger("click")
 
@@ -225,8 +226,8 @@ describe("focus restoration", () => {
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))
     await wrapper.vm.$nextTick()
 
-    expect((wrapper.get('[aria-label="内容图层"]').element as HTMLSelectElement).value).toBe("flows")
-    expect((wrapper.get('[aria-label="日期"]').element as HTMLSelectElement).value).toBe("2020-12-23")
+    expect(wrapper.get('[role="tab"][aria-selected="true"]').attributes("data-layer")).toBe("flows")
+    expect(currentDate(wrapper)).toBe("2020-12-23")
     expect((wrapper.get('[aria-label="开始时间"]').element as HTMLInputElement).value).toBe("7")
     expect((wrapper.get('[aria-label="聚合口径"]').element as HTMLSelectElement).value).toBe("sum")
     expect(wrapper.get('[aria-current="true"]').text()).toContain("R-8 → R-7")
@@ -236,15 +237,10 @@ describe("focus restoration", () => {
       { animate: false },
     )
 
-    await wrapper.get('[aria-label="框选范围"]').trigger("click")
-    await wrapper.findAll(".toolbar button")[0].trigger("click")
-    await flushPromises()
-
-    expect(wrapper.get('[aria-label="框选范围"]').text()).toBe("框选范围")
-    expect((wrapper.get('[aria-label="内容图层"]').element as HTMLSelectElement).value).toBe("source-sink")
-    expect((wrapper.get('[aria-label="日期"]').element as HTMLSelectElement).value).toBe("clear-days")
-    expect((wrapper.get('[aria-label="开始时间"]').element as HTMLInputElement).value).toBe("6")
-    expect((wrapper.get('[aria-label="结束时间"]').element as HTMLInputElement).value).toBe("10")
-    expect((wrapper.get('[aria-label="聚合口径"]').element as HTMLSelectElement).value).toBe("average")
+    await wrapper.get('[aria-label="框选范围"]').trigger('click')
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('[aria-label="框选范围"]').text()).toBe('框选')
+    expect(currentDate(wrapper)).toBe('2020-12-23')
   })
 })

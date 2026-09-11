@@ -1,3 +1,4 @@
+import { selectDate, currentDate, setFocusHour, focusHour } from "./app-test-support"
 import { flushPromises, mount, type VueWrapper } from "@vue/test-utils"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import App from "./App.vue"
@@ -221,7 +222,7 @@ describe("region focus", () => {
     await enterFocus()
 
     expect(wrapper.get('[aria-label="区域聚焦详情"]').text()).toContain("思明-7")
-    expect((wrapper.get('[aria-label="内容图层"]').element as HTMLSelectElement).disabled).toBe(true)
+    expect((wrapper.get('[role="tab"][aria-selected="true"]').element as HTMLButtonElement).disabled).toBe(true)
     expect(fetch).toHaveBeenCalledWith(
       "/api/tracks/query",
       expect.objectContaining({ method: "POST" }),
@@ -251,14 +252,14 @@ describe("region focus", () => {
     wrapper = await mountApp()
     await wrapper.get('[aria-label="开始时间"]').setValue("7")
     await wrapper.get('[aria-label="结束时间"]').setValue("9")
-    await wrapper.get('[aria-label="内容图层"]').setValue("sequences")
+    await wrapper.get('[data-layer="sequences"]').trigger("click")
     await flushPromises()
     await wrapper.findAll(".sequence-list button")[1].trigger("click")
 
     await enterFocus()
 
-    expect((wrapper.get('[aria-label="聚焦开始时间"]').element as HTMLInputElement).value).toBe("6")
-    expect((wrapper.get('[aria-label="聚焦结束时间"]').element as HTMLInputElement).value).toBe("10")
+    expect(focusHour(wrapper, "start")).toBe("6")
+    expect(focusHour(wrapper, "end")).toBe("10")
     expect(JSON.parse(String(trackCalls()[0][1]?.body))).toEqual(expect.objectContaining({
       start: "2020-12-21T06:00:00+08:00",
       end: "2020-12-21T10:00:00+08:00",
@@ -267,13 +268,13 @@ describe("region focus", () => {
     firstSequenceClick()
     await wrapper.get('[aria-label="区域聚焦详情"] .focus-heading button').trigger("click")
 
-    expect((wrapper.get('[aria-label="内容图层"]').element as HTMLSelectElement).value).toBe("sequences")
+    expect(wrapper.get('[role="tab"][aria-selected="true"]').attributes("data-layer")).toBe("sequences")
     expect(wrapper.get('.sequence-list [aria-current="true"]').text()).toBe("second")
   })
 
   it("copies a single-day scope and changes only the local focus time", async () => {
     wrapper = await mountApp()
-    await wrapper.get('[aria-label="日期"]').setValue("2020-12-23")
+    await selectDate(wrapper, "2020-12-23")
     await wrapper.get('[aria-label="开始时间"]').setValue("7")
     await wrapper.get('[aria-label="结束时间"]').setValue("9")
     await wrapper.get('[aria-label="聚合口径"]').setValue("sum")
@@ -289,14 +290,14 @@ describe("region focus", () => {
     })
     expect(wrapper.get('[aria-label="区域聚焦详情"]').text()).toContain("2020-12-23")
     expect(wrapper.get('[aria-label="区域聚焦详情"]').text()).toContain("跨日合计")
-    expect(wrapper.get('[aria-label="区域画像"]').text()).toContain("解锁 5")
+    expect(wrapper.get('[aria-label="区域画像"]').text()).toContain("解锁5")
 
-    await wrapper.get('[aria-label="聚焦开始时间"]').setValue("8")
+    await setFocusHour(wrapper, "8")
     await flushPromises()
 
     expect(trackCalls()).toHaveLength(2)
     expect(JSON.parse(String(trackCalls()[1][1]?.body)).start).toBe("2020-12-23T08:00:00+08:00")
-    expect(wrapper.get('[aria-label="区域画像"]').text()).toContain("解锁 3")
+    expect(wrapper.get('[aria-label="区域画像"]').text()).toContain("解锁3")
     expect((wrapper.get('[aria-label="开始时间"]').element as HTMLInputElement).value).toBe("7")
     expect((wrapper.get('[aria-label="聚合口径"]').element as HTMLSelectElement).value).toBe("sum")
   })
@@ -307,9 +308,9 @@ describe("region focus", () => {
 
     const profile = wrapper.get('[aria-label="区域画像"]').text()
     for (const text of [
-      "思明-7", "思明片区", "面积 2", "解锁", "上锁", "净流入", "净流入强度",
-      "订单事件密度", "访问轨迹", "过境轨迹", "PI_r", "过境弦", "R 0.5",
-      "R_axial 0.5", "方向角", "方向玫瑰", "住宅 10%", "已分类面积 75%", "公交站密度 6",
+      "思明片区", "2 km²", "解锁", "上锁", "净流入", "净流入强度",
+      "订单事件密度", "访问轨迹", "过境轨迹", "过境率", "过境弦", "方向集中度0.5",
+      "轴向集中度0.5", "方向角", "方向分布", "住宅10%", "已分类面积75%", "公交站密度6",
     ]) expect(profile).toContain(text)
   })
 
@@ -340,7 +341,7 @@ describe("region focus", () => {
       return new Promise<Response>((resolve) => finishes.push(resolve))
     })
     wrapper = await mountApp()
-    await wrapper.get('[aria-label="日期"]').setValue("2020-12-23")
+    await selectDate(wrapper, "2020-12-23")
     leaflet.regionClicks.get(7)?.()
     await wrapper.vm.$nextTick()
     expect(finishes).toHaveLength(1)
@@ -353,12 +354,12 @@ describe("region focus", () => {
     await flushPromises()
     expect(wrapper.get('[aria-label="区域聚焦详情"]').text()).toContain("唯一有效轨迹总数9")
 
-    await wrapper.get('[aria-label="聚焦开始时间"]').setValue("7")
+    await setFocusHour(wrapper, "7")
     await wrapper.vm.$nextTick()
     expect(wrapper.get('[aria-label="区域聚焦详情"]').text()).toContain("唯一有效轨迹总数—")
     expect(finishes).toHaveLength(2)
 
-    await wrapper.get('[aria-label="聚焦开始时间"]').setValue("8")
+    await setFocusHour(wrapper, "8")
     await wrapper.vm.$nextTick()
     expect(finishes).toHaveLength(3)
     finishes[2]({
@@ -410,12 +411,12 @@ describe("region focus", () => {
 
   it("clears focus with Escape and restores the exact analysis state and map view", async () => {
     wrapper = await mountApp()
-    await wrapper.get('[aria-label="日期"]').setValue("2020-12-23")
+    await selectDate(wrapper, "2020-12-23")
     await wrapper.get('[aria-label="开始时间"]').setValue("7")
     await wrapper.get('[aria-label="结束时间"]').setValue("9")
     await wrapper.get('[aria-label="聚合口径"]').setValue("sum")
     await enterFocus()
-    await wrapper.get('[aria-label="聚焦开始时间"]').setValue("8")
+    await setFocusHour(wrapper, "8")
     await flushPromises()
     leaflet.mapHandlers.get("movestart")?.()
     const fitsBeforeExit = leaflet.mapInstance.fitBounds.mock.calls.length
@@ -425,7 +426,7 @@ describe("region focus", () => {
     resizeCallback([], {} as ResizeObserver)
 
     expect(wrapper.find('[aria-label="区域聚焦详情"]').exists()).toBe(false)
-    expect((wrapper.get('[aria-label="日期"]').element as HTMLSelectElement).value).toBe("2020-12-23")
+    expect(currentDate(wrapper)).toBe("2020-12-23")
     expect((wrapper.get('[aria-label="开始时间"]').element as HTMLInputElement).value).toBe("7")
     expect((wrapper.get('[aria-label="结束时间"]').element as HTMLInputElement).value).toBe("9")
     expect((wrapper.get('[aria-label="聚合口径"]').element as HTMLSelectElement).value).toBe("sum")

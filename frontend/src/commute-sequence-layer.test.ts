@@ -1,3 +1,4 @@
+import { selectDate } from "./app-test-support"
 import { flushPromises, mount, type VueWrapper } from "@vue/test-utils"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import App from "./App.vue"
@@ -152,7 +153,7 @@ describe("commute sequence layer", () => {
   it("requests the default audited rung, selects the first result, and draws every chain", async () => {
     wrapper = mount(App)
     await flushPromises()
-    await wrapper.get('[aria-label="内容图层"]').setValue("sequences")
+    await wrapper.get('[data-layer="sequences"]').trigger("click")
     await flushPromises()
 
     expect(fetch).toHaveBeenCalledWith(
@@ -165,8 +166,8 @@ describe("commute sequence layer", () => {
     expect(wrapper.get(".sequence-details").text()).toContain("湖里 → 湖里 → 思明")
     expect(wrapper.get(".sequence-details").text()).toContain("支持度（区域序列条数）8")
     expect(wrapper.get(".sequence-details").text()).toContain("连续支持度6")
-    expect(wrapper.get(".sequence-details").text()).toContain("绝对连续支持度门槛5")
-    expect(wrapper.get(".sequence-details").text()).toContain("有效轨迹分母1000")
+    expect(wrapper.get(".sequence-diagnostics").text()).toContain("绝对连续支持度门槛5")
+    expect(wrapper.get(".sequence-diagnostics").text()).toContain("有效轨迹分母1000")
     expect(leaflet.polyline).toHaveBeenCalledTimes(2)
     expect(leaflet.circleMarker).toHaveBeenCalledTimes(5)
   })
@@ -174,8 +175,8 @@ describe("commute sequence layer", () => {
   it.each(scopes)("passes the %s date scope unchanged", async (scope) => {
     wrapper = mount(App)
     await flushPromises()
-    await wrapper.get('[aria-label="内容图层"]').setValue("sequences")
-    await wrapper.get('[aria-label="日期"]').setValue(scope)
+    await wrapper.get('[data-layer="sequences"]').trigger("click")
+    await selectDate(wrapper, scope)
     await flushPromises()
 
     expect(fetch).toHaveBeenLastCalledWith(
@@ -187,7 +188,7 @@ describe("commute sequence layer", () => {
   it.each(supportLevels)("offers and passes the %s audited support rung", async (level) => {
     wrapper = mount(App)
     await flushPromises()
-    await wrapper.get('[aria-label="内容图层"]').setValue("sequences")
+    await wrapper.get('[data-layer="sequences"]').trigger("click")
     await wrapper.get('[aria-label="连续支持度门槛"]').setValue(level)
     await flushPromises()
 
@@ -203,7 +204,7 @@ describe("commute sequence layer", () => {
   it("clamps Top-N to integer limits before requesting", async () => {
     wrapper = mount(App)
     await flushPromises()
-    await wrapper.get('[aria-label="内容图层"]').setValue("sequences")
+    await wrapper.get('[data-layer="sequences"]').trigger("click")
     const limit = wrapper.get('[aria-label="Top-N"]')
 
     await limit.setValue("0")
@@ -222,35 +223,25 @@ describe("commute sequence layer", () => {
     expect(fetch).toHaveBeenLastCalledWith(expect.stringContaining("limit=12"), expect.anything())
   })
 
-  it("disables but preserves time and aggregation controls until leaving the layer", async () => {
+  it("hides time and aggregation while retaining their values for other layers", async () => {
     wrapper = mount(App)
     await flushPromises()
-    const layer = wrapper.get('[aria-label="内容图层"]')
-    const start = wrapper.get('[aria-label="开始时间"]')
-    const end = wrapper.get('[aria-label="结束时间"]')
-    const aggregation = wrapper.get('[aria-label="聚合口径"]')
-    await start.setValue("7")
-    await end.setValue("9")
-    await aggregation.setValue("sum")
-
-    await layer.setValue("sequences")
-    expect((start.element as HTMLInputElement).disabled).toBe(true)
-    expect((end.element as HTMLInputElement).disabled).toBe(true)
-    expect((aggregation.element as HTMLSelectElement).disabled).toBe(true)
-    expect((start.element as HTMLInputElement).value).toBe("7")
-    expect((end.element as HTMLInputElement).value).toBe("9")
-    expect((aggregation.element as HTMLSelectElement).value).toBe("sum")
-
-    await layer.setValue("source-sink")
-    expect((start.element as HTMLInputElement).disabled).toBe(false)
-    expect((aggregation.element as HTMLSelectElement).disabled).toBe(false)
-    expect((aggregation.element as HTMLSelectElement).value).toBe("sum")
+    await wrapper.get('[aria-label="开始时间"]').setValue('7')
+    await wrapper.get('[aria-label="结束时间"]').setValue('9')
+    await wrapper.get('[aria-label="聚合口径"]').setValue('sum')
+    await wrapper.get('[data-layer="sequences"]').trigger('click')
+    expect(wrapper.find('[aria-label="开始时间"]').exists()).toBe(false)
+    expect(wrapper.find('[aria-label="聚合口径"]').exists()).toBe(false)
+    await wrapper.get('[data-layer="source-sink"]').trigger('click')
+    expect((wrapper.get('[aria-label="开始时间"]').element as HTMLInputElement).value).toBe('7')
+    expect((wrapper.get('[aria-label="结束时间"]').element as HTMLInputElement).value).toBe('9')
+    expect((wrapper.get('[aria-label="聚合口径"]').element as HTMLSelectElement).value).toBe('sum')
   })
 
   it("synchronizes list, chain, and step selection while stopping map click propagation", async () => {
     wrapper = mount(App)
     await flushPromises()
-    await wrapper.get('[aria-label="内容图层"]').setValue("sequences")
+    await wrapper.get('[data-layer="sequences"]').trigger("click")
     await flushPromises()
 
     await wrapper.findAll(".sequence-list button")[1].trigger("click")
@@ -274,7 +265,7 @@ describe("commute sequence layer", () => {
     wrapper = mount(App)
     await flushPromises()
     await wrapper.get('[aria-label="聚合口径"]').setValue("sum")
-    await wrapper.get('[aria-label="内容图层"]').setValue("sequences")
+    await wrapper.get('[data-layer="sequences"]').trigger("click")
     await flushPromises()
 
     expect(wrapper.get(".sequence-details").text()).toContain("支持度（区域序列条数）8")
@@ -307,7 +298,7 @@ describe("commute sequence layer", () => {
     })
     wrapper = mount(App)
     await flushPromises()
-    await wrapper.get('[aria-label="内容图层"]').setValue("sequences")
+    await wrapper.get('[data-layer="sequences"]').trigger("click")
     expect(wrapper.text()).toContain("正在加载通勤链")
     const regionDrawCount = leaflet.geoJSON.mock.calls.length
     finishFirstRequest({ ok: false, json: async () => ({ detail: "secret" }) } as Response)

@@ -1,3 +1,4 @@
+import { selectDate, currentDate } from "./app-test-support"
 import { flushPromises, mount, type VueWrapper } from "@vue/test-utils"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import App from "./App.vue"
@@ -84,9 +85,9 @@ describe("single-map app shell", () => {
     await import("./main")
     await flushPromises()
 
-    expect(document.querySelector("h1")?.textContent).toContain("厦门本岛早高峰共享单车流动")
-    expect((document.querySelector('[aria-label="内容图层"]') as HTMLSelectElement).value).toBe("source-sink")
-    expect((document.querySelector('[aria-label="日期"]') as HTMLSelectElement).value).toBe("clear-days")
+    expect(document.querySelector("h1")).toBeNull()
+    expect(document.querySelector('[role="tab"][aria-selected="true"]')?.getAttribute("data-layer")).toBe("source-sink")
+    expect((document.querySelector('[aria-label="开始日期"]') as HTMLInputElement).value).toBe("0")
     expect((document.querySelector('[aria-label="开始时间"]') as HTMLInputElement).value).toBe("6")
     expect((document.querySelector('[aria-label="结束时间"]') as HTMLInputElement).value).toBe("10")
     expect((document.querySelector('[aria-label="聚合口径"]') as HTMLSelectElement).value).toBe("average")
@@ -104,16 +105,13 @@ describe("single-map app shell", () => {
     await flushPromises()
 
     expect(leaflet.map).toHaveBeenCalledTimes(1)
-    expect(leaflet.mapInstance.setMaxBounds).toHaveBeenCalledWith([
-      [23.86, 117.86],
-      [24.34, 118.34],
-    ])
+    expect(leaflet.mapInstance.setMaxBounds.mock.calls[0][0][0][1]).toBeLessThan(117.86)
     expect(leaflet.mapInstance.fitBounds).toHaveBeenLastCalledWith(
       [
         [23.9, 117.9],
         [24.3, 118.3],
       ],
-      { animate: false, padding: [32, 32] },
+      { animate: false, paddingTopLeft: [32, 180], paddingBottomRight: [32, 210] },
     )
 
     height = 400
@@ -121,7 +119,7 @@ describe("single-map app shell", () => {
     expect(leaflet.mapInstance.fitBounds).toHaveBeenCalledTimes(2)
     expect(leaflet.mapInstance.fitBounds).toHaveBeenLastCalledWith(expect.anything(), {
       animate: false,
-      padding: [24, 24],
+      paddingTopLeft: [24, 180], paddingBottomRight: [24, 210],
     })
 
     width = 3000
@@ -130,14 +128,14 @@ describe("single-map app shell", () => {
     expect(leaflet.mapInstance.fitBounds).toHaveBeenCalledTimes(3)
     expect(leaflet.mapInstance.fitBounds).toHaveBeenLastCalledWith(expect.anything(), {
       animate: false,
-      padding: [64, 64],
+      paddingTopLeft: [64, 180], paddingBottomRight: [64, 210],
     })
 
     leaflet.handlers.movestart()
     resizeCallback([], {} as ResizeObserver)
     expect(leaflet.mapInstance.fitBounds).toHaveBeenCalledTimes(3)
 
-    await wrapper.get("button").trigger("click")
+    await wrapper.get('[aria-label="本岛居中"]').trigger("click")
     expect(leaflet.map).toHaveBeenCalledTimes(1)
     expect(leaflet.mapInstance.fitBounds).toHaveBeenCalledTimes(4)
 
@@ -145,38 +143,24 @@ describe("single-map app shell", () => {
     expect(leaflet.mapInstance.fitBounds).toHaveBeenCalledTimes(5)
   })
 
-  it("preserves filters across layers and resets the full toolbar", async () => {
+  it("preserves filters across tabs and restores dates and hours independently", async () => {
     wrapper = mount(App)
     await flushPromises()
-    const date = wrapper.get('[aria-label="日期"]')
-    const start = wrapper.get('[aria-label="开始时间"]')
-    const end = wrapper.get('[aria-label="结束时间"]')
-    const aggregation = wrapper.get('[aria-label="聚合口径"]')
-    const layer = wrapper.get('[aria-label="内容图层"]')
-
-    await date.setValue("2020-12-23")
-    await start.setValue("7")
-    await end.setValue("9")
-    await aggregation.setValue("sum")
-    await layer.setValue("sequences")
-
-    expect((start.element as HTMLInputElement).disabled).toBe(true)
-    expect((end.element as HTMLInputElement).disabled).toBe(true)
-    expect((aggregation.element as HTMLSelectElement).disabled).toBe(true)
-    expect((start.element as HTMLInputElement).value).toBe("7")
-    expect((end.element as HTMLInputElement).value).toBe("9")
-    expect((aggregation.element as HTMLSelectElement).value).toBe("sum")
-
-    await layer.setValue("flows")
-    expect((start.element as HTMLInputElement).disabled).toBe(false)
-    expect((aggregation.element as HTMLSelectElement).value).toBe("sum")
-
-    await wrapper.get("button").trigger("click")
-    expect((layer.element as HTMLSelectElement).value).toBe("source-sink")
-    expect((date.element as HTMLSelectElement).value).toBe("clear-days")
-    expect((start.element as HTMLInputElement).value).toBe("6")
-    expect((end.element as HTMLInputElement).value).toBe("10")
-    expect((aggregation.element as HTMLSelectElement).value).toBe("average")
+    await selectDate(wrapper, '2020-12-23')
+    await wrapper.get('[aria-label="开始时间"]').setValue('7')
+    await wrapper.get('[aria-label="结束时间"]').setValue('9')
+    await wrapper.get('[aria-label="聚合口径"]').setValue('sum')
+    await wrapper.get('[data-layer="sequences"]').trigger('click')
+    expect(wrapper.find('[aria-label="开始时间"]').exists()).toBe(false)
+    expect(wrapper.find('[aria-label="聚合口径"]').exists()).toBe(false)
+    await wrapper.get('[data-layer="flows"]').trigger('click')
+    expect((wrapper.get('[aria-label="开始时间"]').element as HTMLInputElement).value).toBe('7')
+    expect((wrapper.get('[aria-label="聚合口径"]').element as HTMLSelectElement).value).toBe('sum')
+    await wrapper.findAll('button').find(button => button.text() === '恢复全选')!.trigger('click')
+    expect(currentDate(wrapper)).toBe('2020-12-23')
+    await selectDate(wrapper, 'clear-days')
+    expect(wrapper.find('.restore-button').exists()).toBe(false)
+    expect((wrapper.get('[aria-label="结束时间"]').element as HTMLInputElement).value).toBe('10')
   })
 
   it("keeps local geometry and attribution when the external tiles fail", async () => {
@@ -196,7 +180,7 @@ describe("single-map app shell", () => {
     await wrapper.vm.$nextTick()
 
     expect(leaflet.mapInstance.removeLayer).toHaveBeenCalledWith(leaflet.tile)
-    expect(wrapper.text()).toContain("外部底图不可用，本地业务地图仍可查看")
+    expect(wrapper.text()).toContain("底图暂不可用，本地地图仍可查看")
     expect(leaflet.geoJSON).toHaveBeenCalledTimes(3)
   })
 

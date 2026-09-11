@@ -1,3 +1,4 @@
+import { selectDate, setFocusHour } from "./app-test-support"
 import { flushPromises, mount, type VueWrapper } from "@vue/test-utils"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import App from "./App.vue"
@@ -86,8 +87,8 @@ describe("request ordering", () => {
     wrapper = mount(App)
     await flushPromises()
 
-    await wrapper.get('[aria-label="内容图层"]').setValue("flows")
-    await wrapper.get('[aria-label="日期"]').setValue("2020-12-23")
+    await wrapper.get('[data-layer="flows"]').trigger("click")
+    await selectDate(wrapper, "2020-12-23")
     expect(flowRequests.slice(0, 4).every((request) => request.signal?.aborted)).toBe(true)
     flowRequests.slice(4).forEach((request) => request.resolve({
       ok: true,
@@ -99,19 +100,19 @@ describe("request ordering", () => {
     await flushPromises()
     flowRequests.slice(0, 4).forEach((request) => request.resolve({ ok: true, json: async () => ({ flows: [] }) } as Response))
     await flushPromises()
-    expect(wrapper.text()).toContain("Top 50 区域流列表")
+    expect(wrapper.get('[aria-label="Top 50 区域流列表"]').findAll("li")).toHaveLength(1)
 
     const exitRequestStart = flowRequests.length
     await wrapper.get('[aria-label="流矩阵"]').setValue("channel")
     const exitRequests = flowRequests.slice(exitRequestStart)
-    await wrapper.get('[aria-label="内容图层"]').setValue("source-sink")
+    await wrapper.get('[data-layer="source-sink"]').trigger("click")
     expect(exitRequests.every((request) => request.signal?.aborted)).toBe(true)
     exitRequests.forEach((request) => request.resolve({ ok: true, json: async () => ({ flows: [] }) } as Response))
     await flushPromises()
     expect(wrapper.find('[aria-label="区域间流动"]').exists()).toBe(false)
 
-    await wrapper.get('[aria-label="内容图层"]').setValue("sequences")
-    await wrapper.get('[aria-label="日期"]').setValue("2020-12-24")
+    await wrapper.get('[data-layer="sequences"]').trigger("click")
+    await selectDate(wrapper, "2020-12-24")
     expect(sequenceRequests[0].signal?.aborted).toBe(true)
     sequenceRequests[1].resolve({ ok: true, json: async () => ({
       scope: "2020-12-24", min_contiguous_support: 0.001, min_contiguous_support_count: 1,
@@ -125,8 +126,7 @@ describe("request ordering", () => {
 
     leaflet.regionClicks.get(7)?.()
     await wrapper.vm.$nextTick()
-    ;(wrapper.get('[aria-label="聚焦开始时间"]').element as HTMLInputElement).value = "7"
-    await wrapper.get('[aria-label="聚焦开始时间"]').trigger("change")
+    await setFocusHour(wrapper, "7")
     expect(trackRequests[0].signal?.aborted).toBe(true)
     trackRequests.slice(1).forEach((request) => request.resolve({
       ok: true,

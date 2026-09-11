@@ -1,6 +1,7 @@
 export const CLEAR_DAYS = ["2020-12-21", "2020-12-22", "2020-12-24", "2020-12-25"] as const
 
-export type DateScope = "clear-days" | "2020-12-21" | "2020-12-22" | "2020-12-23" | "2020-12-24" | "2020-12-25"
+export const ALL_DAYS = ["2020-12-21", "2020-12-22", "2020-12-23", "2020-12-24", "2020-12-25"] as const
+export type DateScope = "clear-days" | (typeof ALL_DAYS)[number] | `${(typeof ALL_DAYS)[number]}..${(typeof ALL_DAYS)[number]}`
 export type Aggregation = "average" | "sum"
 
 export type RegionMetricValues = {
@@ -65,7 +66,10 @@ export type AggregatedRegion = Omit<RegionFeature["properties"], "metrics"> & Re
 }
 
 export function datesForScope(scope: DateScope): readonly string[] {
-  return scope === "clear-days" ? CLEAR_DAYS : [scope]
+  if (scope === "clear-days") return CLEAR_DAYS
+  if (!scope.includes("..")) return [scope]
+  const [start, end] = scope.split("..")
+  return ALL_DAYS.filter((date) => date >= start && date <= end)
 }
 
 export function aggregateRegion(feature: RegionFeature, selection: RegionSelection): AggregatedRegion {

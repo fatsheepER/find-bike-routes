@@ -9,6 +9,9 @@ const map = {
   createPane: vi.fn(),
   dragging: { disable: vi.fn(), enable: vi.fn() },
   fitBounds: vi.fn(),
+  panInside: vi.fn(),
+  panBy: vi.fn(),
+  setZoom: vi.fn(),
   getCenter: vi.fn(() => ({ lat: 24, lng: 118 })),
   getZoom: vi.fn(() => 12),
   invalidateSize: vi.fn(),
@@ -85,4 +88,26 @@ export function testRegionContext(ids = [7], releaseDigest = "release") {
 export class ResizeObserverStub {
   observe = vi.fn()
   disconnect = vi.fn()
+}
+
+// UI adapters keep data/request regression tests independent of control markup.
+import type { VueWrapper } from '@vue/test-utils'
+export async function selectDate(app: VueWrapper, date: string) {
+  if (date === 'clear-days') {
+    const reset = app.findAll('button').find(button => button.text() === '重置为晴天集')
+    if (reset) await reset.trigger('click')
+  } else await app.get(`[aria-label="${date}"]`).trigger('click')
+}
+export function currentDate(app: VueWrapper) {
+  const start = Number((app.get('[aria-label="开始日期"]').element as HTMLInputElement).value)
+  const end = Number((app.get('[aria-label="结束日期"]').element as HTMLInputElement).value)
+  return start === end ? `2020-12-${21 + start}` : 'clear-days'
+}
+// Local time UI is deferred; retain checks for the existing query lifecycle.
+export function focusHour(app: VueWrapper, edge: 'start' | 'end') {
+  return String((app.vm as unknown as { geographicFocus: { selection: Record<string, number> } }).geographicFocus.selection[`${edge}Hour`])
+}
+export async function setFocusHour(app: VueWrapper, hour: string) {
+  (app.vm as unknown as { geographicFocus: { selection: { startHour: number } } }).geographicFocus.selection.startHour = Number(hour)
+  await app.vm.$nextTick()
 }

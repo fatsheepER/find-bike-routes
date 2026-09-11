@@ -141,7 +141,7 @@ describe("region flow layer", () => {
     await flushPromises()
     expect(wrapper.find('[aria-label="流矩阵"]').exists()).toBe(false)
 
-    await wrapper.get('[aria-label="内容图层"]').setValue("flows")
+    await wrapper.get('[data-layer="flows"]').trigger("click")
     await flushPromises()
 
     expect((wrapper.get('[aria-label="流矩阵"]').element as HTMLSelectElement).value).toBe("od")
@@ -151,7 +151,7 @@ describe("region flow layer", () => {
     }
     const flowList = wrapper.get('[aria-label="Top 50 区域流列表"]')
     expect(flowList.findAll("li")).toHaveLength(50)
-    expect(flowList.find("button").text()).toContain("4 日平均，06:00–10:00 所选时段累计")
+    expect(wrapper.get(".flow-scope").text()).toContain("4 日平均，06:00–10:00 所选时段累计")
     expect(leaflet.polyline).toHaveBeenCalled()
     expect(echarts.init).toHaveBeenCalledTimes(1)
     const option = echarts.chart.setOption.mock.calls.at(-1)?.[0]
@@ -167,7 +167,7 @@ describe("region flow layer", () => {
   it("synchronizes list and arc selection, stops map propagation, and shows flow details", async () => {
     wrapper = mount(App)
     await flushPromises()
-    await wrapper.get('[aria-label="内容图层"]').setValue("flows")
+    await wrapper.get('[data-layer="flows"]').trigger("click")
     await flushPromises()
 
     const firstArcAfterSelection = leaflet.polyline.mock.results.length
@@ -177,9 +177,9 @@ describe("region flow layer", () => {
     expect(details.text()).toContain("出行流")
     expect(details.text()).toContain("湖里 → 思明")
     expect(details.text()).toContain("4 日平均，06:00–10:00 所选时段累计")
-    expect(details.text()).toContain("已检验是")
-    expect(details.text()).toContain("显著是")
-    expect(details.text()).toContain("被门槛挡住否")
+    expect(wrapper.get('[aria-label="流对检验详情"]').text()).toContain("已检验是")
+    expect(wrapper.get('[aria-label="流对检验详情"]').text()).toContain("显著是")
+    expect(wrapper.get('[aria-label="流对检验详情"]').text()).toContain("被门槛挡住否")
 
     const arcClick = leaflet.polyline.mock.results[firstArcAfterSelection]?.value.on.mock.calls[0][1]
     const originalEvent = new Event("click")
@@ -192,7 +192,7 @@ describe("region flow layer", () => {
   it("requests daily union slices for all clear-day flows and isolates retryable failures", async () => {
     wrapper = mount(App)
     await flushPromises()
-    await wrapper.get('[aria-label="内容图层"]').setValue("flows")
+    await wrapper.get('[data-layer="flows"]').trigger("click")
     await flushPromises()
     vi.mocked(fetch).mockImplementation(async (input) => {
       const url = String(input)

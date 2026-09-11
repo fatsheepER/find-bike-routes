@@ -1,4 +1,4 @@
-import { CLEAR_DAYS, type Aggregation, type DateScope } from "./region-aggregation"
+import { CLEAR_DAYS, datesForScope, type Aggregation, type DateScope } from "./region-aggregation"
 
 export type FlowMatrix = "od" | "channel"
 export type FlowSignificance = "significant" | "all"
@@ -55,7 +55,7 @@ export function flowRequests(
 ): FlowRequest[] {
   const scopes = dateScope === "clear-days"
     ? significance === "significant" ? ["clear-days-stable"] : [...CLEAR_DAYS]
-    : [dateScope]
+    : [...datesForScope(dateScope)]
   return scopes.flatMap((scope) =>
     Array.from({ length: endHour - startHour }, (_, index) => {
       const hour = startHour + index
@@ -80,12 +80,10 @@ export function aggregateFlows(
   const usesStableClearDayAggregate = slices.some((slice) => slice.scope === "clear-days-stable")
   const requiredScopes = selection.dateScope === "clear-days"
     ? usesStableClearDayAggregate ? ["clear-days-stable"] : [...CLEAR_DAYS]
-    : [selection.dateScope]
-  const scale = selection.dateScope !== "clear-days"
-    ? 1
-    : usesStableClearDayAggregate
-      ? selection.aggregation === "sum" ? CLEAR_DAYS.length : 1
-      : selection.aggregation === "average" ? 1 / CLEAR_DAYS.length : 1
+    : [...datesForScope(selection.dateScope)]
+  const scale = usesStableClearDayAggregate
+    ? selection.aggregation === "sum" ? CLEAR_DAYS.length : 1
+    : selection.aggregation === "average" ? 1 / datesForScope(selection.dateScope).length : 1
 
   const flows = [...byPair.values()].map((rows) => {
     const first = rows[0]

@@ -1,3 +1,4 @@
+import { selectDate, currentDate } from "./app-test-support"
 import { flushPromises, mount, type VueWrapper } from "@vue/test-utils"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import App from "./App.vue"
@@ -132,7 +133,7 @@ describe("bounds focus", () => {
 
       expect(trackCalls()).toHaveLength(0)
       expect(wrapper.find('[aria-label="矩形聚焦详情"]').exists()).toBe(false)
-      expect(wrapper.get('[aria-label="框选范围"]').text()).toBe("框选范围")
+      expect(wrapper.get('[aria-label="框选范围"]').text()).toBe("框选")
       expect(leaflet.mapInstance.dragging.enable).toHaveBeenCalled()
     },
   )
@@ -140,21 +141,21 @@ describe("bounds focus", () => {
   it("cancels drawing by button or Escape without changing analysis controls", async () => {
     wrapper = mount(App)
     await flushPromises()
-    await wrapper.get('[aria-label="日期"]').setValue("2020-12-23")
+    await selectDate(wrapper, "2020-12-23")
     await wrapper.get('[aria-label="开始时间"]').setValue("7")
 
     await wrapper.get('[aria-label="框选范围"]').trigger("click")
-    expect(wrapper.get('[aria-label="框选范围"]').text()).toBe("取消框选")
-    expect((wrapper.get('[aria-label="内容图层"]').element as HTMLSelectElement).disabled).toBe(true)
-    expect((wrapper.get('[aria-label="日期"]').element as HTMLSelectElement).disabled).toBe(true)
+    expect(wrapper.get('[aria-label="框选范围"]').text()).toBe("× 取消框选")
+    expect((wrapper.get('[role="tab"][aria-selected="true"]').element as HTMLButtonElement).disabled).toBe(true)
+    expect((wrapper.get('[aria-label="开始日期"]').element as HTMLInputElement).disabled).toBe(true)
     await wrapper.get('[aria-label="框选范围"]').trigger("click")
     await wrapper.get('[aria-label="框选范围"]').trigger("click")
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))
     await wrapper.vm.$nextTick()
 
     expect(trackCalls()).toHaveLength(0)
-    expect(wrapper.get('[aria-label="框选范围"]').text()).toBe("框选范围")
-    expect((wrapper.get('[aria-label="日期"]').element as HTMLSelectElement).value).toBe("2020-12-23")
+    expect(wrapper.get('[aria-label="框选范围"]').text()).toBe("框选")
+    expect(currentDate(wrapper)).toBe("2020-12-23")
     expect((wrapper.get('[aria-label="开始时间"]').element as HTMLInputElement).value).toBe("7")
   })
 
@@ -172,7 +173,7 @@ describe("bounds focus", () => {
     })
     wrapper = mount(App)
     await flushPromises()
-    await wrapper.get('[aria-label="日期"]').setValue("2020-12-23")
+    await selectDate(wrapper, "2020-12-23")
     await wrapper.get('[aria-label="开始时间"]').setValue("7")
     await wrapper.get('[aria-label="结束时间"]').setValue("9")
 

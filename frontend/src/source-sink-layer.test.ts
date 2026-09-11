@@ -1,3 +1,4 @@
+import { selectDate } from "./app-test-support"
 import { flushPromises, mount } from "@vue/test-utils"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import App from "./App.vue"
@@ -14,6 +15,7 @@ import {
   sourceSinkLegend,
   sourceSinkState,
   sourceSinkTooltip,
+  regionProfile,
 } from "./source-sink-layer"
 
 const leaflet = vi.hoisted(() => {
@@ -107,20 +109,21 @@ describe("source-sink layer", () => {
     expect(sourceSinkState(2)).toContain("汇 +")
   })
 
-  it("puts the date, cumulative time, aggregation meaning, direction rose, and static profile next to tooltip values", () => {
-    const tooltip = sourceSinkTooltip(aggregatedRegion(2), selection, "思明片区")
-
-    expect(sourceSinkLegend(2, selection)).toContain("晴天集")
-    expect(sourceSinkLegend(2, selection)).toContain("4 日平均，06:00–10:00 所选时段累计")
-    expect(tooltip).toContain("汇 +2")
-    expect(tooltip).toContain("思明片区")
-    expect(tooltip).toContain("解锁 10")
-    expect(tooltip).toContain("PI_r 0.25")
-    expect(tooltip).toContain("方向玫瑰（16 扇区）")
-    expect(tooltip.match(/<line /g)).toHaveLength(16)
-    expect(tooltip).toContain("静态画像（不随筛选变化）")
-    expect(tooltip).toContain("4 日平均，06:00–10:00 所选时段累计")
-    expect(sourceSinkTooltip(aggregatedRegion(null), selection, "思明片区")).not.toContain("不可计算°")
+  it("keeps hover to a name and value, and gives the sidebar connected alternating rose sectors", () => {
+    const tooltip = sourceSinkTooltip(aggregatedRegion(2))
+    expect(tooltip).toContain("思明-1")
+    expect(tooltip).toContain('2<small>')
+    expect(tooltip).not.toContain("解锁")
+    expect(tooltip).not.toContain("svg")
+    const profile = regionProfile(aggregatedRegion(2), selection, "思明片区")
+    expect(profile).toContain("思明片区")
+    expect(profile).toContain("4 日平均")
+    expect(profile.match(/<polygon /g)).toHaveLength(17)
+    expect(profile.match(/fill="#9bb9c7"/g)).toHaveLength(8)
+    expect(profile.match(/fill="#48798f"/g)).toHaveLength(8)
+    expect(profile).toContain("方向角")
+    expect(regionProfile(aggregatedRegion(null), selection, "思明片区")).not.toContain("不可计算°")
+    expect(sourceSinkTooltip({ ...aggregatedRegion(2), region_code: '<script>' })).toContain('&lt;script&gt;')
   })
 
   it("renders the default layer and keeps global filters when switching away and back", async () => {
@@ -180,26 +183,26 @@ describe("source-sink layer", () => {
     const wrapper = mount(App)
     await flushPromises()
 
-    expect(wrapper.get('[aria-label="净流入强度图例"]').text()).toContain("4 日平均，06:00–10:00 所选时段累计")
+    expect(wrapper.get('[aria-label="图层说明"]').text()).toContain("4 日平均，06:00–10:00 所选时段累计")
     expect(leaflet.featureLayer.bindTooltip).toHaveBeenCalledWith(
-      expect.stringContaining("思明片区"),
+      expect.stringContaining("思明-1"),
       expect.objectContaining({ sticky: true }),
     )
     expect(leaflet.featureLayer.bindTooltip).toHaveBeenCalledWith(
-      expect.stringContaining("汇 +4"),
+      expect.stringContaining("4<small>"),
       expect.anything(),
     )
 
-    await wrapper.get('[aria-label="日期"]').setValue("2020-12-23")
+    await selectDate(wrapper, "2020-12-23")
     await wrapper.get('[aria-label="开始时间"]').setValue("7")
     await wrapper.get('[aria-label="结束时间"]').setValue("9")
     await wrapper.get('[aria-label="聚合口径"]').setValue("sum")
-    await wrapper.get('[aria-label="内容图层"]').setValue("flows")
+    await wrapper.get('[data-layer="flows"]').trigger("click")
     expect(wrapper.find('[aria-label="净流入强度图例"]').exists()).toBe(false)
 
-    await wrapper.get('[aria-label="内容图层"]').setValue("source-sink")
-    expect(wrapper.get('[aria-label="净流入强度图例"]').text()).toContain("2020-12-23")
-    expect(wrapper.get('[aria-label="净流入强度图例"]').text()).toContain("单日，07:00–09:00 所选时段累计")
+    await wrapper.get('[data-layer="source-sink"]').trigger("click")
+    expect(wrapper.get('[aria-label="图层说明"]').text()).toContain("12/23")
+    expect(wrapper.get('[aria-label="图层说明"]').text()).toContain("单日，07:00–09:00 所选时段累计")
     expect((wrapper.get('[aria-label="聚合口径"]').element as HTMLSelectElement).value).toBe("sum")
 
     wrapper.unmount()

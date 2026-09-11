@@ -67,7 +67,7 @@ describe("failure isolation", () => {
     const tileError = leaflet.tile.on.mock.calls.find(([event]) => event === "tileerror")?.[1]
     tileError()
     await wrapper.vm.$nextTick()
-    expect(wrapper.text()).toContain("外部底图不可用，本地业务地图仍可查看")
+    expect(wrapper.text()).toContain("底图暂不可用，本地地图仍可查看")
     expect(leaflet.mapInstance.removeLayer).toHaveBeenCalledWith(leaflet.tile)
   })
 
@@ -95,7 +95,7 @@ describe("failure isolation", () => {
     wrapper = mount(App)
     await flushPromises()
 
-    await wrapper.get('[aria-label="内容图层"]').setValue("flows")
+    await wrapper.get('[data-layer="flows"]').trigger("click")
     expect(wrapper.text()).toContain("正在加载区域流")
     flow.resolve({ ok: false, status: 503, json: async () => ({ detail: "private error" }) } as Response)
     await flushPromises()
@@ -107,7 +107,7 @@ describe("failure isolation", () => {
     expect(wrapper.text()).toContain("当前条件下没有区域流")
 
     mode = "sequence-loading"
-    await wrapper.get('[aria-label="内容图层"]').setValue("sequences")
+    await wrapper.get('[data-layer="sequences"]').trigger("click")
     expect(wrapper.text()).toContain("正在加载通勤链")
     sequence.resolve({ ok: false, status: 503, json: async () => ({ detail: "private" }) } as Response)
     await flushPromises()

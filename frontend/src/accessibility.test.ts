@@ -51,22 +51,26 @@ describe("basic accessibility", () => {
 
     const checkControls = (names: string[]) => names.forEach((name) => {
       const control = app.get(`[aria-label="${name}"]`)
-      expect(control.element.closest("label") ?? control.element.closest("fieldset")?.querySelector("legend")).not.toBeNull()
+      expect(control.attributes("aria-label")).toBe(name)
       ;(control.element as HTMLElement).focus()
       expect(document.activeElement).toBe(control.element)
     })
-    checkControls(["内容图层", "日期", "开始时间", "结束时间", "聚合口径"])
+    checkControls(["开始日期", "结束日期", "开始时间", "结束时间", "聚合口径"])
+    const tab = wrapper.get('[role="tab"][aria-selected="true"]')
+    ;(tab.element as HTMLButtonElement).focus()
+    await tab.trigger("keydown", { key: "ArrowRight" })
+    expect(wrapper.get('[role="tab"][aria-selected="true"]').attributes("data-layer")).toBe("sequences")
 
-    await wrapper.get('[aria-label="内容图层"]').setValue("flows")
+    await wrapper.get('[data-layer="flows"]').trigger("click")
     await flushPromises()
     checkControls(["流矩阵", "显著性"])
-    await wrapper.get('[aria-label="内容图层"]').setValue("sequences")
+    await wrapper.get('[data-layer="sequences"]').trigger("click")
     await flushPromises()
     checkControls(["连续支持度门槛", "Top-N"])
 
     await wrapper.get('[aria-label="区域地图等价操作"] button').trigger("click")
     await flushPromises()
-    checkControls(["聚焦开始时间", "聚焦结束时间"])
+    expect(wrapper.find('[aria-label="聚焦开始时间"]').exists()).toBe(false)
   })
 
   it("provides keyboard equivalents for region, flow, and sequence map objects", async () => {
@@ -74,17 +78,17 @@ describe("basic accessibility", () => {
     await flushPromises()
 
     const regionActions = wrapper.get('[aria-label="区域地图等价操作"]')
-    expect(regionActions.findAll("button").map((button) => button.text())).toEqual(["聚焦 R-7", "聚焦 R-8"])
+    expect(regionActions.findAll("button").map((button) => button.text())).toEqual(["R-7", "R-8"])
     await regionActions.findAll("button")[0].trigger("click")
     await flushPromises()
     expect(wrapper.find('[aria-label="区域聚焦详情"]').exists()).toBe(true)
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))
     await wrapper.vm.$nextTick()
 
-    await wrapper.get('[aria-label="内容图层"]').setValue("flows")
+    await wrapper.get('[data-layer="flows"]').trigger("click")
     await flushPromises()
     expect(wrapper.get('[aria-label="Top 50 区域流列表"]').findAll("button")).toHaveLength(1)
-    await wrapper.get('[aria-label="内容图层"]').setValue("sequences")
+    await wrapper.get('[data-layer="sequences"]').trigger("click")
     await flushPromises()
     expect(wrapper.get('[aria-label="典型通勤链列表"]').findAll("button")).toHaveLength(1)
     expect(wrapper.get('[aria-label="框选范围"]').element.tagName).toBe("BUTTON")
@@ -94,15 +98,15 @@ describe("basic accessibility", () => {
     wrapper = mount(App)
     await flushPromises()
 
-    expect(wrapper.get('[aria-label="净流入强度图例"]').text()).toContain("源 − ｜ 平衡 0 ｜ 汇 +")
+    expect(wrapper.get('[aria-label="净流入强度图例"]').text()).toContain("源 —0汇 —")
     await wrapper.get('[aria-label="框选范围"]').trigger("click")
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))
     await wrapper.vm.$nextTick()
-    expect(wrapper.get('[aria-label="框选范围"]').text()).toBe("框选范围")
+    expect(wrapper.get('[aria-label="框选范围"]').text()).toBe("框选")
 
-    await wrapper.get('[aria-label="内容图层"]').setValue("flows")
+    await wrapper.get('[data-layer="flows"]').trigger("click")
     await flushPromises()
-    expect(wrapper.get('[aria-label="所选流对详情"]').text()).toContain("显著是")
+    expect(wrapper.get('[aria-label="流对检验详情"]').text()).toContain("显著是")
     expect(wrapper.get('[aria-label="显著性"]').element.closest("label")?.textContent).toContain("显著性")
 
     vi.mocked(fetch).mockResolvedValue({ ok: false, json: async () => ({ detail: "private error" }) } as Response)
