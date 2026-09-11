@@ -210,6 +210,7 @@ h1 {
 .focus-active footer,
 .focus-active .flow-panel,
 .focus-active .sequence-panel,
+.focus-active .region-actions,
 .focus-active .source-sink-legend {
   filter: brightness(0.65);
   pointer-events: none;
@@ -417,6 +418,32 @@ h1 {
   background: rgb(255 255 255 / 94%);
   box-shadow: 0 4px 18px rgb(15 23 42 / 14%);
   font-size: 0.78rem;
+}
+
+.region-actions {
+  position: absolute;
+  z-index: 500;
+  top: 1rem;
+  right: 1rem;
+  max-height: calc(100% - 2rem);
+  padding: 0.6rem 0.75rem;
+  overflow: auto;
+  border: 1px solid #94a3b8;
+  border-radius: 0.3rem;
+  background: rgb(255 255 255 / 94%);
+  font-size: 0.78rem;
+}
+
+.region-actions ol {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.6rem 0 0;
+  padding-left: 1.5rem;
+}
+
+.region-actions button {
+  width: 100%;
+  text-align: left;
 }
 
 .source-sink-tooltip {

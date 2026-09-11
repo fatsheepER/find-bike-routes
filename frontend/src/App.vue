@@ -181,6 +181,7 @@ let flowLayer: LayerGroup | null = null
 let sequenceLayer: LayerGroup | null = null
 let focusLayer: LayerGroup | null = null
 let drawLayer: LayerGroup | null = null
+let regionRequest: AbortController | null = null
 let flowRequest: AbortController | null = null
 let sequenceRequest: AbortController | null = null
 let trackRequest: AbortController | null = null
@@ -778,17 +779,22 @@ function setSequenceLimit(event: Event): void {
 }
 
 async function loadRegions(): Promise<void> {
+  regionRequest?.abort()
+  const request = new AbortController()
+  regionRequest = request
   regionStatus.value = "loading"
   try {
-    const response = await fetch("/api/regions")
+    const response = await fetch("/api/regions", { signal: request.signal })
     if (!response.ok) throw new Error("region request failed")
     const context = (await response.json()) as RegionContext
-    if (stopped) return
+    if (stopped || request !== regionRequest) return
     regionContext.value = context
     regionStatus.value = context.regions.features.length === 0 ? "empty" : "ready"
     initializeMap(context)
-  } catch {
-    if (!stopped) regionStatus.value = "error"
+  } catch (problem) {
+    if (!stopped && request === regionRequest && (problem as Error).name !== "AbortError") {
+      regionStatus.value = "error"
+    }
   }
 }
 
@@ -836,6 +842,7 @@ watch([layer, dateScope, sequenceSupport, sequenceLimit], () => {
   if (layer.value === "sequences") void loadSequences()
   else {
     sequenceRequest?.abort()
+    sequenceRequest = null
     sequenceStatus.value = "idle"
     sequenceResponse.value = null
     selectedSequenceIndex.value = 0
@@ -845,6 +852,7 @@ watch([layer, dateScope, startHour, endHour, flowMatrix, flowSignificance], () =
   if (layer.value === "flows") void loadFlows()
   else {
     flowRequest?.abort()
+    flowRequest = null
     flowStatus.value = "idle"
     flowSlices.value = []
     selectedFlowKey.value = null
@@ -882,6 +890,7 @@ watch(
 
 onBeforeUnmount(() => {
   stopped = true
+  regionRequest?.abort()
   flowRequest?.abort()
   sequenceRequest?.abort()
   trackRequest?.abort()
@@ -1005,6 +1014,16 @@ onBeforeUnmount(() => {
           <span>{{ sourceSinkLegendText }}</span>
           <span>灰色表示不可计算</span>
         </aside>
+        <details v-if="regionStatus === 'ready'" class="region-actions" aria-label="区域地图等价操作">
+          <summary>键盘选择区域</summary>
+          <ol>
+            <li v-for="region in aggregatedRegions" :key="region.region_id">
+              <button type="button" :disabled="interactionLocked" @click="enterGeographicFocus({ type: 'region', regionId: region.region_id })">
+                聚焦 {{ region.region_code }}
+              </button>
+            </li>
+          </ol>
+        </details>
         <div id="map" ref="mapElement" />
       </section>
 
@@ -1082,7 +1101,7 @@ onBeforeUnmount(() => {
         </div>
         <p v-else-if="sequenceStatus === 'empty'" role="status">当前条件下没有通勤链。</p>
         <template v-else-if="sequenceResponse">
-          <ol class="sequence-list">
+          <ol class="sequence-list" aria-label="典型通勤链列表">
             <li v-for="(pattern, index) in sequenceResponse.patterns" :key="pattern.region_ids.join('-')">
               <button
                 type="button"
