@@ -372,6 +372,10 @@ h1 {
   background: #dbe7ea;
 }
 
+.bounds-drawing #map {
+  cursor: crosshair;
+}
+
 .map-status,
 .basemap-status {
   position: absolute;
