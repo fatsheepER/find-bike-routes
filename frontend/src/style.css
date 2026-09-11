@@ -124,6 +124,7 @@ h1 {
 }
 
 .workspace {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   min-height: 0;
@@ -137,13 +138,106 @@ h1 {
 }
 
 .flow-panel,
-.sequence-panel {
+.sequence-panel,
+.focus-panel {
   z-index: 600;
   width: 23rem;
   padding: 1rem;
   overflow: auto;
   border-left: 1px solid #c7d2d9;
   background: #f8fafb;
+}
+
+.focus-panel {
+  position: absolute;
+  z-index: 800;
+  inset: 0 0 0 auto;
+  width: 27rem;
+  box-shadow: -0.25rem 0 1rem rgb(15 23 42 / 18%);
+}
+
+.focus-heading {
+  display: flex;
+  gap: 1rem;
+  align-items: start;
+  justify-content: space-between;
+}
+
+.focus-heading h2,
+.focus-panel h3 {
+  margin: 0;
+}
+
+.focus-details {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.35rem 0.7rem;
+  margin: 1rem 0;
+}
+
+.focus-details dt {
+  color: #425466;
+  font-weight: 650;
+}
+
+.focus-details dd {
+  margin: 0;
+}
+
+.focus-sample-note {
+  color: #425466;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.focus-time {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 0.5rem;
+  align-items: end;
+  margin: 1rem 0;
+}
+
+.focus-time label {
+  display: grid;
+  gap: 0.25rem;
+  color: #425466;
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.focus-active header,
+.focus-active footer,
+.focus-active .flow-panel,
+.focus-active .sequence-panel,
+.focus-active .source-sink-legend {
+  filter: brightness(0.65);
+  pointer-events: none;
+}
+
+.focus-active .leaflet-tile-pane,
+.focus-active .leaflet-overlay-pane,
+.focus-active .leaflet-marker-pane {
+  filter: brightness(0.55);
+  opacity: 0.45;
+}
+
+.leaflet-focus-pane {
+  z-index: 650;
+}
+
+.focus-count-marker span {
+  display: inline-grid;
+  min-width: 2.5rem;
+  min-height: 2.5rem;
+  place-items: center;
+  padding: 0.25rem;
+  border: 3px solid #fff;
+  border-radius: 999px;
+  background: #c2410c;
+  color: #fff;
+  font-weight: 800;
+  box-shadow: 0 2px 8px rgb(15 23 42 / 30%);
 }
 
 .flow-panel h2,

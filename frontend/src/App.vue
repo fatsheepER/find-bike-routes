@@ -14,6 +14,7 @@ import {
 } from "./flow-aggregation"
 import {
   aggregateRegion,
+  datesForScope,
   type Aggregation,
   type DateScope,
   type RegionFeature,
@@ -54,6 +55,31 @@ type SequenceResponse = {
   valid_tracks: number
   limit: number
   patterns: SequencePattern[]
+}
+type TrackFeature = GeoJSON.Feature<GeoJSON.Geometry, { track_id: string | number; request_date?: string }>
+type TrackResponse = {
+  total_count: number
+  samples: { type: "FeatureCollection"; features: TrackFeature[] }
+}
+type FocusSnapshot = {
+  layer: Layer
+  selection: RegionSelection
+  flowMatrix: FlowMatrix
+  flowSignificance: FlowSignificance
+  selectedFlowKey: string | null
+  selectedSequenceIndex: number
+  center: L.LatLng
+  zoom: number
+  userAdjustedView: boolean
+}
+type RegionFocus = {
+  regionId: number
+  selection: RegionSelection
+  status: "loading" | "ready" | "error"
+  error: string | null
+  totalCount: number
+  samples: TrackFeature[]
+  snapshot: FocusSnapshot
 }
 const SUPPORT_LEVELS = [0.0002, 0.0005, 0.001, 0.002, 0.005, 0.01] as const
 const HEALTH_COMPONENTS = [
@@ -122,14 +148,35 @@ const districtByRegion = computed(() => new Map(
   ]) ?? [],
 ))
 const districtFlows = computed(() => aggregateDistrictFlows(visibleFlows.value, districtByRegion.value))
+const regionFocus = ref<RegionFocus | null>(null)
+const focusActive = computed(() => regionFocus.value !== null)
+const focusedRegion = computed(() => regionContext.value?.regions.features.find(
+  (feature) => feature.properties.region_id === regionFocus.value?.regionId,
+) ?? null)
+const focusSelection = computed(() => regionFocus.value?.selection ?? null)
+const focusedProfile = computed(() =>
+  focusedRegion.value && focusSelection.value
+    ? aggregateRegion(focusedRegion.value, focusSelection.value)
+    : null,
+)
+const focusedProfileHtml = computed(() => {
+  if (!focusedProfile.value || !focusSelection.value) return ""
+  return sourceSinkTooltip(
+    focusedProfile.value,
+    focusSelection.value,
+    districtName(focusedProfile.value.district_id),
+  )
+})
 
 let map: LeafletMap | null = null
 let tileLayer: TileLayer | null = null
 let regionLayer: LeafletGeoJSON | null = null
 let flowLayer: LayerGroup | null = null
 let sequenceLayer: LayerGroup | null = null
+let focusLayer: LayerGroup | null = null
 let flowRequest: AbortController | null = null
 let sequenceRequest: AbortController | null = null
+let trackRequest: AbortController | null = null
 let flowChart: ECharts | null = null
 const flowChartElement = ref<HTMLElement | null>(null)
 let resizeObserver: ResizeObserver | null = null
@@ -167,6 +214,7 @@ function renderRegions(): void {
   const regionFor = (feature?: GeoJSON.Feature) =>
     feature?.properties ? byId.get(feature.properties.region_id as number) : undefined
   regionLayer = L.geoJSON(regionContext.value.regions as GeoJSON.FeatureCollection, {
+    interactive: !focusActive.value,
     style: (feature) => {
       const region = regionFor(feature)
       return {
@@ -178,6 +226,11 @@ function renderRegions(): void {
     },
     onEachFeature: (feature, leafletLayer) => {
       const region = regionFor(feature)
+      if (region) {
+        leafletLayer.on?.("click", () => {
+          if (!focusActive.value) void enterRegionFocus(region.region_id)
+        })
+      }
       if (showSourceSink && region) {
         const districtLabel = districtLabels.get(region.district_id) ?? String(region.district_id)
         leafletLayer.bindTooltip(sourceSinkTooltip(region, selection.value, districtLabel), { sticky: true })
@@ -190,6 +243,7 @@ function initializeMap(context: RegionContext): void {
   if (map || !mapElement.value) return
 
   map = L.map(mapElement.value, { attributionControl: true })
+  map.createPane?.("focusPane")
   map.setMaxBounds(leafletBounds(context.map_bounds))
   const cartoKey = import.meta.env.VITE_CARTO_API_KEY
   if (!cartoKey) {
@@ -234,6 +288,152 @@ function initializeMap(context: RegionContext): void {
   drawSequences()
 }
 
+function focusError(status: number): string {
+  if (status === 422) return "输入范围无效，请调整后重试。"
+  if (status === 404) return "所选区域不存在，请退出后重新选择。"
+  if (status === 503) return "轨迹查询依赖暂不可用，请稍后重试。"
+  return "轨迹查询服务暂不可用，请重试。"
+}
+
+function focusTimestamp(date: string, hour: number): string {
+  return `${date}T${String(hour).padStart(2, "0")}:00:00+08:00`
+}
+
+function drawRegionFocus(): void {
+  focusLayer?.clearLayers()
+  if (!map || !regionFocus.value || !focusedRegion.value) return
+  focusLayer ??= L.layerGroup().addTo(map)
+  L.geoJSON(focusedRegion.value as GeoJSON.Feature, {
+    pane: "focusPane",
+    style: { color: "#f97316", fillColor: "#fff7ed", fillOpacity: 0.12, weight: 4 },
+  }).addTo(focusLayer)
+  if (regionFocus.value.status === "ready" && regionFocus.value.samples.length) {
+    L.geoJSON({ type: "FeatureCollection", features: regionFocus.value.samples } as GeoJSON.FeatureCollection, {
+      pane: "focusPane",
+      style: { color: "#0369a1", opacity: 0.75, weight: 3 },
+    }).addTo(focusLayer)
+  }
+  const anchor = focusedRegion.value.properties.map_anchor
+  if (regionFocus.value.status === "ready" && anchor?.type === "Point") {
+    L.marker([anchor.coordinates[1], anchor.coordinates[0]], {
+      pane: "focusPane",
+      icon: L.divIcon({
+        className: "focus-count-marker",
+        html: `<span>${regionFocus.value.totalCount}</span>`,
+      }),
+    }).addTo(focusLayer)
+  }
+}
+
+async function loadRegionFocus(): Promise<void> {
+  const focus = regionFocus.value
+  if (!focus) return
+  trackRequest?.abort()
+  const request = new AbortController()
+  trackRequest = request
+  focus.status = "loading"
+  focus.error = null
+  focus.totalCount = 0
+  focus.samples = []
+  try {
+    const results = await Promise.all(datesForScope(focus.selection.dateScope).map(async (date) => {
+      const response = await fetch("/api/tracks/query", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: request.signal,
+        body: JSON.stringify({
+          selection: { type: "region", region_id: focus.regionId },
+          start: focusTimestamp(date, focus.selection.startHour),
+          end: focusTimestamp(date, focus.selection.endHour),
+          sample_limit: 20,
+        }),
+      })
+      if (!response.ok) throw Object.assign(new Error("track request failed"), { status: response.status })
+      const payload = (await response.json()) as TrackResponse
+      if (!Array.isArray(payload.samples?.features) || !Number.isInteger(payload.total_count)) {
+        throw new Error("invalid track response")
+      }
+      return {
+        totalCount: payload.total_count,
+        samples: payload.samples.features.map((feature) => ({
+          ...feature,
+          properties: { ...feature.properties, request_date: date },
+        })),
+      }
+    }))
+    if (stopped || request !== trackRequest || focus !== regionFocus.value) return
+    focus.totalCount = results.reduce((total, result) => total + result.totalCount, 0)
+    focus.samples = results.flatMap((result) => result.samples)
+      .sort((left, right) =>
+        String(left.properties.request_date).localeCompare(String(right.properties.request_date)) ||
+        String(left.properties.track_id).localeCompare(String(right.properties.track_id)),
+      )
+      .slice(0, 20)
+    focus.status = "ready"
+  } catch (problem) {
+    if (!stopped && request === trackRequest && focus === regionFocus.value && (problem as Error).name !== "AbortError") {
+      focus.status = "error"
+      focus.error = focusError(Number((problem as Error & { status?: number }).status ?? 500))
+    }
+  }
+}
+
+async function enterRegionFocus(regionId: number): Promise<void> {
+  if (!map || regionFocus.value) return
+  regionFocus.value = {
+    regionId,
+    selection: {
+      ...selection.value,
+      startHour: layer.value === "sequences" ? 6 : startHour.value,
+      endHour: layer.value === "sequences" ? 10 : endHour.value,
+    },
+    status: "loading",
+    error: null,
+    totalCount: 0,
+    samples: [],
+    snapshot: {
+      layer: layer.value,
+      selection: { ...selection.value },
+      flowMatrix: flowMatrix.value,
+      flowSignificance: flowSignificance.value,
+      selectedFlowKey: selectedFlowKey.value,
+      selectedSequenceIndex: selectedSequenceIndex.value,
+      center: map.getCenter(),
+      zoom: map.getZoom(),
+      userAdjustedView,
+    },
+  }
+  drawRegionFocus()
+  await loadRegionFocus()
+}
+
+function exitRegionFocus(): void {
+  const snapshot = regionFocus.value?.snapshot
+  if (!snapshot) return
+  trackRequest?.abort()
+  focusLayer?.clearLayers()
+  regionFocus.value = null
+  layer.value = snapshot.layer
+  dateScope.value = snapshot.selection.dateScope
+  startHour.value = snapshot.selection.startHour
+  endHour.value = snapshot.selection.endHour
+  aggregation.value = snapshot.selection.aggregation
+  flowMatrix.value = snapshot.flowMatrix
+  flowSignificance.value = snapshot.flowSignificance
+  selectedFlowKey.value = snapshot.selectedFlowKey
+  selectedSequenceIndex.value = snapshot.selectedSequenceIndex
+  userAdjustedView = snapshot.userAdjustedView
+  if (map) {
+    fittingView = true
+    map.setView(snapshot.center, snapshot.zoom, { animate: false })
+    fittingView = false
+  }
+}
+
+function handleKeydown(event: KeyboardEvent): void {
+  if (event.key === "Escape" && regionFocus.value) exitRegionFocus()
+}
+
 function districtName(id: number): string {
   const district = regionContext.value?.districts.features.find(
     (feature) => feature.properties.district_id === id,
@@ -255,6 +455,7 @@ function regionDistrictName(id: number): string {
 
 function selectFlow(flow: AggregatedFlow, event?: L.LeafletMouseEvent): void {
   if (event?.originalEvent) L.DomEvent.stopPropagation(event.originalEvent)
+  if (focusActive.value) return
   selectedFlowKey.value = flowKey(flow)
 }
 
@@ -306,6 +507,7 @@ function drawFlows(): void {
     L.polyline(flowArc(from, to), {
       className: "flow-arc",
       color,
+      interactive: !focusActive.value,
       opacity: selected ? 0.95 : 0.58,
       weight,
     })
@@ -318,7 +520,7 @@ function drawFlows(): void {
         className: "flow-arrow",
         html: `<span style="color: ${color}; transform: rotate(${rotation}deg)">➤</span>`,
       }),
-      interactive: true,
+      interactive: !focusActive.value,
     })
       .addTo(flowLayer)
       .on("click", (event) => selectFlow(flow, event))
@@ -399,6 +601,7 @@ function renderFlowChart(): void {
 
 function selectSequence(index: number, event?: L.LeafletMouseEvent): void {
   if (event?.originalEvent) L.DomEvent.stopPropagation(event.originalEvent)
+  if (focusActive.value) return
   selectedSequenceIndex.value = index
 }
 
@@ -425,6 +628,7 @@ function drawSequences(): void {
     const selected = index === selectedSequenceIndex.value
     L.polyline(positions, {
       color: selected ? "#c2410c" : "#64748b",
+      interactive: !focusActive.value,
       opacity: selected ? 1 : 0.35,
       weight: selected ? 5 : 2,
     })
@@ -435,6 +639,7 @@ function drawSequences(): void {
         color: selected ? "#9a3412" : "#64748b",
         fillColor: selected ? "#fb923c" : "#cbd5e1",
         fillOpacity: selected ? 1 : 0.5,
+        interactive: !focusActive.value,
         radius: selected ? 6 : 4,
         weight: 2,
       })
@@ -546,24 +751,37 @@ watch([layer, dateScope, startHour, endHour, flowMatrix, flowSignificance], () =
     selectedFlowKey.value = null
   }
 })
-watch([layer, flowStatus, topFlows, currentFlow, regionContext], drawFlows)
+watch([layer, flowStatus, topFlows, currentFlow, regionContext, focusActive], drawFlows)
 watch([layer, flowStatus, districtFlows, currentFlow, regionContext], async () => {
   await nextTick()
   renderFlowChart()
 }, { flush: "post" })
-watch([layer, sequenceStatus, sequenceResponse, selectedSequenceIndex, regionContext], drawSequences)
+watch([layer, sequenceStatus, sequenceResponse, selectedSequenceIndex, regionContext, focusActive], drawSequences)
 
 onMounted(() => {
+  window.addEventListener("keydown", handleKeydown)
   void loadRegions()
   void loadHealth()
 })
 
 watch([layer, dateScope, startHour, endHour, aggregation], renderRegions)
+watch(focusActive, renderRegions)
+watch(regionFocus, drawRegionFocus, { deep: true })
+watch(
+  () => regionFocus.value && [regionFocus.value.selection.startHour, regionFocus.value.selection.endHour],
+  (current, previous) => {
+    if (current && previous && (current[0] !== previous[0] || current[1] !== previous[1])) {
+      void loadRegionFocus()
+    }
+  },
+)
 
 onBeforeUnmount(() => {
   stopped = true
   flowRequest?.abort()
   sequenceRequest?.abort()
+  trackRequest?.abort()
+  window.removeEventListener("keydown", handleKeydown)
   flowChart?.dispose()
   resizeObserver?.disconnect()
   map?.remove()
@@ -573,8 +791,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="app-shell">
-    <header>
+  <main class="app-shell" :class="{ 'focus-active': focusActive }">
+    <header :inert="focusActive">
       <div>
         <p class="eyebrow">课程数据演示</p>
         <h1>厦门本岛早高峰共享单车流动</h1>
@@ -583,7 +801,7 @@ onBeforeUnmount(() => {
       <form class="toolbar" aria-label="全局工具栏" @submit.prevent>
         <label>
           内容图层
-          <select v-model="layer" aria-label="内容图层">
+          <select v-model="layer" aria-label="内容图层" :disabled="focusActive">
             <option value="source-sink">源汇</option>
             <option value="flows">区域间流动</option>
             <option value="sequences">典型通勤链</option>
@@ -592,7 +810,7 @@ onBeforeUnmount(() => {
 
         <label>
           日期
-          <select v-model="dateScope" aria-label="日期">
+          <select v-model="dateScope" aria-label="日期" :disabled="focusActive">
             <option value="clear-days">晴天集（12-21、12-22、12-24、12-25）</option>
             <option value="2020-12-21">2020-12-21</option>
             <option value="2020-12-22">2020-12-22</option>
@@ -602,7 +820,7 @@ onBeforeUnmount(() => {
           </select>
         </label>
 
-        <fieldset :disabled="analysisControlsDisabled">
+        <fieldset :disabled="analysisControlsDisabled || focusActive">
           <legend>连续整点范围</legend>
           <label>
             开始
@@ -613,7 +831,7 @@ onBeforeUnmount(() => {
               min="6"
               :max="endHour - 1"
               step="1"
-              :disabled="analysisControlsDisabled"
+              :disabled="analysisControlsDisabled || focusActive"
             />
           </label>
           <label>
@@ -625,7 +843,7 @@ onBeforeUnmount(() => {
               :min="startHour + 1"
               max="10"
               step="1"
-              :disabled="analysisControlsDisabled"
+              :disabled="analysisControlsDisabled || focusActive"
             />
           </label>
           <output>{{ String(startHour).padStart(2, "0") }}:00–{{ String(endHour).padStart(2, "0") }}:00</output>
@@ -633,7 +851,7 @@ onBeforeUnmount(() => {
 
         <label>
           聚合口径
-          <select v-model="aggregation" aria-label="聚合口径" :disabled="analysisControlsDisabled">
+          <select v-model="aggregation" aria-label="聚合口径" :disabled="analysisControlsDisabled || focusActive">
             <option value="average">跨日平均</option>
             <option value="sum">跨日合计</option>
           </select>
@@ -643,21 +861,21 @@ onBeforeUnmount(() => {
           <legend>流动上下文</legend>
           <label>
             矩阵
-            <select v-model="flowMatrix" aria-label="流矩阵">
+            <select v-model="flowMatrix" aria-label="流矩阵" :disabled="focusActive">
               <option value="od">出行流</option>
               <option value="channel">通道流</option>
             </select>
           </label>
           <label>
             显著性
-            <select v-model="flowSignificance" aria-label="显著性">
+            <select v-model="flowSignificance" aria-label="显著性" :disabled="focusActive">
               <option value="significant">仅显著</option>
               <option value="all">全部流对</option>
             </select>
           </label>
         </fieldset>
 
-        <button type="button" @click="reset">重置</button>
+        <button type="button" :disabled="focusActive" @click="reset">重置</button>
       </form>
     </header>
 
@@ -679,7 +897,7 @@ onBeforeUnmount(() => {
         <div id="map" ref="mapElement" />
       </section>
 
-      <aside v-if="layer === 'flows'" class="flow-panel" aria-label="区域间流动">
+      <aside v-if="layer === 'flows'" class="flow-panel" aria-label="区域间流动" :inert="focusActive">
         <h2>区域间流动</h2>
         <p class="flow-scope">{{ aggregationNote(selection) }}</p>
         <p v-if="flowStatus === 'loading'" role="status">正在加载区域流…</p>
@@ -726,7 +944,7 @@ onBeforeUnmount(() => {
         </template>
       </aside>
 
-      <aside v-if="layer === 'sequences'" class="sequence-panel" aria-label="典型通勤链">
+      <aside v-if="layer === 'sequences'" class="sequence-panel" aria-label="典型通勤链" :inert="focusActive">
         <h2>典型通勤链</h2>
         <label>
           连续支持度门槛
@@ -785,9 +1003,74 @@ onBeforeUnmount(() => {
           </p>
         </template>
       </aside>
+
+      <aside v-if="regionFocus && focusedProfile" class="focus-panel" aria-label="区域聚焦详情">
+        <div class="focus-heading">
+          <div>
+            <p class="eyebrow">独立地理聚焦</p>
+            <h2>{{ focusedProfile.region_code }}</h2>
+          </div>
+          <button type="button" @click="exitRegionFocus">退出聚焦</button>
+        </div>
+
+        <dl class="focus-details">
+          <dt>选择类型</dt>
+          <dd>区域</dd>
+          <dt>区域编码</dt>
+          <dd>{{ focusedProfile.region_code }}</dd>
+          <dt>日期</dt>
+          <dd>{{ regionFocus.selection.dateScope === "clear-days" ? "晴天集（4 日）" : regionFocus.selection.dateScope }}</dd>
+          <dt>聚合口径</dt>
+          <dd>{{ regionFocus.selection.aggregation === "average" ? "跨日平均（仅用于区域动态指标）" : "跨日合计" }}</dd>
+          <dt>唯一有效轨迹总数</dt>
+          <dd>{{ regionFocus.status === "ready" ? regionFocus.totalCount : "—" }}</dd>
+          <dt>实际样例数</dt>
+          <dd>{{ regionFocus.status === "ready" ? regionFocus.samples.length : "—" }}</dd>
+        </dl>
+        <p class="focus-sample-note">样例最多 20 条；样例几何保留 API 返回的完整查询时段上下文。</p>
+
+        <fieldset class="focus-time">
+          <legend>聚焦局部时间</legend>
+          <label>
+            开始
+            <input
+              v-model.lazy.number="regionFocus.selection.startHour"
+              aria-label="聚焦开始时间"
+              type="range"
+              min="6"
+              :max="regionFocus.selection.endHour - 1"
+              step="1"
+            />
+          </label>
+          <label>
+            结束
+            <input
+              v-model.lazy.number="regionFocus.selection.endHour"
+              aria-label="聚焦结束时间"
+              type="range"
+              :min="regionFocus.selection.startHour + 1"
+              max="10"
+              step="1"
+            />
+          </label>
+          <output>{{ String(regionFocus.selection.startHour).padStart(2, "0") }}:00–{{ String(regionFocus.selection.endHour).padStart(2, "0") }}:00</output>
+        </fieldset>
+
+        <p v-if="regionFocus.status === 'loading'" role="status">正在查询有效轨迹…</p>
+        <div v-else-if="regionFocus.status === 'error'" role="alert">
+          <p>{{ regionFocus.error }}</p>
+          <button type="button" @click="loadRegionFocus">重试</button>
+        </div>
+        <p v-else-if="regionFocus.totalCount === 0" role="status">当前条件下共有 0 条唯一有效轨迹，样例为空。</p>
+
+        <section aria-label="区域画像">
+          <h3>完整区域画像</h3>
+          <div v-html="focusedProfileHtml" />
+        </section>
+      </aside>
     </section>
 
-    <footer>
+    <footer :inert="focusActive">
       <p>数据来源：厦门共享单车 GPS 与订单数据</p>
       <p>研究范围：2020-12-21 至 2020-12-25，06:00–10:00，厦门本岛</p>
       <p>结论边界：历史工作日早高峰研究结果，不代表实时、全天或厦门全市情况。</p>
