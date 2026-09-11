@@ -5,7 +5,7 @@ import App from "./App.vue"
 import { leaflet, ResizeObserverStub, testRegionContext } from "./app-test-support"
 
 vi.mock("leaflet", async () => ({ default: (await import("./app-test-support")).leaflet }))
-vi.mock("echarts", () => ({ init: vi.fn(() => ({ dispose: vi.fn(), setOption: vi.fn() })) }))
+vi.mock("echarts", () => ({ init: vi.fn(() => ({ dispose: vi.fn(), resize: vi.fn(), setOption: vi.fn() })) }))
 
 function regionResponse(digest: string) {
   return testRegionContext([7], digest)

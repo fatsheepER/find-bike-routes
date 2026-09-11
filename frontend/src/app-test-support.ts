@@ -23,6 +23,7 @@ const map = {
 }
 
 const regionClicks = new Map<number, () => void>()
+const regionElements = new Map<number, SVGElement>()
 const tile = { addTo: vi.fn(), on: vi.fn() }
 
 export const leaflet = {
@@ -32,12 +33,17 @@ export const leaflet = {
   geoJSON: vi.fn((data: { features?: Array<{ properties?: { region_id?: number } }> }, options?: {
     onEachFeature?: (feature: { properties?: { region_id?: number } }, layer: object) => void
   }) => {
-    data.features?.forEach((feature) => options?.onEachFeature?.(feature, {
-      bindTooltip: vi.fn(),
-      on: vi.fn((event: string, handler: () => void) => {
-        if (event === "click" && feature.properties?.region_id) regionClicks.set(feature.properties.region_id, handler)
-      }),
-    }))
+    data.features?.forEach((feature) => {
+      const element = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+      if (feature.properties?.region_id) regionElements.set(feature.properties.region_id, element)
+      options?.onEachFeature?.(feature, {
+        bindTooltip: vi.fn(), getElement: () => element,
+        on: vi.fn((event: string, handler: () => void) => {
+          if (event === 'add') handler()
+          if (event === "click" && feature.properties?.region_id) regionClicks.set(feature.properties.region_id, handler)
+        }),
+      })
+    })
     return mapObject()
   }),
   latLngBounds: vi.fn((southWest, northEast) => [southWest, northEast]),
@@ -51,6 +57,7 @@ export const leaflet = {
   polyline: vi.fn(mapObject),
   rectangle: vi.fn(mapObject),
   regionClicks,
+  regionElements,
   tile,
   tileLayer: vi.fn(() => tile),
 }
@@ -99,6 +106,8 @@ export async function selectDate(app: VueWrapper, date: string) {
   } else await app.get(`[aria-label="${date}"]`).trigger('click')
 }
 export function currentDate(app: VueWrapper) {
+  const single = app.find('[aria-label="通勤链日期"]')
+  if (single.exists()) return single.attributes('aria-valuetext') === '晴天集' ? 'clear-days' : single.attributes('aria-valuetext')
   const start = Number((app.get('[aria-label="开始日期"]').element as HTMLInputElement).value)
   const end = Number((app.get('[aria-label="结束日期"]').element as HTMLInputElement).value)
   return start === end ? `2020-12-${21 + start}` : 'clear-days'

@@ -1,13 +1,14 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import App from './App.vue'
+import fogIcon from './assets/symbols/cloud.fog.svg'
 import RangeControl from './RangeControl.vue'
 import { leaflet, ResizeObserverStub, testRegionContext } from './app-test-support'
 import { datesForScope } from './region-aggregation'
 import { aggregateFlows, flowRequests } from './flow-aggregation'
 
 vi.mock('leaflet', async () => ({ default: (await import('./app-test-support')).leaflet }))
-vi.mock('echarts', () => ({ init: vi.fn(() => ({ dispose: vi.fn(), setOption: vi.fn() })) }))
+vi.mock('echarts', () => ({ init: vi.fn(() => ({ dispose: vi.fn(), resize: vi.fn(), setOption: vi.fn() })) }))
 let app: VueWrapper | undefined
 beforeEach(() => {
   vi.clearAllMocks()
@@ -65,14 +66,35 @@ it('queries every selected flow date and divides by the selected day count', () 
   expect(aggregateFlows(slices, { dateScope: '2020-12-22..2020-12-23', aggregation: 'sum', significance: 'all' })[0].weight).toBe(24)
 })
 
-it('does not misrepresent a multi-day sequence selection as a single published scope', async () => {
+it('enters sequences with an untouched single-date slider and resets on every entry', async () => {
   app = mount(App)
   await flushPromises()
+  expect(app.findAll('[role="tab"]').map(tab => tab.attributes('data-layer'))).toEqual(['source-sink', 'flows', 'sequences'])
   await app.get('[aria-label="结束日期"]').setValue('2')
   await app.get('[data-layer="sequences"]').trigger('click')
   await flushPromises()
-  expect(app.get('.sequence-panel').text()).toContain('该日期组合暂无通勤链结果')
-  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).startsWith('/api/sequences'))).toBe(false)
+  expect(app.find('.sequence-date.no-date').exists()).toBe(true)
+  expect(app.find('.date-capsule .restore-button').exists()).toBe(false)
+  expect(app.findAll('.date-selector input[type="range"]')).toHaveLength(1)
+  expect(app.get('.sequence-panel').text()).not.toContain('没有通勤链')
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).startsWith('/api/sequences?scope=clear-days'))).toBe(true)
+  const slider = app.get('[aria-label="通勤链日期"]')
+  Object.defineProperty(slider.element, 'getBoundingClientRect', { value: () => ({ left: 0, width: 208 }) })
+  slider.element.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: 104 }))
+  await flushPromises()
+  expect(slider.attributes('aria-valuetext')).toBe('2020-12-23')
+  expect(app.find('.sequence-date.no-date').exists()).toBe(false)
+  expect(app.find('.date-capsule .restore-button').exists()).toBe(true)
+  expect(String(vi.mocked(fetch).mock.calls.at(-1)?.[0])).toContain('scope=2020-12-23')
+  await app.get('.date-capsule .restore-button').trigger('click')
+  expect(app.find('.sequence-date.no-date').exists()).toBe(true)
+  await slider.setValue('1')
+  await app.get('[data-layer="flows"]').trigger('click')
+  await app.get('[data-layer="sequences"]').trigger('click')
+  expect(app.find('.sequence-date.no-date').exists()).toBe(true)
+  expect(app.get('.detail-panel').find('.sequence-panel').exists()).toBe(true)
+  await app.get('[aria-controls="layer-details"]').trigger('click')
+  expect(app.get('.sequence-panel').isVisible()).toBe(false)
 })
 
 it('collapses the legend and opens a dismissible info dialog without exiting a selected region', async () => {
@@ -118,4 +140,44 @@ it('lets coincident date handles expand in either direction and responds to trac
   app.element.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }))
   app.element.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: 154 }))
   expect(app.emitted('change')?.at(-1)).toEqual([2, 3])
+})
+
+it('switches focused regions, highlights the district, and restores the original snapshot', async () => {
+  const context = testRegionContext([7, 8])
+  const district = { type: 'Feature', geometry: context.regions.features[0].geometry, properties: { district_id: 1, label: '片区一' } }
+  vi.mocked(fetch).mockImplementation(async (url) => ({ ok: true, json: async () =>
+    url === '/api/regions' ? { ...context, districts: { type: 'FeatureCollection', features: [district] } }
+      : url === '/api/health' ? { status: 'ok', components: {} }
+      : { total_count: 0, samples: { type: 'FeatureCollection', features: [] } },
+  } as Response))
+  app = mount(App)
+  await flushPromises()
+  leaflet.regionClicks.get(7)?.()
+  await flushPromises()
+  leaflet.mapInstance.getCenter.mockReturnValue({ lat: 25, lng: 119 })
+  leaflet.mapInstance.getZoom.mockReturnValue(14)
+  leaflet.regionClicks.get(8)?.()
+  await flushPromises()
+  expect(app.get('.focus-heading').text()).toContain('R-8')
+  expect(app.get('.focus-heading').text()).toContain('片区一 · 1 km²')
+  expect(leaflet.geoJSON).toHaveBeenCalledWith(district, expect.objectContaining({ interactive: false, style: expect.objectContaining({ dashArray: '7 6', fill: false }) }))
+  expect(JSON.parse(String(vi.mocked(fetch).mock.calls.at(-1)?.[1]?.body)).selection.region_id).toBe(8)
+  leaflet.mapInstance.getCenter.mockReturnValue({ lat: 24, lng: 118 })
+  leaflet.mapInstance.getZoom.mockReturnValue(12)
+  await app.get('.focus-heading button').trigger('click')
+  expect(leaflet.mapInstance.setView).toHaveBeenCalledWith({ lat: 24, lng: 118 }, 12, { animate: false })
+})
+
+it('uses the source weather conditions and collapses flow contents in the left panel', async () => {
+  app = mount(App)
+  await flushPromises()
+  expect(app.findAll('.weather-symbol').map(icon => icon.attributes('alt'))).toEqual(['阴', '阴转晴', '小雨、阵雨', '雾', '阴'])
+  expect(app.get('[aria-label="2020-12-24"] img').attributes('src')).toBe(fogIcon)
+  await app.get('[data-layer="flows"]').trigger('click')
+  await flushPromises()
+  expect(app.get('.detail-panel').find('.flow-panel').exists()).toBe(true)
+  expect(app.get('.detail-panel').text()).not.toContain('箭头表示')
+  expect(app.get('.detail-panel').text()).not.toContain('所选时段累计')
+  await app.get('[aria-controls="layer-details"]').trigger('click')
+  expect(app.get('.flow-panel').isVisible()).toBe(false)
 })

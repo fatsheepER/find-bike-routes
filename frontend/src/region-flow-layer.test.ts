@@ -151,7 +151,7 @@ describe("region flow layer", () => {
     }
     const flowList = wrapper.get('[aria-label="Top 50 区域流列表"]')
     expect(flowList.findAll("li")).toHaveLength(50)
-    expect(wrapper.get(".flow-scope").text()).toContain("4 日平均，06:00–10:00 所选时段累计")
+    expect(wrapper.find(".flow-scope").exists()).toBe(false)
     expect(leaflet.polyline).toHaveBeenCalled()
     expect(echarts.init).toHaveBeenCalledTimes(1)
     const option = echarts.chart.setOption.mock.calls.at(-1)?.[0]
@@ -176,7 +176,7 @@ describe("region flow layer", () => {
     const details = wrapper.get('[aria-label="所选流对详情"]')
     expect(details.text()).toContain("出行流")
     expect(details.text()).toContain("湖里 → 思明")
-    expect(details.text()).toContain("4 日平均，06:00–10:00 所选时段累计")
+    expect(details.text()).not.toContain("所选时段累计")
     expect(wrapper.get('[aria-label="流对检验详情"]').text()).toContain("已检验是")
     expect(wrapper.get('[aria-label="流对检验详情"]').text()).toContain("显著是")
     expect(wrapper.get('[aria-label="流对检验详情"]').text()).toContain("被门槛挡住否")

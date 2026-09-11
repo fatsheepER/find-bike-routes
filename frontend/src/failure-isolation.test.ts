@@ -4,7 +4,7 @@ import App from "./App.vue"
 import { leaflet, ResizeObserverStub, testRegionContext } from "./app-test-support"
 
 vi.mock("leaflet", async () => ({ default: (await import("./app-test-support")).leaflet }))
-vi.mock("echarts", () => ({ init: vi.fn(() => ({ dispose: vi.fn(), setOption: vi.fn() })) }))
+vi.mock("echarts", () => ({ init: vi.fn(() => ({ dispose: vi.fn(), resize: vi.fn(), setOption: vi.fn() })) }))
 
 const regions = testRegionContext()
 
@@ -115,7 +115,8 @@ describe("failure isolation", () => {
     mode = "empty"
     await wrapper.get('[aria-label="典型通勤链"] [role="alert"] button').trigger("click")
     await flushPromises()
-    expect(wrapper.text()).toContain("当前条件下没有通勤链")
+    expect(wrapper.findAll(".sequence-list li")).toHaveLength(0)
+    expect(wrapper.find(".sequence-panel [role=alert]").exists()).toBe(false)
 
     mode = "track-loading"
     leaflet.regionClicks.get(7)?.()

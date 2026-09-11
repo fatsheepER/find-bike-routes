@@ -121,6 +121,22 @@ const selection = computed<RegionSelection>(() => ({
   endHour: endHour.value,
   aggregation: aggregation.value,
 }))
+const symbol = (name: string) => new URL(`./assets/symbols/${name}.svg`, import.meta.url).href
+// Raw Weather data.csv, 06:00–10:00: 4/4/4/4; 4/4/2/2; 7/7/7/17; 5/5/5/5; 4/4/4/4.
+// COCO definitions: https://dev.meteostat.net/formats.html#weather-condition-codes
+const dateWeather = [
+  { icon: 'cloud', label: '阴' }, { icon: 'cloud.sun', label: '阴转晴' },
+  { icon: 'cloud.rain', label: '小雨、阵雨' }, { icon: 'cloud.fog', label: '雾' }, { icon: 'cloud', label: '阴' },
+]
+function selectSequenceDate(event: Event) {
+  if (event.type === 'pointerdown' && (event as PointerEvent).button > 0) return
+  const input = event.target as HTMLInputElement
+  const rect = input.getBoundingClientRect()
+  const index = event.type === 'pointerdown'
+    ? Math.max(0, Math.min(4, Math.round(((event as PointerEvent).clientX - rect.left - 4) / Math.max(1, rect.width - 8) * 4)))
+    : Number(input.value)
+  dateScope.value = ALL_DAYS[index]
+}
 const detailCollapsed = ref(false)
 const panelTop = ref(180)
 const infoDialog = ref<HTMLDialogElement | null>(null)
@@ -131,9 +147,13 @@ function selectDates(start: number, end: number) {
   dateScope.value = start === end ? ALL_DAYS[start] : `${ALL_DAYS[start]}..${ALL_DAYS[end]}`
 }
 function selectHours(start: number, end: number) { startHour.value = start; endHour.value = end }
-function switchLayer(next: Layer) { if (!interactionLocked.value) layer.value = next }
+function switchLayer(next: Layer) {
+  if (interactionLocked.value || next === layer.value) return
+  if (next === 'sequences') dateScope.value = 'clear-days'
+  layer.value = next
+}
 function navigateTabs(event: KeyboardEvent) {
-  const tabs = ['source-sink', 'sequences', 'flows'] as const
+  const tabs = ['source-sink', 'flows', 'sequences'] as const
   const offset = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0
   if (!offset && event.key !== 'Home' && event.key !== 'End') return
   event.preventDefault()
@@ -193,7 +213,6 @@ const focusedProfileHtml = computed(() => {
   return regionProfile(
     focusedProfile.value,
     focusSelection.value,
-    districtName(focusedProfile.value.district_id),
   )
 })
 
@@ -230,7 +249,7 @@ function fitIsland(): void {
   fittingView = true
   map.fitBounds(leafletBounds(regionContext.value.island_bounds), {
     animate: false,
-    paddingTopLeft: [padding, panelTop.value],
+    paddingTopLeft: [layer.value !== "source-sink" && !detailCollapsed.value ? 400 : padding, panelTop.value],
     paddingBottomRight: [sidebarWidth() + padding, detailCollapsed.value ? 70 : 210],
   })
   fittingView = false
@@ -242,8 +261,8 @@ function measureToolbar(): void {
 }
 
 function sidebarWidth(): number {
-  if (!focusActive.value && layer.value === 'source-sink') return 0
-  return mapElement.value?.closest('.app-shell')?.querySelector<HTMLElement>('.focus-panel, .flow-panel, .sequence-panel')?.getBoundingClientRect().width || 380
+  if (!focusActive.value) return 0
+  return mapElement.value?.closest('.app-shell')?.querySelector<HTMLElement>('.focus-panel')?.getBoundingClientRect().width || 380
 }
 
 function updateMapBounds(): void {
@@ -265,7 +284,7 @@ function renderRegions(): void {
   const regionFor = (feature?: GeoJSON.Feature) =>
     feature?.properties ? byId.get(feature.properties.region_id as number) : undefined
   regionLayer = L.geoJSON(regionContext.value.regions as GeoJSON.FeatureCollection, {
-    interactive: !interactionLocked.value,
+    interactive: !drawingBounds.value,
     style: (feature) => {
       const region = regionFor(feature)
       return {
@@ -279,13 +298,26 @@ function renderRegions(): void {
       const region = regionFor(feature)
       if (region) {
         leafletLayer.on?.("click", () => {
-          if (!interactionLocked.value) {
+          if (!drawingBounds.value) {
             void enterGeographicFocus({ type: "region", regionId: region.region_id })
           }
         })
       }
+      if (region) leafletLayer.on('add', () => {
+        const element = (leafletLayer as L.Path).getElement?.()
+        if (!element) return
+        element.setAttribute('tabindex', drawingBounds.value ? '-1' : '0')
+        element.setAttribute('role', 'button')
+        element.setAttribute('aria-label', region.region_code)
+        element.addEventListener('keydown', (event) => {
+          if (((event as KeyboardEvent).key === 'Enter' || (event as KeyboardEvent).key === ' ') && !drawingBounds.value) {
+            event.preventDefault()
+            void enterGeographicFocus({ type: 'region', regionId: region.region_id })
+          }
+        })
+      })
       if (showSourceSink && region) {
-        leafletLayer.bindTooltip(sourceSinkTooltip(region), { sticky: true })
+        leafletLayer.bindTooltip(sourceSinkTooltip(region), { sticky: true, className: "region-tooltip", opacity: 1 })
       }
     },
   }).addTo(map)
@@ -426,13 +458,20 @@ function drawGeographicFocus(): void {
   if (!map || !focus) return
   focusLayer ??= L.layerGroup().addTo(map)
   if (focus.target.type === "region" && focusedRegion.value) {
+    const district = regionContext.value?.districts.features.find(
+      feature => feature.properties.district_id === focusedRegion.value?.properties.district_id,
+    )
+    if (district) L.geoJSON(district, {
+      pane: 'focusPane', interactive: false,
+      style: { color: '#8065a8', fill: false, weight: 3, dashArray: '7 6' },
+    }).addTo(focusLayer)
     L.geoJSON(focusedRegion.value as GeoJSON.Feature, {
-      pane: "focusPane",
+      pane: "focusPane", interactive: false,
       style: { color: "#f97316", fillColor: "#fff7ed", fillOpacity: 0.12, weight: 4 },
     }).addTo(focusLayer)
   } else if (focus.target.type === "bounds") {
     L.rectangle(leafletBounds(focus.target.bounds), {
-      pane: "focusPane",
+      pane: "focusPane", interactive: false,
       color: "#f97316",
       fillColor: "#fff7ed",
       fillOpacity: 0.12,
@@ -441,7 +480,7 @@ function drawGeographicFocus(): void {
   }
   if (focus.status === "ready" && focus.samples.length) {
     L.geoJSON({ type: "FeatureCollection", features: focus.samples } as GeoJSON.FeatureCollection, {
-      pane: "focusPane",
+      pane: "focusPane", interactive: false,
       style: { color: "#0369a1", opacity: 0.75, weight: 3 },
     }).addTo(focusLayer)
   }
@@ -456,7 +495,7 @@ function drawGeographicFocus(): void {
       }
   if (focus.status === "ready" && anchor?.type === "Point") {
     L.marker([anchor.coordinates[1], anchor.coordinates[0]], {
-      pane: "focusPane",
+      pane: "focusPane", interactive: false,
       icon: L.divIcon({
         className: "focus-count-marker",
         html: `<span>${focus.totalCount}</span>`,
@@ -521,10 +560,11 @@ async function loadGeographicFocus(): Promise<void> {
 }
 
 async function enterGeographicFocus(target: FocusTarget): Promise<void> {
-  if (!map || geographicFocus.value) return
+  if (!map || drawingBounds.value) return
+  const previousFocus = geographicFocus.value
   geographicFocus.value = {
     target,
-    selection: {
+    selection: previousFocus ? { ...previousFocus.selection } : {
       ...selection.value,
       startHour: layer.value === "sequences" ? 6 : startHour.value,
       endHour: layer.value === "sequences" ? 10 : endHour.value,
@@ -533,7 +573,7 @@ async function enterGeographicFocus(target: FocusTarget): Promise<void> {
     error: null,
     totalCount: 0,
     samples: [],
-    snapshot: {
+    snapshot: previousFocus?.snapshot ?? {
       layer: layer.value,
       selection: { ...selection.value },
       flowMatrix: flowMatrix.value,
@@ -550,7 +590,7 @@ async function enterGeographicFocus(target: FocusTarget): Promise<void> {
   const anchor = target.type === 'region' ? focusedRegion.value?.properties.map_anchor : null
   const point: L.LatLngTuple | null = anchor?.type === 'Point' ? [anchor.coordinates[1], anchor.coordinates[0]]
     : target.type === 'bounds' ? [(target.bounds.south + target.bounds.north) / 2, (target.bounds.west + target.bounds.east) / 2] : null
-  if (point) map.panInside?.(point, { paddingTopLeft: [40, panelTop.value], paddingBottomRight: [sidebarWidth() + 40, 60], animate: false })
+  if (point) map.panInside?.(point, { paddingTopLeft: [layer.value !== "source-sink" && !detailCollapsed.value ? 420 : 40, panelTop.value], paddingBottomRight: [sidebarWidth() + 40, 60], animate: false })
   drawGeographicFocus()
   await loadGeographicFocus()
 }
@@ -898,9 +938,10 @@ watch([layer, dateScope, startHour, endHour, flowMatrix, flowSignificance], () =
   }
 })
 watch([layer, flowStatus, topFlows, currentFlow, regionContext, focusActive], drawFlows)
-watch([layer, flowStatus, districtFlows, currentFlow, regionContext, focusActive], async () => {
+watch([layer, flowStatus, districtFlows, currentFlow, regionContext, focusActive, detailCollapsed], async () => {
   await nextTick()
   renderFlowChart()
+  if (!detailCollapsed.value) flowChart?.resize()
 }, { flush: "post" })
 watch([layer, sequenceStatus, sequenceResponse, selectedSequenceIndex, regionContext, focusActive], drawSequences)
 
@@ -917,7 +958,7 @@ watch([layer, focusActive], async ([nextLayer, nextFocus], [previousLayer, previ
   updateMapBounds()
   if (!nextFocus && !previousFocus && nextLayer !== previousLayer) {
     if (!userAdjustedView) fitIsland()
-    else map?.panBy?.([(nextLayer === "source-sink" ? -1 : previousLayer === "source-sink" ? 1 : 0) * 190, 0], { animate: false })
+    else map?.panBy?.([(nextLayer === "source-sink" ? 1 : previousLayer === "source-sink" ? -1 : 0) * (detailCollapsed.value ? 0 : 190), 0], { animate: false })
   }
 })
 watch(drawingBounds, () => {
@@ -956,7 +997,7 @@ onBeforeUnmount(() => {
     <header>
       <form class="toolbar" :inert="focusActive" aria-label="全局工具栏" @submit.prevent>
         <div class="capsule layer-tabs" role="tablist" aria-label="内容图层" @keydown="navigateTabs">
-          <button v-for="tab in ([['source-sink', '源汇'], ['sequences', '通勤链'], ['flows', '区域间流动']] as const)"
+          <button v-for="tab in ([['source-sink', '源汇'], ['flows', '区域间流动'], ['sequences', '通勤链']] as const)"
             :key="tab[0]" type="button" role="tab" :data-layer="tab[0]" :aria-selected="layer === tab[0]"
             :tabindex="layer === tab[0] ? 0 : -1" :disabled="interactionLocked" @click="switchLayer(tab[0])">{{ tab[1] }}</button>
         </div>
@@ -965,9 +1006,15 @@ onBeforeUnmount(() => {
             <div class="range-labels date-labels">
               <button v-for="(date, index) in ALL_DAYS" :key="date" type="button" :aria-label="date" :disabled="interactionLocked"
                 :class="{ rainy: index === 2, selected: dateScope !== 'clear-days' && index >= dateStart && index <= dateEnd }"
-                @click="selectDates(index, index)"><span aria-hidden="true">{{ index === 2 ? '☂' : index === 3 ? '☁' : '☼' }}</span>{{ date.slice(5).replace('-', '/') }}</button>
+                @click="selectDates(index, index)"><img class="sf-symbol weather-symbol" :src="symbol(dateWeather[index].icon)" :alt="dateWeather[index].label" />{{ date.slice(5).replace('-', '/') }}</button>
             </div>
-            <RangeControl :min="0" :max="4" :start="dateStart" :end="dateEnd" start-label="开始日期" end-label="结束日期" :start-text="ALL_DAYS[dateStart]" :end-text="ALL_DAYS[dateEnd]"
+            <div v-if="layer === 'sequences'" class="range-control sequence-date" :class="{ 'no-date': dateScope === 'clear-days' }">
+              <div class="range-track" />
+              <input type="range" min="0" max="4" step="1" :value="dateStart" aria-label="通勤链日期"
+                :aria-valuetext="dateScope === 'clear-days' ? '晴天集' : dateScope" :disabled="interactionLocked"
+                @input="selectSequenceDate" @pointerdown="selectSequenceDate" />
+            </div>
+            <RangeControl v-else :min="0" :max="4" :start="dateStart" :end="dateEnd" start-label="开始日期" end-label="结束日期" :start-text="ALL_DAYS[dateStart]" :end-text="ALL_DAYS[dateEnd]"
               :unfilled="dateScope === 'clear-days'" :disabled="interactionLocked" @change="selectDates" />
           </div>
           <Transition name="restore"><button v-if="dateScope !== 'clear-days'" class="restore-button" type="button"
@@ -997,14 +1044,10 @@ onBeforeUnmount(() => {
         </div>
       </form>
       <nav class="map-toolbar" aria-label="地图操作">
-        <div class="capsule"><button type="button" aria-label="放大地图" @click="zoomMap(1)">＋</button><button type="button" aria-label="缩小地图" @click="zoomMap(-1)">−</button></div>
+        <div class="capsule"><button type="button" aria-label="放大地图" @click="zoomMap(1)"><img class="sf-symbol" :src="symbol('plus')" alt="" /></button><button type="button" aria-label="缩小地图" @click="zoomMap(-1)"><img class="sf-symbol" :src="symbol('minus')" alt="" /></button></div>
         <button class="capsule" type="button" aria-label="本岛居中" @click="centerIsland">居中</button>
         <button class="capsule" type="button" aria-label="框选范围" :aria-pressed="drawingBounds" :disabled="focusActive"
-          @click="drawingBounds ? cancelBoundsDrawing() : startBoundsDrawing()">{{ drawingBounds ? '× 取消框选' : '框选' }}</button>
-        <details v-if="regionStatus === 'ready'" class="capsule region-actions" aria-label="区域地图等价操作">
-          <summary>选择区域</summary><ol><li v-for="region in aggregatedRegions" :key="region.region_id"><button type="button" :disabled="interactionLocked"
-            @click="enterGeographicFocus({ type: 'region', regionId: region.region_id })">{{ region.region_code }}</button></li></ol>
-        </details>
+          @click="drawingBounds ? cancelBoundsDrawing() : startBoundsDrawing()"><span v-if="drawingBounds">× 取消框选</span><img v-else class="sf-symbol" :src="symbol('crop')" alt="" /></button>
       </nav>
     </header>
 
@@ -1019,8 +1062,8 @@ onBeforeUnmount(() => {
         <div id="map" ref="mapElement" />
       </section>
 
-      <aside class="detail-panel" aria-label="图层说明">
-        <div class="detail-heading"><button type="button" :aria-expanded="!detailCollapsed" aria-controls="layer-details" @click="detailCollapsed = !detailCollapsed">{{ detailCollapsed ? '展开' : '收起' }}</button><button ref="infoButton" type="button" class="info-button" aria-label="应用信息" @click="openInfo">i</button></div>
+      <aside class="detail-panel" :class="{ 'analysis-panel': layer !== 'source-sink' }" aria-label="图层说明">
+        <div class="detail-heading"><button type="button" :aria-expanded="!detailCollapsed" aria-controls="layer-details" @click="detailCollapsed = !detailCollapsed"><img class="sf-symbol" :src="symbol(detailCollapsed ? 'chevron.up' : 'chevron.down')" alt="" />{{ detailCollapsed ? '展开' : '收起' }}</button><button ref="infoButton" type="button" class="info-button" aria-label="应用信息" @click="openInfo"><img class="sf-symbol" :src="symbol('info')" alt="" /></button></div>
         <div v-show="!detailCollapsed" id="layer-details" class="detail-body">
           <template v-if="layer === 'source-sink'">
             <div class="source-sink-legend" aria-label="净流入强度图例"><div class="legend-title"><strong>净流入强度</strong><span>单/km²</span></div>
@@ -1028,99 +1071,94 @@ onBeforeUnmount(() => {
               <div class="legend-ticks"><span>源 {{ sourceSinkLimit === null ? '—' : formatMetric(-sourceSinkLimit) }}</span><span>0</span><span>汇 {{ sourceSinkLimit === null ? '—' : '+' + formatMetric(sourceSinkLimit) }}</span></div>
             </div>
           </template>
-          <template v-else-if="layer === 'flows'"><div class="legend-title"><strong>{{ flowMatrix === 'od' ? '出行流' : '通道流' }}</strong><span>{{ topFlows.length }} 条</span></div><p>箭头表示方向，线宽表示流量</p></template>
-          <template v-else><div class="legend-title"><strong>通勤链</strong><span>{{ sequenceResponse?.patterns.length ?? 0 }} 条</span></div><p>深色为当前链，圆点为经过的区域</p></template>
-          <p class="metric-scope">{{ dateScope === 'clear-days' ? '晴天集' : datesForScope(dateScope).map(date => date.slice(5).replace('-', '/')).join('、') }} · {{ layer === 'sequences' ? '06:00–10:00' : aggregationNote(selection) }}</p>
-        </div>
-      </aside>
+          <p v-if="layer === 'source-sink'" class="metric-scope">{{ dateScope === 'clear-days' ? '晴天集' : datesForScope(dateScope).map(date => date.slice(5).replace('-', '/')).join('、') }} · {{ aggregationNote(selection) }}</p>
+          <section v-if="layer === 'flows'" class="flow-panel" aria-label="区域间流动" :inert="interactionLocked">
+            <p v-if="flowStatus === 'loading'" role="status">正在加载区域流…</p>
+            <div v-else-if="flowStatus === 'error'" role="alert">
+              <p>区域流暂不可用，区域地图仍可查看。</p>
+              <button type="button" @click="loadFlows">重试</button>
+            </div>
+            <p v-else-if="flowStatus === 'empty'" role="status">当前条件下没有区域流。</p>
+            <template v-else-if="flowStatus === 'ready'">
+              <figure class="flow-chart-figure">
+                <div ref="flowChartElement" class="flow-chart" aria-label="片区流动弦图" />
+                <figcaption>片区间流量</figcaption>
+              </figure>
+              <h3>区域流量 <span class="muted">前 {{ topFlows.length }} 条</span></h3>
+              <ol class="flow-list" aria-label="Top 50 区域流列表">
+                <li v-for="flow in topFlows" :key="flowKey(flow)">
+                  <button
+                    type="button"
+                    :aria-current="flowKey(flow) === flowKey(currentFlow ?? flow) ? 'true' : undefined"
+                    @click="selectFlow(flow)"
+                  >
+                    <span>{{ regionCode(flow.from_region) }} → {{ regionCode(flow.to_region) }}</span><strong>{{ formatMetric(flow.weight) }}</strong>
+                  </button>
+                </li>
+              </ol>
+              <dl v-if="currentFlow" class="flow-details" aria-label="所选流对详情">
+                <dt>矩阵</dt>
+                <dd>{{ currentFlow.matrix === "od" ? "出行流" : "通道流" }}</dd>
+                <dt>起终区域编码</dt>
+                <dd>{{ regionCode(currentFlow.from_region) }} → {{ regionCode(currentFlow.to_region) }}</dd>
+                <dt>起终片区</dt>
+                <dd>{{ regionDistrictName(currentFlow.from_region) }} → {{ regionDistrictName(currentFlow.to_region) }}</dd>
+                <dt>权重</dt>
+                <dd>{{ formatMetric(currentFlow.weight) }}</dd>
+              </dl><details v-if="currentFlow" class="flow-diagnostics" aria-label="流对检验详情"><summary>检验详情</summary><dl>
+                <dt>已检验</dt>
+                <dd>{{ currentFlow.is_tested ? "是" : "否" }}</dd>
+                <dt>显著</dt>
+                <dd>{{ currentFlow.is_significant === null ? "未检验" : currentFlow.is_significant ? "是" : "否" }}</dd>
+                <dt>被门槛挡住</dt>
+                <dd>{{ currentFlow.gated ? "是" : "否" }}</dd>
+              </dl></details>
+            </template>
+          </section>
 
-      <aside v-if="layer === 'flows' && !focusActive" class="flow-panel" aria-label="区域间流动" :inert="interactionLocked">
-        <p class="flow-scope">{{ aggregationNote(selection) }}</p>
-        <p v-if="flowStatus === 'loading'" role="status">正在加载区域流…</p>
-        <div v-else-if="flowStatus === 'error'" role="alert">
-          <p>区域流暂不可用，区域地图仍可查看。</p>
-          <button type="button" @click="loadFlows">重试</button>
-        </div>
-        <p v-else-if="flowStatus === 'empty'" role="status">当前条件下没有区域流。</p>
-        <template v-else-if="flowStatus === 'ready'">
-          <figure class="flow-chart-figure">
-            <div ref="flowChartElement" class="flow-chart" aria-label="片区流动弦图" />
-            <figcaption>片区间流量</figcaption>
-          </figure>
-          <h3>区域流量 <span class="muted">前 {{ topFlows.length }} 条</span></h3>
-          <ol class="flow-list" aria-label="Top 50 区域流列表">
-            <li v-for="flow in topFlows" :key="flowKey(flow)">
-              <button
-                type="button"
-                :aria-current="flowKey(flow) === flowKey(currentFlow ?? flow) ? 'true' : undefined"
-                @click="selectFlow(flow)"
-              >
-                <span>{{ regionCode(flow.from_region) }} → {{ regionCode(flow.to_region) }}</span><strong>{{ formatMetric(flow.weight) }}</strong>
-              </button>
-            </li>
-          </ol>
-          <dl v-if="currentFlow" class="flow-details" aria-label="所选流对详情">
-            <dt>矩阵</dt>
-            <dd>{{ currentFlow.matrix === "od" ? "出行流" : "通道流" }}</dd>
-            <dt>起终区域编码</dt>
-            <dd>{{ regionCode(currentFlow.from_region) }} → {{ regionCode(currentFlow.to_region) }}</dd>
-            <dt>起终片区</dt>
-            <dd>{{ regionDistrictName(currentFlow.from_region) }} → {{ regionDistrictName(currentFlow.to_region) }}</dd>
-            <dt>权重</dt>
-            <dd>{{ formatMetric(currentFlow.weight) }}</dd>
-            <dt>日期时段口径</dt>
-            <dd>{{ aggregationNote(selection) }}</dd>
-          </dl><details v-if="currentFlow" class="flow-diagnostics" aria-label="流对检验详情"><summary>检验详情</summary><dl>
-            <dt>已检验</dt>
-            <dd>{{ currentFlow.is_tested ? "是" : "否" }}</dd>
-            <dt>显著</dt>
-            <dd>{{ currentFlow.is_significant === null ? "未检验" : currentFlow.is_significant ? "是" : "否" }}</dd>
-            <dt>被门槛挡住</dt>
-            <dd>{{ currentFlow.gated ? "是" : "否" }}</dd>
-          </dl></details>
-        </template>
-      </aside>
+          <section v-if="layer === 'sequences'" class="sequence-panel" aria-label="典型通勤链" :inert="interactionLocked">
+            <p v-if="sequenceStatus === 'loading'" role="status">正在加载通勤链…</p>
+            <div v-else-if="sequenceStatus === 'error'" role="alert">
+              <p>通勤链暂不可用，区域地图仍可查看。</p>
+              <button type="button" @click="loadSequences">重试</button>
+            </div>
 
-      <aside v-if="layer === 'sequences' && !focusActive" class="sequence-panel" aria-label="典型通勤链" :inert="interactionLocked">
-        <p v-if="sequenceStatus === 'loading'" role="status">正在加载通勤链…</p>
-        <div v-else-if="sequenceStatus === 'error'" role="alert">
-          <p>通勤链暂不可用，区域地图仍可查看。</p>
-          <button type="button" @click="loadSequences">重试</button>
+            <template v-else-if="sequenceStatus === 'ready' && sequenceResponse">
+              <ol class="sequence-list" aria-label="典型通勤链列表">
+                <li v-for="(pattern, index) in sequenceResponse.patterns" :key="pattern.region_ids.join('-')">
+                  <button
+                    type="button"
+                    :aria-current="index === selectedSequenceIndex ? 'true' : undefined"
+                    @click="selectSequence(index)"
+                  >
+                    {{ pattern.region_codes.join(" → ") }}
+                  </button>
+                </li>
+              </ol>
+              <dl v-if="currentSequence" class="sequence-details">
+                <dt>区域编码</dt>
+                <dd>{{ currentSequence.region_codes.join(" → ") }}</dd>
+                <dt>所属片区</dt>
+                <dd>{{ currentSequence.district_ids.map(districtName).join(" → ") }}</dd>
+                <dt>长度</dt>
+                <dd>{{ currentSequence.length }}</dd>
+                <dt>支持度（区域序列条数）</dt>
+                <dd>{{ currentSequence.support }}</dd>
+                <dt>连续支持度</dt>
+                <dd>{{ currentSequence.contiguous_support }}</dd>
+              </dl><details v-if="currentSequence" class="sequence-diagnostics"><summary>门槛与样本</summary><dl>
+                <dt>绝对连续支持度门槛</dt>
+                <dd>{{ sequenceResponse.min_contiguous_support_count }}</dd>
+                <dt>有效轨迹分母</dt>
+                <dd>{{ sequenceResponse.valid_tracks }}</dd>
+              </dl></details>
+              <details><summary>统计口径</summary><p class="sequence-note">
+                支持度按含该模式的区域序列条数计算，同一条序列内重复出现只计一次；一条有效轨迹可能贡献多条区域序列。绘图资格使用 API 已审计的连续支持度与区域相邻性，不受跨日平均或合计影响。
+              </p></details>
+            </template>
+          </section>
+
         </div>
-        <p v-else-if="sequenceStatus === 'empty'" role="status">{{ dateScope.includes("..") ? "该日期组合暂无通勤链结果，请选择单日或重置为晴天集。" : "当前条件下没有通勤链。" }}</p>
-        <template v-else-if="sequenceResponse">
-          <ol class="sequence-list" aria-label="典型通勤链列表">
-            <li v-for="(pattern, index) in sequenceResponse.patterns" :key="pattern.region_ids.join('-')">
-              <button
-                type="button"
-                :aria-current="index === selectedSequenceIndex ? 'true' : undefined"
-                @click="selectSequence(index)"
-              >
-                {{ pattern.region_codes.join(" → ") }}
-              </button>
-            </li>
-          </ol>
-          <dl v-if="currentSequence" class="sequence-details">
-            <dt>区域编码</dt>
-            <dd>{{ currentSequence.region_codes.join(" → ") }}</dd>
-            <dt>所属片区</dt>
-            <dd>{{ currentSequence.district_ids.map(districtName).join(" → ") }}</dd>
-            <dt>长度</dt>
-            <dd>{{ currentSequence.length }}</dd>
-            <dt>支持度（区域序列条数）</dt>
-            <dd>{{ currentSequence.support }}</dd>
-            <dt>连续支持度</dt>
-            <dd>{{ currentSequence.contiguous_support }}</dd>
-          </dl><details v-if="currentSequence" class="sequence-diagnostics"><summary>门槛与样本</summary><dl>
-            <dt>绝对连续支持度门槛</dt>
-            <dd>{{ sequenceResponse.min_contiguous_support_count }}</dd>
-            <dt>有效轨迹分母</dt>
-            <dd>{{ sequenceResponse.valid_tracks }}</dd>
-          </dl></details>
-          <details><summary>统计口径</summary><p class="sequence-note">
-            支持度按含该模式的区域序列条数计算，同一条序列内重复出现只计一次；一条有效轨迹可能贡献多条区域序列。绘图资格使用 API 已审计的连续支持度与区域相邻性，不受跨日平均或合计影响。
-          </p></details>
-        </template>
       </aside>
 
       <aside
@@ -1131,6 +1169,7 @@ onBeforeUnmount(() => {
         <div class="focus-heading">
           <div>
             <strong class="region-name">{{ geographicFocus.target.type === "region" ? focusedProfile?.region_code : "矩形范围" }}</strong>
+            <span v-if="focusedProfile" class="muted">{{ districtName(focusedProfile.district_id) }} · {{ formatMetric(focusedProfile.area_km2) }} km²</span>
           </div>
           <button type="button" @click="exitGeographicFocus">退出聚焦</button>
         </div>

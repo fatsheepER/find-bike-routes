@@ -17,7 +17,7 @@ export function sourceSinkColor(value: number | null, limit: number | null): str
   if (value === null || limit === null || !Number.isFinite(value)) return "#cbd5e1"
   if (value === 0 || limit === 0) return "#f8fafc"
   const lightness = Math.round(96 - Math.min(1, Math.abs(value) / limit) * 26)
-  return `hsl(${value > 0 ? 199 : 347} 72% ${lightness}%)`
+  return `hsl(${value > 0 ? 347 : 199} 72% ${lightness}%)`
 }
 
 export function sourceSinkState(value: number | null): string {
@@ -73,18 +73,17 @@ export function directionRose(sectors: number[] | null): string {
     <circle cx="100" cy="100" r="36" fill="none" stroke="#e7e7e7" />
     ${wedges}<polygon points="${points.join(' ')}" fill="none" stroke="#48798f" stroke-width="1.5" />
     <g text-anchor="middle" fill="#888" font-size="10"><text x="100" y="16">北</text><text x="190" y="104">东</text><text x="100" y="192">南</text><text x="10" y="104">西</text></g>
-    </svg><figcaption>方向分布</figcaption></figure>`
+    </svg></figure>`
 }
 
 export function sourceSinkTooltip(region: AggregatedRegion): string {
-  return `<div class="source-sink-tooltip"><strong>${escapeHtml(region.region_code)}</strong><span>${formatMetric(region.net_inflow_per_km2)}<small> 单/km²</small></span></div>`
+  return `<div class="source-sink-tooltip"><strong>${escapeHtml(region.region_code)}</strong><span style="background:${region.net_inflow_per_km2 === null ? '#eeeeee' : region.net_inflow_per_km2 > 0 ? '#f6cfd8' : region.net_inflow_per_km2 < 0 ? '#d1e5ef' : '#eeeeee'}">${region.net_inflow_per_km2 !== null && region.net_inflow_per_km2 > 0 ? '+' : ''}${formatMetric(region.net_inflow_per_km2, 2)}<small> 单/km²</small></span></div>`
 }
 
-export function regionProfile(region: AggregatedRegion, selection: RegionSelection, districtLabel: string): string {
+export function regionProfile(region: AggregatedRegion, selection: RegionSelection): string {
   const composition = region.functional_composition
   const rows = (items: [string, string][]) => `<dl>${items.map(([label, value]) => `<dt>${label}</dt><dd>${value}</dd>`).join('')}</dl>`
   return `<div class="region-profile">
-    <p class="muted">${escapeHtml(districtLabel)} · ${formatMetric(region.area_km2)} km²</p>
     <div class="hero-metric"><span>净流入强度</span><strong>${formatMetric(region.net_inflow_per_km2)}<small> 单/km²</small></strong></div>
     <p class="metric-scope">${aggregationNote(selection)}</p>
     <section><h3>骑行活动</h3>${rows([
@@ -92,7 +91,7 @@ export function regionProfile(region: AggregatedRegion, selection: RegionSelecti
       ['订单事件密度', `${formatMetric(region.order_events_per_km2)} 单/km²`], ['访问轨迹', formatMetric(region.tracks_visiting)],
       ['过境轨迹', formatMetric(region.tracks_transit)], ['过境率', region.pi_r === null ? '不可计算' : percentage(region.pi_r)],
     ])}</section>
-    <section>${directionRose(region.sectors)}${rows([
+    <section><h3>方向分布</h3>${directionRose(region.sectors)}${rows([
       ['方向集中度', formatMetric(region.r)], ['轴向集中度', formatMetric(region.r_axial)],
       ['方向角', degrees(region.mean_bearing_deg)], ['轴向角', degrees(region.axis_bearing_deg)], ['过境弦', formatMetric(region.chords)],
     ])}</section>

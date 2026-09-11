@@ -311,7 +311,8 @@ describe("commute sequence layer", () => {
 
     await wrapper.get('.sequence-panel [role="alert"] button').trigger("click")
     await flushPromises()
-    expect(wrapper.text()).toContain("当前条件下没有通勤链")
+    expect(wrapper.findAll(".sequence-list li")).toHaveLength(0)
+    expect(wrapper.find(".sequence-panel [role=alert]").exists()).toBe(false)
     expect(leaflet.geoJSON).toHaveBeenCalledTimes(regionDrawCount)
     expect(leaflet.map).toHaveBeenCalledTimes(1)
   })

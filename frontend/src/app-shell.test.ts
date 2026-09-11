@@ -157,7 +157,7 @@ describe("single-map app shell", () => {
     expect((wrapper.get('[aria-label="开始时间"]').element as HTMLInputElement).value).toBe('7')
     expect((wrapper.get('[aria-label="聚合口径"]').element as HTMLSelectElement).value).toBe('sum')
     await wrapper.findAll('button').find(button => button.text() === '恢复全选')!.trigger('click')
-    expect(currentDate(wrapper)).toBe('2020-12-23')
+    expect(currentDate(wrapper)).toBe('clear-days')
     await selectDate(wrapper, 'clear-days')
     expect(wrapper.find('.restore-button').exists()).toBe(false)
     expect((wrapper.get('[aria-label="结束时间"]').element as HTMLInputElement).value).toBe('10')

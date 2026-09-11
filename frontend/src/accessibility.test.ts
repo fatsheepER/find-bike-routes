@@ -4,7 +4,7 @@ import App from "./App.vue"
 import { leaflet, ResizeObserverStub, testRegionContext } from "./app-test-support"
 
 vi.mock("leaflet", async () => ({ default: (await import("./app-test-support")).leaflet }))
-vi.mock("echarts", () => ({ init: vi.fn(() => ({ dispose: vi.fn(), setOption: vi.fn() })) }))
+vi.mock("echarts", () => ({ init: vi.fn(() => ({ dispose: vi.fn(), resize: vi.fn(), setOption: vi.fn() })) }))
 
 const regions = testRegionContext([7, 8])
 
@@ -59,7 +59,7 @@ describe("basic accessibility", () => {
     const tab = wrapper.get('[role="tab"][aria-selected="true"]')
     ;(tab.element as HTMLButtonElement).focus()
     await tab.trigger("keydown", { key: "ArrowRight" })
-    expect(wrapper.get('[role="tab"][aria-selected="true"]').attributes("data-layer")).toBe("sequences")
+    expect(wrapper.get('[role="tab"][aria-selected="true"]').attributes("data-layer")).toBe("flows")
 
     await wrapper.get('[data-layer="flows"]').trigger("click")
     await flushPromises()
@@ -68,7 +68,10 @@ describe("basic accessibility", () => {
     await flushPromises()
     checkControls(["连续支持度门槛", "Top-N"])
 
-    await wrapper.get('[aria-label="区域地图等价操作"] button').trigger("click")
+    const region = leaflet.regionElements.get(7)!
+    expect(region.getAttribute('tabindex')).toBe('0')
+    expect(region.getAttribute('aria-label')).toBe('R-7')
+    region.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
     await flushPromises()
     expect(wrapper.find('[aria-label="聚焦开始时间"]').exists()).toBe(false)
   })
@@ -77,9 +80,11 @@ describe("basic accessibility", () => {
     wrapper = mount(App)
     await flushPromises()
 
-    const regionActions = wrapper.get('[aria-label="区域地图等价操作"]')
-    expect(regionActions.findAll("button").map((button) => button.text())).toEqual(["R-7", "R-8"])
-    await regionActions.findAll("button")[0].trigger("click")
+    expect(wrapper.find('[aria-label="区域地图等价操作"]').exists()).toBe(false)
+    const region = leaflet.regionElements.get(7)!
+    expect(region.getAttribute('tabindex')).toBe('0')
+    expect(region.getAttribute('aria-label')).toBe('R-7')
+    region.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
     await flushPromises()
     expect(wrapper.find('[aria-label="区域聚焦详情"]').exists()).toBe(true)
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))
@@ -102,7 +107,7 @@ describe("basic accessibility", () => {
     await wrapper.get('[aria-label="框选范围"]').trigger("click")
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))
     await wrapper.vm.$nextTick()
-    expect(wrapper.get('[aria-label="框选范围"]').text()).toBe("框选")
+    expect(wrapper.get('[aria-label="框选范围"]').attributes("aria-pressed")).toBe("false")
 
     await wrapper.get('[data-layer="flows"]').trigger("click")
     await flushPromises()

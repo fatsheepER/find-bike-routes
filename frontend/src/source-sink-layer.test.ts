@@ -19,7 +19,7 @@ import {
 } from "./source-sink-layer"
 
 const leaflet = vi.hoisted(() => {
-  const featureLayer = { bindTooltip: vi.fn() }
+  const featureLayer = { bindTooltip: vi.fn(), on: vi.fn() }
   const geometryLayer = { addTo: vi.fn() }
   const mapInstance = {
     fitBounds: vi.fn(),
@@ -115,14 +115,15 @@ describe("source-sink layer", () => {
     expect(tooltip).toContain('2<small>')
     expect(tooltip).not.toContain("解锁")
     expect(tooltip).not.toContain("svg")
-    const profile = regionProfile(aggregatedRegion(2), selection, "思明片区")
-    expect(profile).toContain("思明片区")
+    const profile = regionProfile(aggregatedRegion(2), selection)
+    expect(profile).toContain("<h3>方向分布</h3>")
+    expect(profile).not.toContain("<figcaption>")
     expect(profile).toContain("4 日平均")
     expect(profile.match(/<polygon /g)).toHaveLength(17)
     expect(profile.match(/fill="#9bb9c7"/g)).toHaveLength(8)
     expect(profile.match(/fill="#48798f"/g)).toHaveLength(8)
     expect(profile).toContain("方向角")
-    expect(regionProfile(aggregatedRegion(null), selection, "思明片区")).not.toContain("不可计算°")
+    expect(regionProfile(aggregatedRegion(null), selection)).not.toContain("不可计算°")
     expect(sourceSinkTooltip({ ...aggregatedRegion(2), region_code: '<script>' })).toContain('&lt;script&gt;')
   })
 

@@ -240,7 +240,7 @@ describe("focus restoration", () => {
     await wrapper.get('[aria-label="框选范围"]').trigger('click')
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     await wrapper.vm.$nextTick()
-    expect(wrapper.get('[aria-label="框选范围"]').text()).toBe('框选')
+    expect(wrapper.get('[aria-label="框选范围"]').attributes('aria-pressed')).toBe('false')
     expect(currentDate(wrapper)).toBe('2020-12-23')
   })
 })

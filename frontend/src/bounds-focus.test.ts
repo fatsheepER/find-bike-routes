@@ -133,7 +133,7 @@ describe("bounds focus", () => {
 
       expect(trackCalls()).toHaveLength(0)
       expect(wrapper.find('[aria-label="矩形聚焦详情"]').exists()).toBe(false)
-      expect(wrapper.get('[aria-label="框选范围"]').text()).toBe("框选")
+      expect(wrapper.get('[aria-label="框选范围"]').attributes("aria-pressed")).toBe("false")
       expect(leaflet.mapInstance.dragging.enable).toHaveBeenCalled()
     },
   )
@@ -154,7 +154,7 @@ describe("bounds focus", () => {
     await wrapper.vm.$nextTick()
 
     expect(trackCalls()).toHaveLength(0)
-    expect(wrapper.get('[aria-label="框选范围"]').text()).toBe("框选")
+    expect(wrapper.get('[aria-label="框选范围"]').attributes("aria-pressed")).toBe("false")
     expect(currentDate(wrapper)).toBe("2020-12-23")
     expect((wrapper.get('[aria-label="开始时间"]').element as HTMLInputElement).value).toBe("7")
   })

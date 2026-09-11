@@ -306,9 +306,10 @@ describe("region focus", () => {
     wrapper = await mountApp()
     await enterFocus()
 
+    expect(wrapper.get('.focus-heading').text()).toContain('思明片区 · 2 km²')
     const profile = wrapper.get('[aria-label="区域画像"]').text()
     for (const text of [
-      "思明片区", "2 km²", "解锁", "上锁", "净流入", "净流入强度",
+      "解锁", "上锁", "净流入", "净流入强度",
       "订单事件密度", "访问轨迹", "过境轨迹", "过境率", "过境弦", "方向集中度0.5",
       "轴向集中度0.5", "方向角", "方向分布", "住宅10%", "已分类面积75%", "公交站密度6",
     ]) expect(profile).toContain(text)
