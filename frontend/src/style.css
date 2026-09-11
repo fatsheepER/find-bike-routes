@@ -54,7 +54,7 @@ header { position: absolute; z-index: 800; top: 20px; left: 20px; right: 20px; p
 .layer-options { margin-left: auto; padding: 10px 16px; gap: 16px; flex-wrap: wrap; }
 .layer-options label { display: flex; align-items: center; gap: 6px; color: #999; font-size: 11px; }
 .layer-options select, .layer-options input { color: #222; font-size: 12px; font-weight: 600; }
-.map-toolbar { display: flex; align-items: flex-start; gap: 10px; margin-top: 20px; }
+.map-toolbar { --map-control-size: 60px; display: flex; align-items: flex-start; gap: 10px; margin-top: 20px; }
 .map-toolbar > .capsule { padding: 0 18px; }
 .map-toolbar > button { font-size: 12px; font-weight: 600; }
 .map-toolbar .capsule > button { font-family: var(--rounded); font-size: 22px; padding: 6px 8px; }
@@ -123,7 +123,7 @@ a { color: inherit; }
   .date-selector { width: 240px; }
   .time-selector { width: 150px; }
   .toolbar { gap: 8px; }
-  .map-toolbar { margin-top: 12px; }
+  .map-toolbar { --map-control-size: 48px; margin-top: 12px; }
   .map-toolbar .capsule { min-height: 48px; }
   .region-actions { line-height: 48px; }
 }
@@ -151,4 +151,16 @@ a { color: inherit; }
 .analysis-panel { width: 380px; max-height: calc(100% - var(--panel-top, 180px) - 24px); display: flex; flex-direction: column; }
 .analysis-panel .detail-body { min-height: 0; overflow-y: auto; scrollbar-width: thin; }
 .analysis-panel .detail-heading { flex-shrink: 0; }
-.leaflet-tooltip-left.region-tooltip::before, .leaflet-tooltip-right.region-tooltip::before { top: 50%; }
+.region-tooltip::before { display: none; }
+
+.district-label { pointer-events: none; }
+.district-label span { display: block; width: max-content; transform: translate(-50%, -50%); font-size: 14px; font-weight: 600; color: #514b61; text-shadow: 0 1px 3px white, 0 -1px 3px white, 1px 0 3px white, -1px 0 3px white; }
+.district-view.focus-active .leaflet-marker-pane { opacity: 1; }
+
+.map-toolbar > .map-icon-button { width: var(--map-control-size); height: var(--map-control-size); min-height: var(--map-control-size); flex: 0 0 var(--map-control-size); padding: 0; border-radius: 50%; justify-content: center; }
+.cancel-selection { font: 24px var(--rounded); line-height: 1; }
+.sequence-list { gap: 2px; }
+.sequence-list button { align-items: baseline; gap: 12px; padding: 6px 10px; line-height: 18px; border-radius: 10px; }
+.sequence-list button > span { min-width: 0; overflow-wrap: anywhere; }
+.sequence-support { flex-shrink: 0; font-family: var(--rounded); font-variant-numeric: tabular-nums; font-weight: 500; }
+.sequence-panel > details + details { margin-top: 14px; }

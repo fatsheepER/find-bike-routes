@@ -33,7 +33,7 @@ import {
 
 type Layer = "source-sink" | "flows" | "sequences"
 type Bounds = { west: number; south: number; east: number; north: number }
-type DistrictFeature = GeoJSON.Feature<GeoJSON.Geometry, { district_id: number; label: string }>
+type DistrictFeature = GeoJSON.Feature<GeoJSON.Geometry, { district_id: number; label: string; map_anchor?: GeoJSON.Point }>
 type RegionContext = {
   release_digest: string
   island_boundary: object
@@ -97,6 +97,7 @@ const HEALTH_COMPONENTS = [
 ] as const
 
 const layer = ref<Layer>("source-sink")
+const districtView = ref(false)
 const dateScope = ref<DateScope>("clear-days")
 const startHour = ref(6)
 const endHour = ref(10)
@@ -219,6 +220,7 @@ const focusedProfileHtml = computed(() => {
 let map: LeafletMap | null = null
 let tileLayer: TileLayer | null = null
 let regionLayer: LeafletGeoJSON | null = null
+let districtLabels: LayerGroup | null = null
 let flowLayer: LayerGroup | null = null
 let sequenceLayer: LayerGroup | null = null
 let focusLayer: LayerGroup | null = null
@@ -290,8 +292,8 @@ function renderRegions(): void {
       return {
         color: "#64748b",
         fillColor: showSourceSink && region ? sourceSinkColor(region.net_inflow_per_km2, sourceSinkLimit.value) : "#f8fafc",
-        fillOpacity: showSourceSink ? 0.82 : 0.08,
-        weight: 0.8,
+        fillOpacity: districtView.value ? 0 : showSourceSink ? 0.82 : 0.08,
+        weight: districtView.value ? 0 : 0.8,
       }
     },
     onEachFeature: (feature, leafletLayer) => {
@@ -321,6 +323,22 @@ function renderRegions(): void {
       }
     },
   }).addTo(map)
+}
+
+function renderDistrictLabels(): void {
+  districtLabels?.clearLayers()
+  if (!map || !districtView.value || !regionContext.value) return
+  districtLabels ??= L.layerGroup().addTo(map)
+  for (const district of regionContext.value.districts.features) {
+    const anchor = district.properties.map_anchor
+    if (!anchor || anchor.type !== 'Point') continue
+    const label = document.createElement('span')
+    label.textContent = district.properties.label
+    L.marker([anchor.coordinates[1], anchor.coordinates[0]], {
+      interactive: false, keyboard: false,
+      icon: L.divIcon({ className: 'district-label', html: label, iconSize: [0, 0] }),
+    }).addTo(districtLabels)
+  }
 }
 
 function initializeMap(context: RegionContext): void {
@@ -355,9 +373,11 @@ function initializeMap(context: RegionContext): void {
     style: { color: "#164e63", fillOpacity: 0.04, weight: 2 },
   }).addTo(map)
   L.geoJSON(context.districts as GeoJSON.GeoJsonObject, {
+    interactive: false,
     style: { color: "#64748b", fillOpacity: 0, weight: 1.5 },
   }).addTo(map)
   renderRegions()
+  renderDistrictLabels()
 
   map.on("movestart", () => {
     if (!fittingView) userAdjustedView = true
@@ -672,6 +692,7 @@ function flowArc(from: L.LatLngTuple, to: L.LatLngTuple): L.LatLngTuple[] {
 
 function drawFlows(): void {
   flowLayer?.clearLayers()
+  if (districtView.value) return
   if (
     !map ||
     layer.value !== "flows" ||
@@ -798,6 +819,7 @@ function selectSequence(index: number, event?: L.LeafletMouseEvent): void {
 
 function drawSequences(): void {
   sequenceLayer?.clearLayers()
+  if (districtView.value) return
   if (
     !map ||
     layer.value !== "sequences" ||
@@ -953,6 +975,12 @@ onMounted(() => {
 
 watch([layer, dateScope, startHour, endHour, aggregation], renderRegions)
 watch(focusActive, renderRegions)
+watch(districtView, () => {
+  renderRegions()
+  renderDistrictLabels()
+  drawFlows()
+  drawSequences()
+})
 watch([layer, focusActive], async ([nextLayer, nextFocus], [previousLayer, previousFocus]) => {
   await nextTick()
   updateMapBounds()
@@ -993,7 +1021,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="app-shell" :style="{ '--panel-top': panelTop + 'px' }" :class="{ 'focus-active': focusActive, 'bounds-drawing': drawingBounds }">
+  <main class="app-shell" :style="{ '--panel-top': panelTop + 'px' }" :class="{ 'focus-active': focusActive, 'bounds-drawing': drawingBounds, 'district-view': districtView }">
     <header>
       <form class="toolbar" :inert="focusActive" aria-label="全局工具栏" @submit.prevent>
         <div class="capsule layer-tabs" role="tablist" aria-label="内容图层" @keydown="navigateTabs">
@@ -1045,9 +1073,10 @@ onBeforeUnmount(() => {
       </form>
       <nav class="map-toolbar" aria-label="地图操作">
         <div class="capsule"><button type="button" aria-label="放大地图" @click="zoomMap(1)"><img class="sf-symbol" :src="symbol('plus')" alt="" /></button><button type="button" aria-label="缩小地图" @click="zoomMap(-1)"><img class="sf-symbol" :src="symbol('minus')" alt="" /></button></div>
-        <button class="capsule" type="button" aria-label="本岛居中" @click="centerIsland">居中</button>
-        <button class="capsule" type="button" aria-label="框选范围" :aria-pressed="drawingBounds" :disabled="focusActive"
-          @click="drawingBounds ? cancelBoundsDrawing() : startBoundsDrawing()"><span v-if="drawingBounds">× 取消框选</span><img v-else class="sf-symbol" :src="symbol('crop')" alt="" /></button>
+        <button class="capsule map-icon-button" type="button" aria-label="本岛居中" @click="centerIsland"><img class="sf-symbol" :src="symbol('smallcircle.filled.circle')" alt="" /></button>
+        <button class="capsule map-icon-button" type="button" aria-label="框选范围" :title="drawingBounds ? '取消框选' : '框选范围'" :aria-pressed="drawingBounds" :disabled="focusActive"
+          @click="drawingBounds ? cancelBoundsDrawing() : startBoundsDrawing()"><span v-if="drawingBounds" class="cancel-selection" aria-hidden="true">×</span><img v-else class="sf-symbol" :src="symbol('crop')" alt="" /></button>
+        <button class="capsule" type="button" aria-label="片区视图" :aria-pressed="districtView" @click="districtView = !districtView">片区视图</button>
       </nav>
     </header>
 
@@ -1131,7 +1160,8 @@ onBeforeUnmount(() => {
                     :aria-current="index === selectedSequenceIndex ? 'true' : undefined"
                     @click="selectSequence(index)"
                   >
-                    {{ pattern.region_codes.join(" → ") }}
+                    <span>{{ pattern.region_codes.join(" → ") }}</span>
+                    <strong class="sequence-support" :aria-label="'支持度 ' + pattern.support">{{ formatMetric(pattern.support, 0) }}</strong>
                   </button>
                 </li>
               </ol>

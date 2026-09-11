@@ -269,7 +269,7 @@ describe("region focus", () => {
     await wrapper.get('[aria-label="区域聚焦详情"] .focus-heading button').trigger("click")
 
     expect(wrapper.get('[role="tab"][aria-selected="true"]').attributes("data-layer")).toBe("sequences")
-    expect(wrapper.get('.sequence-list [aria-current="true"]').text()).toBe("second")
+    expect(wrapper.get('.sequence-list [aria-current="true"] > span').text()).toBe("second")
   })
 
   it("copies a single-day scope and changes only the local focus time", async () => {

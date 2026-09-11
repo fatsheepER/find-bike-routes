@@ -145,7 +145,7 @@ describe("bounds focus", () => {
     await wrapper.get('[aria-label="开始时间"]').setValue("7")
 
     await wrapper.get('[aria-label="框选范围"]').trigger("click")
-    expect(wrapper.get('[aria-label="框选范围"]').text()).toBe("× 取消框选")
+    expect(wrapper.get('[aria-label="框选范围"]').text()).toBe("×")
     expect((wrapper.get('[role="tab"][aria-selected="true"]').element as HTMLButtonElement).disabled).toBe(true)
     expect((wrapper.get('[aria-label="开始日期"]').element as HTMLInputElement).disabled).toBe(true)
     await wrapper.get('[aria-label="框选范围"]').trigger("click")

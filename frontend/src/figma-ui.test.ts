@@ -181,3 +181,34 @@ it('uses the source weather conditions and collapses flow contents in the left p
   await app.get('[aria-controls="layer-details"]').trigger('click')
   expect(app.get('.flow-panel').isVisible()).toBe(false)
 })
+
+it('shows district labels and transparent clickable regions, then restores region styling', async () => {
+  const context = testRegionContext([7, 8])
+  const district = { type: 'Feature', geometry: context.regions.features[0].geometry,
+    properties: { district_id: 1, label: '莲前', map_anchor: { type: 'Point', coordinates: [118.01, 24.01] } } }
+  vi.mocked(fetch).mockImplementation(async (url) => ({ ok: true, json: async () =>
+    url === '/api/regions' ? { ...context, districts: { type: 'FeatureCollection', features: [district] } }
+      : url === '/api/health' ? { status: 'ok', components: {} }
+      : { total_count: 0, samples: { type: 'FeatureCollection', features: [] } },
+  } as Response))
+  app = mount(App)
+  await flushPromises()
+  expect(app.find('[aria-label="本岛居中"] img').exists()).toBe(true)
+  const toggle = app.get('[aria-label="片区视图"]')
+  await toggle.trigger('click')
+  expect(toggle.attributes('aria-pressed')).toBe('true')
+  const style = () => (leaflet.geoJSON.mock.calls.filter(([, options]) => options?.onEachFeature).at(-1)![1] as unknown as {
+    style: (feature: unknown) => { weight: number; fillOpacity: number }
+  }).style(context.regions.features[0])
+  expect(style()).toMatchObject({ weight: 0, fillOpacity: 0 })
+  const icon = leaflet.divIcon.mock.calls.find(([options]) => options.className === 'district-label')![0]
+  expect((icon.html as HTMLElement).textContent).toBe('莲前')
+  expect(leaflet.marker).toHaveBeenCalledWith([24.01, 118.01], expect.objectContaining({ interactive: false, keyboard: false }))
+  leaflet.regionClicks.get(8)?.()
+  await flushPromises()
+  expect(app.get('.focus-heading').text()).toContain('R-8')
+  await toggle.trigger('click')
+  expect(toggle.attributes('aria-pressed')).toBe('false')
+  expect(style()).toMatchObject({ weight: .8, fillOpacity: .82 })
+  expect(app.find('.focus-panel').exists()).toBe(true)
+})

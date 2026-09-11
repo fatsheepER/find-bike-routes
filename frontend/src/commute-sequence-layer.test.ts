@@ -164,6 +164,7 @@ describe("commute sequence layer", () => {
     expect((wrapper.get('[aria-label="Top-N"]').element as HTMLInputElement).value).toBe("20")
     expect(wrapper.get('[aria-current="true"]').text()).toContain("R-1 → R-2 → R-3")
     expect(wrapper.get(".sequence-details").text()).toContain("湖里 → 湖里 → 思明")
+    expect(wrapper.get('[aria-current="true"] .sequence-support').text()).toBe("8")
     expect(wrapper.get(".sequence-details").text()).toContain("支持度（区域序列条数）8")
     expect(wrapper.get(".sequence-details").text()).toContain("连续支持度6")
     expect(wrapper.get(".sequence-diagnostics").text()).toContain("绝对连续支持度门槛5")
@@ -268,6 +269,7 @@ describe("commute sequence layer", () => {
     await wrapper.get('[data-layer="sequences"]').trigger("click")
     await flushPromises()
 
+    expect(wrapper.get('[aria-current="true"] .sequence-support').text()).toBe("8")
     expect(wrapper.get(".sequence-details").text()).toContain("支持度（区域序列条数）8")
     expect(wrapper.get(".sequence-details").text()).toContain("连续支持度6")
     expect(wrapper.get(".sequence-note").text()).toContain("同一条序列内重复出现只计一次")
