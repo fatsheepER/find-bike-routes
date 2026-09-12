@@ -13,4 +13,4 @@
 
 - `docs/project-plan.md` 中泊位与围栏的七处引用删除或改写；`config/data-contract.lock.json` 去掉围栏 raw 与 staging 两条并重新冻结。
 - CONTEXT.md 不定义围栏、泊位供给、泊位失衡。
-- MobilityDB 不建 `fence` 表，`region_metrics_daily` 不含泊位列，前端侧栏不含泊位供需。
+- MobilityDB 不建 `fence` 表，`region_metric` 不含泊位列，前端侧栏不含泊位供需。

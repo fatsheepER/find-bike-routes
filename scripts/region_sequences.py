@@ -22,6 +22,7 @@ into the run parameters (ADR-0008).
 from __future__ import annotations
 
 import argparse
+import shutil
 import subprocess
 import sys
 from dataclasses import replace
@@ -193,7 +194,7 @@ def run(args: argparse.Namespace) -> None:
         thresholds = scope_thresholds(scopes, day_totals, parameters)
         # The scope arithmetic is part of the parameters, so params.json waits for
         # the counts it is derived from rather than being written on the way in.
-        write_params(
+        params_path = write_params(
             run_dir,
             parameters=parameters,
             spark_conf=dict(session.sparkContext.getConf().getAll()),
@@ -248,6 +249,7 @@ def run(args: argparse.Namespace) -> None:
         write_region_sequences_digest(
             run_dir, sequences, patterns, scan, counts, observations, notes
         )
+        shutil.copyfile(params_path, args.output / "params.json")
     finally:
         session.stop()
 
