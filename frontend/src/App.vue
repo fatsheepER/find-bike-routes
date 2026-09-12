@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { sampleOverlap, sampleStroke, SAMPLE_COLORS } from "./focus-tracks"
 import RangeControl from "./RangeControl.vue"
 import { init as initChart, type ECharts } from "echarts"
 import L, { type GeoJSON as LeafletGeoJSON, type LayerGroup, type Map as LeafletMap, type TileLayer } from "leaflet"
@@ -196,6 +197,8 @@ const districtByRegion = computed(() => new Map(
 ))
 const districtFlows = computed(() => aggregateDistrictFlows(visibleFlows.value, districtByRegion.value))
 const geographicFocus = ref<GeographicFocus | null>(null)
+const focusOverlap = computed(() => sampleOverlap(geographicFocus.value?.samples ?? []))
+const focusOverlapMax = computed(() => Math.max(1, ...focusOverlap.value.map(edge => edge.properties.count)))
 const drawingBounds = ref(false)
 const focusActive = computed(() => geographicFocus.value !== null)
 const interactionLocked = computed(() => focusActive.value || drawingBounds.value)
@@ -501,7 +504,11 @@ function drawGeographicFocus(): void {
   if (focus.status === "ready" && focus.samples.length) {
     L.geoJSON({ type: "FeatureCollection", features: focus.samples } as GeoJSON.FeatureCollection, {
       pane: "focusPane", interactive: false,
-      style: { color: "#0369a1", opacity: 0.75, weight: 3 },
+      style: sampleStroke(1, focusOverlapMax.value),
+    }).addTo(focusLayer)
+    if (focusOverlap.value.length) L.geoJSON({ type: 'FeatureCollection', features: focusOverlap.value } as GeoJSON.FeatureCollection, {
+      pane: 'focusPane', interactive: false,
+      style: feature => sampleStroke(feature?.properties.count ?? 1, focusOverlapMax.value),
     }).addTo(focusLayer)
   }
   const anchor = focus.target.type === "region"
@@ -842,7 +849,7 @@ function drawSequences(): void {
     L.polyline(positions, {
       color: selected ? "#c2410c" : "#64748b",
       interactive: !interactionLocked.value,
-      opacity: selected ? 1 : 0.35,
+      opacity: selected ? 1 : 0.6,
       weight: selected ? 5 : 2,
     })
       .addTo(sequenceLayer!)
@@ -1204,6 +1211,11 @@ onBeforeUnmount(() => {
           <button type="button" @click="exitGeographicFocus">退出聚焦</button>
         </div>
 
+        <div v-if="geographicFocus.samples.length" class="sample-legend" aria-label="样例路段重叠次数">
+          <span>样例重叠</span><span>1 条</span>
+          <i :style="{ background: focusOverlapMax > 1 ? `linear-gradient(90deg, ${SAMPLE_COLORS.join(',')})` : SAMPLE_COLORS[0] }" />
+          <span v-if="focusOverlapMax > 1">{{ focusOverlapMax }} 条</span>
+        </div>
         <section v-if="focusedProfile" aria-label="区域画像">
           <div v-html="focusedProfileHtml" />
         </section>

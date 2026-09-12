@@ -82,8 +82,8 @@ dl { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap
 dt { color: #999; }
 dd { margin: 0; text-align: right; overflow-wrap: anywhere; font-family: var(--rounded); font-variant-numeric: tabular-nums; }
 .flow-details, .sequence-details { border-top: 1px solid #f0f0f0; padding-top: 24px; }
-.flow-list, .sequence-list { display: grid; gap: 5px; margin: 16px 0 24px; padding: 0; list-style: none; max-height: 280px; overflow: auto; }
-.flow-list button, .sequence-list button { display: flex; justify-content: space-between; gap: 16px; width: 100%; text-align: left; padding: 14px 12px; border-radius: 14px; font-size: 12px; line-height: 1.6; }
+.flow-list, .sequence-list { display: grid; gap: 2px; margin: 16px 0 24px; padding: 0; list-style: none; max-height: 280px; overflow: auto; }
+.flow-list button, .sequence-list button { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; width: 100%; text-align: left; padding: 6px 10px; border-radius: 10px; font-size: 12px; line-height: 18px; }
 .flow-list strong { font-family: var(--rounded); white-space: nowrap; }
 button[aria-current=true] { background: #f1f1f1; color: #111; font-weight: 600; }
 .flow-chart-figure { margin: 0 0 24px; }
@@ -103,7 +103,7 @@ button[aria-current=true] { background: #f1f1f1; color: #111; font-weight: 600; 
 .source-sink-tooltip small { font: inherit; }
 .leaflet-focus-pane { z-index: 650; }
 .focus-active .leaflet-overlay-pane, .focus-active .leaflet-marker-pane { opacity: .35; }
-.focus-count-marker span { display: inline-grid; place-items: center; min-width: 36px; height: 36px; padding: 4px; border: 3px solid white; border-radius: 50%; background: #48798f; color: white; font: 600 13px var(--rounded); box-shadow: var(--shadow); }
+.focus-count-marker span { display: inline-grid; place-items: center; min-width: 48px; height: 36px; padding: 4px 12px; border: 3px solid white; border-radius: 18px; background: #48798f; color: white; font: 600 13px var(--rounded); box-shadow: var(--shadow); }
 .flow-arrow { font-size: 16px; line-height: 1; }
 .flow-arrow span { display: block; transform-origin: center; }
 .bounds-drawing #map { cursor: crosshair; }
@@ -159,8 +159,18 @@ a { color: inherit; }
 
 .map-toolbar > .map-icon-button { width: var(--map-control-size); height: var(--map-control-size); min-height: var(--map-control-size); flex: 0 0 var(--map-control-size); padding: 0; border-radius: 50%; justify-content: center; }
 .cancel-selection { font: 24px var(--rounded); line-height: 1; }
-.sequence-list { gap: 2px; }
-.sequence-list button { align-items: baseline; gap: 12px; padding: 6px 10px; line-height: 18px; border-radius: 10px; }
-.sequence-list button > span { min-width: 0; overflow-wrap: anywhere; }
+.flow-list button > span, .sequence-list button > span { min-width: 0; overflow-wrap: anywhere; }
 .sequence-support { flex-shrink: 0; font-family: var(--rounded); font-variant-numeric: tabular-nums; font-weight: 500; }
 .sequence-panel > details + details { margin-top: 14px; }
+
+.sample-legend { display: flex; align-items: center; gap: 8px; margin: 4px 0 20px; font-size: 11px; color: #888; }
+.sample-legend > span:first-child { margin-right: auto; }
+.sample-legend i { width: 90px; height: 6px; border-radius: 3px; }
+
+.composition-legend { margin-top: 4px; }
+.composition-bar { display: flex; gap: 2px; height: 8px; border-radius: 4px; overflow: hidden; }
+.composition-bar i { min-width: 2px; }
+.composition-keys { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 10px; color: #999; font-size: 11px; }
+.composition-keys span { display: inline-flex; align-items: center; gap: 5px; }
+.composition-keys i { width: 8px; height: 8px; border-radius: 50%; }
+.composition-keys b { color: #666; font: 500 11px var(--rounded); font-variant-numeric: tabular-nums; }

@@ -16,6 +16,8 @@ import {
   sourceSinkState,
   sourceSinkTooltip,
   regionProfile,
+  compositionBar,
+  COMPOSITION_COLORS,
 } from "./source-sink-layer"
 
 const leaflet = vi.hoisted(() => {
@@ -125,6 +127,22 @@ describe("source-sink layer", () => {
     expect(profile).toContain("方向角")
     expect(regionProfile(aggregatedRegion(null), selection)).not.toContain("不可计算°")
     expect(sourceSinkTooltip({ ...aggregatedRegion(2), region_code: '<script>' })).toContain('&lt;script&gt;')
+  })
+
+  it("shows the classified-area composition as one four-colour bar with shares that add up", () => {
+    const profile = regionProfile(aggregatedRegion(2), selection)
+    expect(profile).toContain('class="composition-bar"')
+    expect(Object.values(COMPOSITION_COLORS).every((color) => profile.includes(color))).toBe(true)
+    expect(profile).toContain('aria-label="已分类面积构成：住宅 10%，就业 20%，教育 30%，交通 40%"')
+
+    const partial = compositionBar({ residential: 0.2, employment: 0.2, education: null as unknown as number, transport: 0 })
+    expect(partial.match(/<i style="flex/g)).toHaveLength(2)
+    expect(partial).toContain("住宅<b>50%</b>")
+    expect(partial).toContain("教育<b>0%</b>")
+
+    const empty = compositionBar({ residential: 0, employment: 0, education: 0, transport: 0 })
+    expect(empty).toContain("暂无已分类面积构成")
+    expect(empty).not.toContain("composition-bar")
   })
 
   it("renders the default layer and keeps global filters when switching away and back", async () => {

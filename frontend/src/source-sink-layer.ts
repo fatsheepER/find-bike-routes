@@ -76,6 +76,37 @@ export function directionRose(sectors: number[] | null): string {
     </svg></figure>`
 }
 
+export const COMPOSITION_COLORS = {
+  residential: "#95acc6",
+  employment: "#cb9aa9",
+  education: "#95bba7",
+  transport: "#bab4ab",
+} as const
+
+const COMPOSITION_LABELS: [keyof typeof COMPOSITION_COLORS, string][] = [
+  ["residential", "住宅"], ["employment", "就业"], ["education", "教育"], ["transport", "交通"],
+]
+
+export function compositionBar(composition: AggregatedRegion["functional_composition"]): string {
+  const parts = COMPOSITION_LABELS.map(([key, label]) => {
+    const share = composition[key]
+    return { label, color: COMPOSITION_COLORS[key], share: share !== null && Number.isFinite(share) ? Math.max(0, share) : 0 }
+  })
+  const total = parts.reduce((sum, part) => sum + part.share, 0)
+  if (total === 0) return '<p class="muted">暂无已分类面积构成</p>'
+  const segments = parts.filter((part) => part.share > 0).map((part) =>
+    `<i style="flex: ${(part.share / total).toFixed(6)}; background: ${part.color}" title="${part.label} ${percentage(part.share / total)}"></i>`,
+  ).join("")
+  const keys = parts.map((part) =>
+    `<span><i style="background: ${part.color}"></i>${part.label}<b>${percentage(part.share / total)}</b></span>`,
+  ).join("")
+  const description = parts.map((part) => `${part.label} ${percentage(part.share / total)}`).join("，")
+  return `<div class="composition-legend">
+    <div class="composition-bar" role="img" aria-label="已分类面积构成：${description}">${segments}</div>
+    <div class="composition-keys">${keys}</div>
+  </div>`
+}
+
 export function sourceSinkTooltip(region: AggregatedRegion): string {
   return `<div class="source-sink-tooltip"><strong>${escapeHtml(region.region_code)}</strong><span style="background:${region.net_inflow_per_km2 === null ? '#eeeeee' : region.net_inflow_per_km2 > 0 ? '#f6cfd8' : region.net_inflow_per_km2 < 0 ? '#d1e5ef' : '#eeeeee'}">${region.net_inflow_per_km2 !== null && region.net_inflow_per_km2 > 0 ? '+' : ''}${formatMetric(region.net_inflow_per_km2, 2)}<small> 单/km²</small></span></div>`
 }
@@ -96,8 +127,6 @@ export function regionProfile(region: AggregatedRegion, selection: RegionSelecti
       ['方向角', degrees(region.mean_bearing_deg)], ['轴向角', degrees(region.axis_bearing_deg)], ['过境弦', formatMetric(region.chords)],
     ])}</section>
     <section><h3>功能构成</h3>${rows([
-      ['住宅', percentage(composition.residential)], ['就业', percentage(composition.employment)],
-      ['教育', percentage(composition.education)], ['交通', percentage(composition.transport)],
       ['已分类面积', percentage(region.classified_share)], ['公交站密度', `${formatMetric(region.bus_stops_per_km2)} 站/km²`],
-    ])}</section></div>`
+    ])}${compositionBar(composition)}</section></div>`
 }
