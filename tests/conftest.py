@@ -10,10 +10,11 @@ validate-partitions.
 
 from __future__ import annotations
 
-import shutil
 from collections.abc import Iterator
 from dataclasses import dataclass
+import os
 from pathlib import Path
+import shutil
 
 import pytest
 
@@ -39,6 +40,25 @@ from support import (
     run_validate_partitions_cli,
     write_fixture_district_labels,
 )
+
+
+PROJECT_ROOT = Path(__file__).parents[1]
+
+
+@pytest.fixture(scope="session")
+def database():
+    """One explicitly configured disposable MobilityDB for storage and API tests."""
+    dsn = os.getenv("MOBILITYDB_TEST_DSN")
+    if not dsn:
+        pytest.skip("set MOBILITYDB_TEST_DSN to a disposable empty MobilityDB database")
+    import psycopg
+
+    with psycopg.connect(dsn, autocommit=True) as connection:
+        for path in sorted((PROJECT_ROOT / "database" / "init").glob("*.sql")):
+            connection.execute(path.read_text(encoding="utf-8"))
+
+    with psycopg.connect(dsn, autocommit=True) as connection:
+        yield connection
 
 
 @dataclass(frozen=True)

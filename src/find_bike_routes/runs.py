@@ -596,7 +596,7 @@ TRACK_DIGEST_COLUMNS = TRACK_COLUMNS
 STAGE_COUNT_DIGEST_COLUMNS = STAGE_COUNT_COLUMNS
 
 
-def _format_cell(value: object) -> str:
+def format_digest_cell(value: object) -> str:
     if value is None:
         return ""
     if isinstance(value, (bytes, bytearray, memoryview)):
@@ -629,7 +629,7 @@ def digest_table(
     ordered = frame.loc[:, list(columns)].sort_values(list(order), kind="mergesort")
     for record in ordered.itertuples(index=False, name=None):
         hasher.update(
-            ("\t".join(_format_cell(cell) for cell in record) + "\n").encode()
+            ("\t".join(format_digest_cell(cell) for cell in record) + "\n").encode()
         )
         rows += 1
     return hasher.hexdigest(), rows
@@ -649,7 +649,7 @@ def digest_frame(
     rows = 0
     for row in frame.orderBy(*order).select(*columns).toLocalIterator():
         hasher.update(
-            ("\t".join(_format_cell(row[column]) for column in columns) + "\n").encode()
+            ("\t".join(format_digest_cell(row[column]) for column in columns) + "\n").encode()
         )
         rows += 1
     return hasher.hexdigest(), rows
@@ -660,7 +660,7 @@ def stage_count_records(frame: DataFrame) -> list[dict[str, object]]:
     for row in frame.orderBy("source_date", "stage_index").toLocalIterator():
         records.append(
             {
-                "source_date": _format_cell(row["source_date"]),
+                "source_date": format_digest_cell(row["source_date"]),
                 "stage_index": int(row["stage_index"]),
                 "stage_name": row["stage_name"],
                 "tracks_entered": int(row["tracks_entered"]),
@@ -686,7 +686,7 @@ def day_stats(tracks: DataFrame) -> dict[str, dict[str, int]]:
         .orderBy("source_date")
         .toLocalIterator()
     ):
-        stats[_format_cell(row["source_date"])] = {
+        stats[format_digest_cell(row["source_date"])] = {
             "bicycles": int(row["bicycles"]),
             "single_point_tracks": int(row["single_point_tracks"] or 0),
         }
@@ -962,13 +962,13 @@ def match_run_stats(
         "is_valid",
         "pieces",
     ).toPandas()
-    track_pdf["source_date"] = track_pdf["source_date"].map(_format_cell)
+    track_pdf["source_date"] = track_pdf["source_date"].map(format_digest_cell)
     point_pdf = points.select(
         "source_date", "TRACK_ID", "snap_distance_m", "edge_index"
     ).toPandas()
-    point_pdf["source_date"] = point_pdf["source_date"].map(_format_cell)
+    point_pdf["source_date"] = point_pdf["source_date"].map(format_digest_cell)
     edge_pdf = edges.select("source_date").toPandas()
-    edge_pdf["source_date"] = edge_pdf["source_date"].map(_format_cell)
+    edge_pdf["source_date"] = edge_pdf["source_date"].map(format_digest_cell)
 
     days: dict[str, dict[str, object]] = {}
     for day, day_tracks in track_pdf.groupby("source_date", sort=True):
@@ -1311,11 +1311,11 @@ def grid_flow_run_stats(
 ) -> dict[str, dict[str, object]]:
     """Per-day coverage, link counts, and the four exact observation values."""
     cell_pdf = cells.select("source_date", "TRACK_ID", "cell_x", "cell_y").toPandas()
-    cell_pdf["source_date"] = cell_pdf["source_date"].map(_format_cell)
+    cell_pdf["source_date"] = cell_pdf["source_date"].map(format_digest_cell)
     link_pdf = links.select(
         "source_date", "from_x", "from_y", "to_x", "to_y", "tracks"
     ).toPandas()
-    link_pdf["source_date"] = link_pdf["source_date"].map(_format_cell)
+    link_pdf["source_date"] = link_pdf["source_date"].map(format_digest_cell)
     days: dict[str, dict[str, object]] = {}
     for day in sorted(set(cell_pdf["source_date"]).union(link_pdf["source_date"])):
         day_cells = cell_pdf.loc[cell_pdf["source_date"] == day]

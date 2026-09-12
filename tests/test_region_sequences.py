@@ -878,6 +878,9 @@ def test_params_carry_the_scope_arithmetic_and_the_consumed_freeze(
     params = json.loads(
         (region_sequences_run.artifacts / "params.json").read_text(encoding="utf-8")
     )
+    published_params = json.loads(
+        (region_sequences_run.output / "params.json").read_text(encoding="utf-8")
+    )
     sequences = read_track_sequences(region_sequences_run.track_sequences)
     tracks = read_track_match(region_sequences_run.matching / "track_match")
     region_cells = read_region_cells(region_sequences_run.regions / "region_cells")
@@ -886,6 +889,7 @@ def test_params_carry_the_scope_arithmetic_and_the_consumed_freeze(
     )
 
     assert params["dates"] == [FIXTURE_DATE]
+    assert published_params == params
     assert params["region_cells_digest"] == expected_digest
     assert params["parameters"]["min_sequence_length"] == 2
     assert params["parameters"]["max_pattern_length"] == 10

@@ -37,6 +37,10 @@ share/python-wheels/
 .installed.cfg
 *.egg
 
+# Frontend dependencies and TypeScript caches
+node_modules/
+*.tsbuildinfo
+
 # Jupyter
 .ipynb_checkpoints/
 

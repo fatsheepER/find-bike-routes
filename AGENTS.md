@@ -4,6 +4,8 @@
 
 Issues are tracked as local Markdown files under `.scratch/`. See `docs/agents/issue-tracker.md`.
 
+Completing an implementation ticket includes updating its issue file before commit: check satisfied acceptance boxes, set `Status: done`, and append the implementation, review, and test outcomes under `## Comments`.
+
 ### Triage labels
 
 Use the five canonical triage labels. See `docs/agents/triage-labels.md`.
