@@ -416,7 +416,12 @@ function focusTimestamp(date: string, hour: number): string {
 }
 
 function boundsFromDrag(start: L.LatLng, end: L.LatLng): Bounds {
-  return { west: start.lng, south: start.lat, east: end.lng, north: end.lat }
+  return {
+    west: Math.min(start.lng, end.lng),
+    south: Math.min(start.lat, end.lat),
+    east: Math.max(start.lng, end.lng),
+    north: Math.max(start.lat, end.lat),
+  }
 }
 
 function validBounds(bounds: Bounds): boolean {

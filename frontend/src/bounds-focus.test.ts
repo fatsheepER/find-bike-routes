@@ -96,11 +96,16 @@ afterEach(() => {
 })
 
 describe("bounds focus", () => {
-  it("queries an ordered in-range rectangle immediately and shows its bounds", async () => {
+  it.each([
+    [[118, 24], [118.1, 24.1]],
+    [[118, 24.1], [118.1, 24]],
+    [[118.1, 24], [118, 24.1]],
+    [[118.1, 24.1], [118, 24]],
+  ] as Array<[[number, number], [number, number]]>)("queries an in-range rectangle drawn from %j to %j and shows its bounds", async (start, end) => {
     wrapper = mount(App)
     await flushPromises()
 
-    await drawBounds([118, 24], [118.1, 24.1])
+    await drawBounds(start, end)
 
     expect(trackCalls()).toHaveLength(4)
     expect(JSON.parse(String(trackCalls()[0][1]?.body))).toEqual(expect.objectContaining({
@@ -119,12 +124,13 @@ describe("bounds focus", () => {
   })
 
   it.each([
-    [[118.1, 24.1], [118, 24]],
     [[118, 24], [118, 24.1]],
+    [[118, 24], [118.1, 24]],
     [[117.8, 24], [118.1, 24.1]],
     [[118, 24], [118.4, 24.1]],
+    [[118.1, 24.1], [117.8, 24]],
   ] as Array<[[number, number], [number, number]]>)(
-    "does not query a reversed, degenerate, or out-of-range rectangle",
+    "does not query a degenerate or out-of-range rectangle",
     async (start, end) => {
       wrapper = mount(App)
       await flushPromises()
